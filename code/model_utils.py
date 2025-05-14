@@ -148,16 +148,44 @@ def train(
                     den += wb.sum().item()
             te_loss = (num / den) ** 0.5
 
+            # — TRUE TRAIN MAE —
+            model.eval()
+            abs_tr_sum = 0.0
+            count_tr = 0
+            with torch.no_grad():
+                for xb, yb, _ in ld_tr:
+                    xb, yb = xb.to(device), yb.to(device)
+                    p = model(xb)
+                    abs_tr_sum += torch.sum(torch.abs(p - yb)).item()
+                    count_tr += yb.numel()
+            true_train_mae = abs_tr_sum / count_tr
+
+            # — TRUE TEST MAE —
+            abs_te_sum = 0.0
+            count_te = 0
+            with torch.no_grad():
+                for xb, yb, _ in ld_te:
+                    xb, yb = xb.to(device), yb.to(device)
+                    p = model(xb)
+                    abs_te_sum += torch.sum(torch.abs(p - yb)).item()
+                    count_te += yb.numel()
+            true_test_mae = abs_te_sum / count_te
+            # record everything
             history.append(
                 {
                     "store_item": sid,
                     "epoch": epoch,
-                    "train_loss": tr_loss,
-                    "test_loss": te_loss,
+                    "train_loss": tr_loss,  # your original
+                    "train_mae": true_train_mae,  # NEW MAE on train
+                    "test_loss": te_loss,  # RMSLE on test
+                    "test_mae": true_test_mae,  # NEW MAE on test
                 }
             )
+
             print(
-                f"[{sid}] Epoch {epoch}/{epochs} — train {tr_loss:.4f}, test {te_loss:.4f}"
+                f"[{sid}] Epoch {epoch}/{epochs} "
+                f"– train_RMSLE {tr_loss:.4f}, train_MAE {true_train_mae:.4f}, "
+                f"test_RMSLE {te_loss:.4f}, test_MAE {true_test_mae:.4f}"
             )
 
         # save to disk
