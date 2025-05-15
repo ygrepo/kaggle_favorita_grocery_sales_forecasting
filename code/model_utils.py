@@ -58,6 +58,7 @@ class NWRMSLELoss(nn.Module):
 
 def train(
     df: pd.DataFrame,
+    scaler: object,
     weights_df: pd.DataFrame,
     feature_cols: List[str],
     label_cols: List[str],
@@ -156,8 +157,10 @@ def train(
                 for xb, yb, _ in ld_tr:
                     xb, yb = xb.to(device), yb.to(device)
                     p = model(xb)
-                    abs_tr_sum += torch.sum(torch.abs(p - yb)).item()
-                    count_tr += yb.numel()
+                    p_np = scaler.inverse_transform(p.cpu().numpy())
+                    yb_np = scaler.inverse_transform(yb.cpu().numpy())
+                    abs_tr_sum += np.sum(np.abs(p_np - yb_np))
+                    count_tr += yb_np.size
             true_train_mae = abs_tr_sum / count_tr
 
             # — TRUE TEST MAE —
@@ -167,8 +170,10 @@ def train(
                 for xb, yb, _ in ld_te:
                     xb, yb = xb.to(device), yb.to(device)
                     p = model(xb)
-                    abs_te_sum += torch.sum(torch.abs(p - yb)).item()
-                    count_te += yb.numel()
+                    p_np = scaler.inverse_transform(p.cpu().numpy())
+                    yb_np = scaler.inverse_transform(yb.cpu().numpy())
+                    abs_te_sum += np.sum(np.abs(p_np - yb_np))
+                    count_te += yb_np.size
             true_test_mae = abs_te_sum / count_te
             # record everything
             history.append(
