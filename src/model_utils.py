@@ -2,7 +2,9 @@ import os
 import torch
 from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader, Subset
-from sklearn.model_selection import TimeSeriesSplit
+from torch.utils.data import TensorDataset, DataLoader
+
+from sklearn.model_selection import TimeSeriesSplit, KFold
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
@@ -478,3 +480,74 @@ def train_one_model_per_sid_kfold(
 
     history_df = pd.DataFrame(history)
     return history_df
+
+
+def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
+    """Loads a saved model from the given path and returns it along with the
+    associated store_item identifier and feature columns.
+
+    Args:
+        model_path (str): The path to the saved model file.
+
+    Returns:
+        tuple: A tuple containing the store_item identifier, the model, and its
+            feature columns.
+    """
+    checkpoint = torch.load(model_path, map_location=torch.device("cpu"))
+    store_item_id = checkpoint["sid"]
+    model_state_dict = checkpoint["model_state_dict"]
+    feature_columns = checkpoint["feature_cols"]
+
+    model = ShallowNN(input_dim=len(feature_columns))
+    model.load_state_dict(model_state_dict)
+    model.eval()
+
+    return store_item_id, model, feature_columns
+
+
+def load_models_from_dir(model_dir="../output/models/"):
+    """
+    Loads all models from the specified directory and returns a dictionary
+    mapping store_item identifiers to their respective model and feature columns.
+
+    Args:
+        model_dir (str): The directory path containing the saved model files.
+
+    Returns:
+        dict: A dictionary where each key is a store_item identifier (sid) and
+              the value is a tuple containing the model and its feature columns.
+    """
+    models = {}
+    for filename in os.listdir(model_dir):
+        if filename.endswith(".pth"):
+            model_path = os.path.join(model_dir, filename)
+            sid, model, feature_cols = load_model(model_path)
+            models[sid] = (model, feature_cols)
+    return models
+
+
+def predict(model, data):
+    with torch.no_grad():
+        inputs = torch.tensor(data.values, dtype=torch.float32)
+        outputs = model(inputs)
+        return outputs.numpy()
+
+
+# def predict(
+#     df: pd.DataFrame,
+#     models: Dict[str, Tuple[nn.Module, List[str]]],
+#     feature_cols: List[str],
+#     label_cols: List[str],
+#     item_col: str,
+#     model_dir: str = "../output/models/",
+# ):
+#     """
+#     Predicts the target values for the given DataFrame using the provided models.
+
+#     Args:
+#         df (pd.DataFrame): The DataFrame containing the input features.
+#         models (Dict[str, Tuple[nn.Module, List[str]]]): A dictionary mapping
+#             store_item identifiers to tuples containing the model and its
+#             feature columns.
+#         feature_cols (List[str]): The list of feature column names.
+#         label_cols (List[str]): The list of label column names.
