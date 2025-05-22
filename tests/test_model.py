@@ -1,7 +1,7 @@
 import torch
 import pytest
 
-from code.model_utils import ShallowNN, NWRMSLELoss  # adjust import
+from src.model_utils import ShallowNN, NWRMSLELoss  # adjust import
 
 
 def test_shallow_nn_output_shape_and_reproducibility():

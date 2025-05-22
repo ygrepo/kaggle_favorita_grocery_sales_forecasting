@@ -66,8 +66,6 @@ def generate_nonoverlap_window_features(
 
     records = []
     for window_dates in chunked_windows:
-        window_start = pd.to_datetime(window_dates[0])
-        window_str = window_start.strftime("%Y-%m-%d")
 
         # subset to this window
         w_df = df[df["date"].isin(window_dates)]
@@ -117,6 +115,10 @@ def generate_nonoverlap_window_features(
     columns = ["store_item", "store", "item"]
     for i in range(1, window_size + 1):
         columns.extend([f"sales_day_{i}", f"store_med_day_{i}", f"item_med_day_{i}"])
+
+    # Return full empty frame with expected columns if no data
+    if not records:
+        return pd.DataFrame(columns=columns)
 
     return df_result[columns]
 

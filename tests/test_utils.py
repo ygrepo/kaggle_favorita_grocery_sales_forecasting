@@ -1,19 +1,29 @@
 import pandas as pd
 from datetime import datetime
-from code.utils import generate_nonoverlap_window_features
+from src.utils import generate_nonoverlap_window_features
 
 
 def test_generate_nonoverlap_window_features_empty_df():
     """Test with empty DataFrame"""
     df = pd.DataFrame(columns=["store", "item", "date", "unit_sales"])
-    result = generate_nonoverlap_window_features(df)
-    assert len(result) == 0
+    result = generate_nonoverlap_window_features(df, window_size=1)
+    assert result.empty
     assert "store_item" in result.columns
     assert "store" in result.columns
     assert "item" in result.columns
     assert "sales_day_1" in result.columns
     assert "store_med_day_1" in result.columns
     assert "item_med_day_1" in result.columns
+    # Verify column order
+    expected_columns = [
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "store_med_day_1",
+        "item_med_day_1",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 def test_generate_nonoverlap_window_features_single_row():
