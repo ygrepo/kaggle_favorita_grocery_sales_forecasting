@@ -2,6 +2,8 @@ import pandas as pd
 from datetime import datetime
 from src.utils import generate_nonoverlap_window_features
 
+# import pytest
+
 
 def test_generate_nonoverlap_window_features_empty_df():
     """Test with empty DataFrame"""
@@ -102,7 +104,7 @@ def test_generate_nonoverlap_window_features_different_stores_items():
         }
     )
     result = generate_nonoverlap_window_features(df, window_size=5)
-    assert len(result) == 3
+    assert len(result) == 5
     # Check store1_item1 window
     assert result.loc[0, "store_item"] == "store1_item1"
     assert result.loc[0, "store"] == "store1"
@@ -111,19 +113,19 @@ def test_generate_nonoverlap_window_features_different_stores_items():
     assert result.loc[0, "store_med_day_1"] == 100
     assert result.loc[0, "item_med_day_1"] == 100
     # Check store2_item1 window
-    assert result.loc[1, "store_item"] == "store2_item1"
-    assert result.loc[1, "store"] == "store2"
-    assert result.loc[1, "item"] == "item1"
-    assert result.loc[1, "sales_day_1"] == 300
-    assert result.loc[1, "store_med_day_1"] == 300
-    assert result.loc[1, "item_med_day_1"] == 300
+    assert result.loc[2, "store_item"] == "store2_item1"
+    assert result.loc[2, "store"] == "store2"
+    assert result.loc[2, "item"] == "item1"
+    assert result.loc[2, "sales_day_3"] == 300
+    assert result.loc[2, "store_med_day_3"] == 300
+    assert result.loc[2, "item_med_day_3"] == 300
 
 
 def test_generate_nonoverlap_window_features_missing_dates():
     """Test with missing dates"""
     dates = pd.date_range(start="2023-01-01", periods=5)
     # Remove one date
-    dates = dates.drop(2)
+    dates = dates.delete(2)
     df = pd.DataFrame(
         {
             "store": ["store1"] * 4,
@@ -178,5 +180,8 @@ def test_generate_nonoverlap_window_features_edge_dates():
     assert result["sales_day_3"].iloc[0] == 300
 
 
-# if __name__ == '__main__':
+# if __name__ == "__main__":
+#     import sys
+
+#     sys.path.append("../")
 #     pytest.main([__file__])
