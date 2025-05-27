@@ -5,46 +5,82 @@ import pandas as pd
 
 def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.DataFrame:
     """
-    Generate cyclical features for day of week, week of month, and month of year.
-    For each feature type, creates sine and cosine components for each day in the window.
+    Generate cyclical features for day of week and week of month.
+    Pads partial windows with 0s and handles empty input gracefully.
 
     Args:
-        df: Input DataFrame with 'date' and 'store_item' columns
-        window_size: Number of days in the window
+        df: Input DataFrame with 'date', 'store', 'item' columns (optionally 'store_item')
+        window_size: Number of days in each window (including last partial)
 
     Returns:
-        DataFrame with sine and cosine features for each day in the window
+        A DataFrame with cyclical features for each window
     """
-    # Convert date to datetime if not already
+    df = df.copy()
+
+    if df.empty:
+        cols = ["start_date", "store_item", "store", "item"]
+        for i in range(1, window_size + 1):
+            for feature in ["dayofweek", "weekofmonth"]:
+                for trig in ["sin", "cos"]:
+                    cols.append(f"{feature}_{trig}_{i}")
+        return pd.DataFrame(columns=cols)
+
     df["date"] = pd.to_datetime(df["date"])
 
-    # Create sine and cosine features for each day in the window
+    # If store_item not provided, create it
+    if "store_item" not in df.columns:
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+
+    # Cyclical features
+    df["dayofweek"] = df["date"].dt.dayofweek
+    df["dayofweek_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7)
+    df["dayofweek_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7)
+
+    df["weekofmonth"] = df["date"].apply(lambda d: (d.day - 1) // 7 + 1)
+    df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5)
+    df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5)
+
+    results = []
+
+    for store_item, group in df.groupby("store_item"):
+        group = group.sort_values("date").reset_index(drop=True)
+        total_rows = len(group)
+        num_windows = (total_rows + window_size - 1) // window_size  # ceil division
+
+        for w in range(num_windows):
+            start_idx = w * window_size
+            window_df = group.iloc[start_idx : start_idx + window_size]
+            row = {
+                "start_date": window_df["date"].iloc[0],
+                "store_item": store_item,
+                "store": window_df["store"].iloc[0],
+                "item": window_df["item"].iloc[0],
+            }
+
+            for day_idx in range(window_size):
+                if day_idx < len(window_df):
+                    day_row = window_df.iloc[day_idx]
+                    for feature in ["dayofweek", "weekofmonth"]:
+                        for trig in ["sin", "cos"]:
+                            row[f"{feature}_{trig}_{day_idx + 1}"] = day_row[
+                                f"{feature}_{trig}"
+                            ]
+                else:
+                    # Pad with 0
+                    for feature in ["dayofweek", "weekofmonth"]:
+                        for trig in ["sin", "cos"]:
+                            row[f"{feature}_{trig}_{day_idx + 1}"] = 0.0
+
+            results.append(row)
+
+    # Ensure consistent column ordering
+    cols = ["start_date", "store_item", "store", "item"]
     for i in range(1, window_size + 1):
-        # Day of week (0-6)
-        day_of_week = df["date"].dt.dayofweek
-        df[f"dayofweek_sin_{i}"] = np.sin(2 * np.pi * (day_of_week + 1) / 7)
-        df[f"dayofweek_cos_{i}"] = np.cos(2 * np.pi * (day_of_week + 1) / 7)
-
-        # Week of month (1-5)
-        week_of_month = df["date"].dt.day // 7 + 1
-        df[f"weekofmonth_sin_{i}"] = np.sin(2 * np.pi * week_of_month / 5)
-        df[f"weekofmonth_cos_{i}"] = np.cos(2 * np.pi * week_of_month / 5)
-
-        # Month of year (1-12)
-        month_of_year = df["date"].dt.month
-        df[f"monthofyear_sin_{i}"] = np.sin(2 * np.pi * month_of_year / 12)
-        df[f"monthofyear_cos_{i}"] = np.cos(2 * np.pi * month_of_year / 12)
-
-        # Shift the features for each day
-        for feature in ["dayofweek", "weekofmonth", "monthofyear"]:
+        for feature in ["dayofweek", "weekofmonth"]:
             for trig in ["sin", "cos"]:
-                col_name = f"{feature}_{trig}_{i}"
-                df[col_name] = df.groupby("store_item")[col_name].shift(i - 1)
+                cols.append(f"{feature}_{trig}_{i}")
 
-    # Fill NaNs with 0 for the first window_size days
-    df.fillna(0, inplace=True)
-
-    return df
+    return pd.DataFrame(results, columns=cols)
 
 
 def generate_nonoverlap_window_features(
