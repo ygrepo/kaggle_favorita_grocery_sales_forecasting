@@ -261,7 +261,7 @@ def test_generate_nonoverlap_window_features_large_window():
         }
     )
     result = generate_nonoverlap_window_features(df, window_size=5)
-    assert len(result) == 0
+    assert len(result) == 1
 
 
 def test_generate_nonoverlap_window_features_edge_dates():
