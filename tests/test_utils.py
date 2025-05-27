@@ -423,12 +423,6 @@ def test_generate_cyclical_features_multiple_windows():
         )
 
 
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import pytest
-
-
 def test_generate_cyclical_features_different_stores():
     """Test with different stores"""
     df = pd.DataFrame(

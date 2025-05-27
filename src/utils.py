@@ -3,124 +3,276 @@ import numpy as np
 import pandas as pd
 
 
-def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.DataFrame:
+# def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.DataFrame:
+#     """
+#     Generate cyclical features for day of week and week of month.
+#     Pads partial windows with 0s and handles empty input gracefully.
+
+#     Args:
+#         df: Input DataFrame with 'date', 'store', 'item' columns (optionally 'store_item')
+#         window_size: Number of days in each window (including last partial)
+
+#     Returns:
+#         A DataFrame with cyclical features for each window
+#     """
+#     df = df.copy()
+
+#     if df.empty:
+#         cols = ["start_date", "store_item", "store", "item"]
+#         for i in range(1, window_size + 1):
+#             for feature in ["dayofweek", "weekofmonth"]:
+#                 for trig in ["sin", "cos"]:
+#                     cols.append(f"{feature}_{trig}_{i}")
+#         return pd.DataFrame(columns=cols)
+
+#     df["date"] = pd.to_datetime(df["date"])
+
+#     # If store_item not provided, create it
+#     if "store_item" not in df.columns:
+#         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+
+#     # Cyclical features
+#     df["dayofweek"] = df["date"].dt.dayofweek
+#     df["dayofweek_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7)
+#     df["dayofweek_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7)
+
+#     df["weekofmonth"] = df["date"].apply(lambda d: (d.day - 1) // 7 + 1)
+#     df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5)
+#     df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5)
+
+#     results = []
+
+#     for store_item, group in df.groupby("store_item"):
+#         group = group.sort_values("date").reset_index(drop=True)
+#         total_rows = len(group)
+#         num_windows = (total_rows + window_size - 1) // window_size  # ceil division
+
+#         for w in range(num_windows):
+#             start_idx = w * window_size
+#             window_df = group.iloc[start_idx : start_idx + window_size]
+#             row = {
+#                 "start_date": window_df["date"].iloc[0],
+#                 "store_item": store_item,
+#                 "store": window_df["store"].iloc[0],
+#                 "item": window_df["item"].iloc[0],
+#             }
+
+#             for day_idx in range(window_size):
+#                 if day_idx < len(window_df):
+#                     day_row = window_df.iloc[day_idx]
+#                     for feature in ["dayofweek", "weekofmonth"]:
+#                         for trig in ["sin", "cos"]:
+#                             row[f"{feature}_{trig}_{day_idx + 1}"] = day_row[
+#                                 f"{feature}_{trig}"
+#                             ]
+#                 else:
+#                     # Pad with 0
+#                     for feature in ["dayofweek", "weekofmonth"]:
+#                         for trig in ["sin", "cos"]:
+#                             row[f"{feature}_{trig}_{day_idx + 1}"] = 0.0
+
+#             results.append(row)
+
+#     # Ensure consistent column ordering
+#     cols = ["start_date", "store_item", "store", "item"]
+#     for i in range(1, window_size + 1):
+#         for feature in ["dayofweek", "weekofmonth"]:
+#             for trig in ["sin", "cos"]:
+#                 cols.append(f"{feature}_{trig}_{i}")
+
+#     return pd.DataFrame(results, columns=cols)
+
+
+# def generate_nonoverlap_window_features(
+#     df: pd.DataFrame, window_size: int = 5
+# ) -> pd.DataFrame:
+#     """
+#     Splits the dates in train_df into non-overlapping windows of length `window_size`,
+#     then for each (store, item) within each window computes:
+#       - total sales on each day
+#       - median sales per store on each day
+#       - median sales per item on each day
+
+#     Returns a DataFrame with columns organized in this order:
+#       - store_item
+#       - store
+#       - item
+#       - start_date
+#       - sales_day_1 ... sales_day_{window_size}
+#       - store_med_day_1 ... store_med_day_{window_size}
+#       - item_med_day_1 ... item_med_day_{window_size}
+#     """
+#     # 1) Ensure datetime
+#     df = df.copy()
+#     df["date"] = pd.to_datetime(df["date"])
+
+#     # 2) Build non-overlapping windows (including partial window)
+#     unique_dates = df["date"].sort_values().unique()
+#     chunked_windows = [
+#         unique_dates[i : i + window_size]
+#         for i in range(0, len(unique_dates), window_size)
+#     ]
+
+#     records = []
+#     for window_dates in chunked_windows:
+#         w_df = df[df["date"].isin(window_dates)]
+
+#         # precompute medians & sums
+#         store_med = (
+#             w_df.groupby(["store", "date"])["unit_sales"].median().unstack(fill_value=0)
+#         )
+#         item_med = (
+#             w_df.groupby(["item", "date"])["unit_sales"].median().unstack(fill_value=0)
+#         )
+#         sales = (
+#             w_df.groupby(["store", "item", "date"])["unit_sales"]
+#             .sum()
+#             .unstack(fill_value=0)
+#         )
+
+#         for (store, item), sales_vals in sales.iterrows():
+#             row = {
+#                 "store_item": f"{store}_{item}",
+#                 "store": store,
+#                 "item": item,
+#                 "start_date": window_dates[0],
+#             }
+
+#             # sales_day_i
+#             for i in range(1, window_size + 1):
+#                 try:
+#                     d = window_dates[i - 1]
+#                     row[f"sales_day_{i}"] = sales_vals.get(d, 0)
+#                 except IndexError:
+#                     row[f"sales_day_{i}"] = 0
+
+#             # store_med_day_i
+#             sm = (
+#                 store_med.loc[store]
+#                 if store in store_med.index
+#                 else pd.Series(0, index=window_dates)
+#             )
+#             for i in range(1, window_size + 1):
+#                 try:
+#                     d = window_dates[i - 1]
+#                     row[f"store_med_day_{i}"] = sm.get(d, 0)
+#                 except IndexError:
+#                     row[f"store_med_day_{i}"] = 0
+
+#             # item_med_day_i
+#             im = (
+#                 item_med.loc[item]
+#                 if item in item_med.index
+#                 else pd.Series(0, index=window_dates)
+#             )
+#             for i in range(1, window_size + 1):
+#                 try:
+#                     d = window_dates[i - 1]
+#                     row[f"item_med_day_{i}"] = im.get(d, 0)
+#                 except IndexError:
+#                     row[f"item_med_day_{i}"] = 0
+
+#             records.append(row)
+
+#     # Assemble DataFrame
+#     cols = ["start_date", "store_item", "store", "item"]
+#     sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
+#     store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
+#     item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
+
+#     cols.extend(sales_cols + store_med_cols + item_med_cols)
+
+#     if not records:
+#         return pd.DataFrame(columns=cols)
+
+#     df = pd.DataFrame(records)
+#     return df[cols]
+
+# import pandas as pd
+# import numpy as np
+
+
+def generate_aligned_windows(df, window_size):
     """
-    Generate cyclical features for day of week and week of month.
-    Pads partial windows with 0s and handles empty input gracefully.
-
-    Args:
-        df: Input DataFrame with 'date', 'store', 'item' columns (optionally 'store_item')
-        window_size: Number of days in each window (including last partial)
-
-    Returns:
-        A DataFrame with cyclical features for each window
+    Returns a list of aligned non-overlapping windows (including partial at end),
+    shared by both feature functions.
     """
     df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    unique_dates = np.sort(df["date"].unique())
+    return [
+        unique_dates[i : i + window_size]
+        for i in range(0, len(unique_dates), window_size)
+    ]
 
-    if df.empty:
-        cols = ["start_date", "store_item", "store", "item"]
-        for i in range(1, window_size + 1):
-            for feature in ["dayofweek", "weekofmonth"]:
-                for trig in ["sin", "cos"]:
-                    cols.append(f"{feature}_{trig}_{i}")
-        return pd.DataFrame(columns=cols)
 
+def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.DataFrame:
+    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
-    # If store_item not provided, create it
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
-    # Cyclical features
     df["dayofweek"] = df["date"].dt.dayofweek
     df["dayofweek_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7)
     df["dayofweek_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7)
-
     df["weekofmonth"] = df["date"].apply(lambda d: (d.day - 1) // 7 + 1)
     df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5)
     df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5)
 
+    windows = generate_aligned_windows(df, window_size)
     results = []
 
     for store_item, group in df.groupby("store_item"):
         group = group.sort_values("date").reset_index(drop=True)
-        total_rows = len(group)
-        num_windows = (total_rows + window_size - 1) // window_size  # ceil division
 
-        for w in range(num_windows):
-            start_idx = w * window_size
-            window_df = group.iloc[start_idx : start_idx + window_size]
+        for window_dates in windows:
+            window_df = group[group["date"].isin(window_dates)]
+            if window_df.empty:
+                continue
+
             row = {
-                "start_date": window_df["date"].iloc[0],
+                "start_date": window_dates[0],
                 "store_item": store_item,
                 "store": window_df["store"].iloc[0],
                 "item": window_df["item"].iloc[0],
             }
 
-            for day_idx in range(window_size):
-                if day_idx < len(window_df):
-                    day_row = window_df.iloc[day_idx]
-                    for feature in ["dayofweek", "weekofmonth"]:
-                        for trig in ["sin", "cos"]:
-                            row[f"{feature}_{trig}_{day_idx + 1}"] = day_row[
-                                f"{feature}_{trig}"
-                            ]
+            for i in range(window_size):
+                if i < len(window_df):
+                    r = window_df.iloc[i]
+                    for f in ["dayofweek", "weekofmonth"]:
+                        for t in ["sin", "cos"]:
+                            row[f"{f}_{t}_{i+1}"] = r[f"{f}_{t}"]
                 else:
-                    # Pad with 0
-                    for feature in ["dayofweek", "weekofmonth"]:
-                        for trig in ["sin", "cos"]:
-                            row[f"{feature}_{trig}_{day_idx + 1}"] = 0.0
+                    for f in ["dayofweek", "weekofmonth"]:
+                        for t in ["sin", "cos"]:
+                            row[f"{f}_{t}_{i+1}"] = 0.0
 
             results.append(row)
 
-    # Ensure consistent column ordering
-    cols = ["start_date", "store_item", "store", "item"]
-    for i in range(1, window_size + 1):
-        for feature in ["dayofweek", "weekofmonth"]:
-            for trig in ["sin", "cos"]:
-                cols.append(f"{feature}_{trig}_{i}")
+    columns = ["start_date", "store_item", "store", "item"] + [
+        f"{f}_{t}_{i}"
+        for i in range(1, window_size + 1)
+        for f in ["dayofweek", "weekofmonth"]
+        for t in ["sin", "cos"]
+    ]
 
-    return pd.DataFrame(results, columns=cols)
+    return pd.DataFrame(results, columns=columns)
 
 
 def generate_nonoverlap_window_features(
     df: pd.DataFrame, window_size: int = 5
 ) -> pd.DataFrame:
-    """
-    Splits the dates in train_df into non-overlapping windows of length `window_size`,
-    then for each (store, item) within each window computes:
-      - total sales on each day
-      - median sales per store on each day
-      - median sales per item on each day
-
-    Returns a DataFrame with columns organized in this order:
-      - store_item
-      - store
-      - item
-      - start_date
-      - sales_day_1 ... sales_day_{window_size}
-      - store_med_day_1 ... store_med_day_{window_size}
-      - item_med_day_1 ... item_med_day_{window_size}
-    """
-    # 1) Ensure datetime
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
-    # 2) Build non-overlapping windows
-    unique_dates = df["date"].sort_values().unique()
-    chunked_windows = [
-        unique_dates[i : i + window_size]
-        for i in range(0, len(unique_dates), window_size)
-        if len(unique_dates[i : i + window_size]) == window_size
-    ]
-
+    windows = generate_aligned_windows(df, window_size)
     records = []
-    for window_dates in chunked_windows:
 
-        # subset to this window
+    for window_dates in windows:
         w_df = df[df["date"].isin(window_dates)]
 
-        # precompute medians & sums
         store_med = (
             w_df.groupby(["store", "date"])["unit_sales"].median().unstack(fill_value=0)
         )
@@ -134,50 +286,39 @@ def generate_nonoverlap_window_features(
         )
 
         for (store, item), sales_vals in sales.iterrows():
-            row = {"store_item": f"{store}_{item}", "store": store, "item": item}
+            row = {
+                "store_item": f"{store}_{item}",
+                "store": store,
+                "item": item,
+                "start_date": window_dates[0],
+            }
 
-            # Add start_date of the window
-            row["start_date"] = window_dates[0]
-
-            # sales_day_i
-            for i, d in enumerate(window_dates, start=1):
-                row[f"sales_day_{i}"] = sales_vals.get(d, 0)
-
-            # store_med_day_i
-            if store in store_med.index:
-                sm = store_med.loc[store]
-            else:
-                sm = pd.Series(0, index=window_dates)
-            for i, d in enumerate(window_dates, start=1):
-                row[f"store_med_day_{i}"] = sm.get(d, 0)
-
-            # item_med_day_i
-            if item in item_med.index:
-                im = item_med.loc[item]
-            else:
-                im = pd.Series(0, index=window_dates)
-            for i, d in enumerate(window_dates, start=1):
-                row[f"item_med_day_{i}"] = im.get(d, 0)
+            for i in range(1, window_size + 1):
+                try:
+                    d = window_dates[i - 1]
+                    row[f"sales_day_{i}"] = sales_vals.get(d, 0)
+                    row[f"store_med_day_{i}"] = (
+                        store_med.loc[store].get(d, 0)
+                        if store in store_med.index
+                        else 0
+                    )
+                    row[f"item_med_day_{i}"] = (
+                        item_med.loc[item].get(d, 0) if item in item_med.index else 0
+                    )
+                except IndexError:
+                    row[f"sales_day_{i}"] = 0
+                    row[f"store_med_day_{i}"] = 0
+                    row[f"item_med_day_{i}"] = 0
 
             records.append(row)
 
-    # Create DataFrame and reorder columns
-    cols = ["start_date", "store_item", "store", "item"]
+    cols = ["start_date", "store_item", "store", "item"] + [
+        f"{prefix}_day_{i}"
+        for i in range(1, window_size + 1)
+        for prefix in ["sales", "store_med", "item_med"]
+    ]
 
-    # Create lists of columns for each type
-    sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
-    store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
-    item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
-
-    # Combine all columns
-    cols.extend(sales_cols + store_med_cols + item_med_cols)
-
-    # Return empty DataFrame with all columns if no records
-    if not records:
-        return pd.DataFrame(columns=cols)
-
-    df = pd.DataFrame(records)
-    return df[cols]
+    return pd.DataFrame(records, columns=cols)
 
 
 # def generate_nonoverlap_window_features(
