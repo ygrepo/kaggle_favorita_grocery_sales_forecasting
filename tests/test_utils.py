@@ -10,6 +10,7 @@ def test_generate_nonoverlap_window_features_empty_df():
     df = pd.DataFrame(columns=["store", "item", "date", "unit_sales"])
     result = generate_nonoverlap_window_features(df, window_size=1)
     assert result.empty
+    assert "start_date" in result.columns
     assert "store_item" in result.columns
     assert "store" in result.columns
     assert "item" in result.columns
@@ -18,6 +19,7 @@ def test_generate_nonoverlap_window_features_empty_df():
     assert "item_med_day_1" in result.columns
     # Verify column order
     expected_columns = [
+        "start_date",
         "store_item",
         "store",
         "item",
@@ -40,26 +42,50 @@ def test_generate_nonoverlap_window_features_single_row():
     )
     result = generate_nonoverlap_window_features(df, window_size=1)
     assert len(result) == 1
+    assert result["start_date"].iloc[0] == datetime(2023, 1, 1)
     assert result["store_item"].iloc[0] == "store1_item1"
     assert result["store"].iloc[0] == "store1"
     assert result["item"].iloc[0] == "item1"
     assert result["sales_day_1"].iloc[0] == 100
     assert result["store_med_day_1"].iloc[0] == 100
     assert result["item_med_day_1"].iloc[0] == 100
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "store_med_day_1",
+        "item_med_day_1",
+    ]
+    assert list(result.columns) == expected_columns
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "store_med_day_1",
+        "item_med_day_1",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 def test_generate_nonoverlap_window_features_single_window():
     """Test with exact window size"""
     df = pd.DataFrame(
         {
+            "date": [datetime(2023, 1, 1), datetime(2023, 1, 2)],
             "store": ["store1", "store1"],
             "item": ["item1", "item1"],
-            "date": [datetime(2023, 1, 1), datetime(2023, 1, 2)],
             "unit_sales": [100, 200],
         }
     )
     result = generate_nonoverlap_window_features(df, window_size=2)
     assert len(result) == 1
+    assert result["start_date"].iloc[0] == datetime(2023, 1, 1)
     assert result["store_item"].iloc[0] == "store1_item1"
     assert result["store"].iloc[0] == "store1"
     assert result["item"].iloc[0] == "item1"
@@ -69,6 +95,20 @@ def test_generate_nonoverlap_window_features_single_window():
     assert result["store_med_day_2"].iloc[0] == 200
     assert result["item_med_day_1"].iloc[0] == 100
     assert result["item_med_day_2"].iloc[0] == 200
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "sales_day_2",
+        "store_med_day_1",
+        "store_med_day_2",
+        "item_med_day_1",
+        "item_med_day_2",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 def test_generate_nonoverlap_window_features_multiple_windows():
@@ -84,12 +124,37 @@ def test_generate_nonoverlap_window_features_multiple_windows():
     )
     result = generate_nonoverlap_window_features(df, window_size=5)
     assert len(result) == 2
+    assert result["start_date"].iloc[0] == datetime(2023, 1, 1)
+    assert result["start_date"].iloc[1] == datetime(2023, 1, 6)
     assert result["store_item"].iloc[0] == "store1_item1"
     assert result["store_item"].iloc[1] == "store1_item1"
     assert result["sales_day_1"].iloc[0] == 100
     assert result["sales_day_5"].iloc[0] == 104
     assert result["sales_day_1"].iloc[1] == 105
     assert result["sales_day_5"].iloc[1] == 109
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "sales_day_2",
+        "sales_day_3",
+        "sales_day_4",
+        "sales_day_5",
+        "store_med_day_1",
+        "store_med_day_2",
+        "store_med_day_3",
+        "store_med_day_4",
+        "store_med_day_5",
+        "item_med_day_1",
+        "item_med_day_2",
+        "item_med_day_3",
+        "item_med_day_4",
+        "item_med_day_5",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 def test_generate_nonoverlap_window_features_different_stores_items():
@@ -106,6 +171,7 @@ def test_generate_nonoverlap_window_features_different_stores_items():
     result = generate_nonoverlap_window_features(df, window_size=5)
     assert len(result) == 5
     # Check store1_item1 window
+    assert result.loc[0, "start_date"] == datetime(2023, 1, 1)
     assert result.loc[0, "store_item"] == "store1_item1"
     assert result.loc[0, "store"] == "store1"
     assert result.loc[0, "item"] == "item1"
@@ -113,12 +179,36 @@ def test_generate_nonoverlap_window_features_different_stores_items():
     assert result.loc[0, "store_med_day_1"] == 100
     assert result.loc[0, "item_med_day_1"] == 100
     # Check store2_item1 window
+    assert result.loc[2, "start_date"] == datetime(2023, 1, 1)
     assert result.loc[2, "store_item"] == "store2_item1"
     assert result.loc[2, "store"] == "store2"
     assert result.loc[2, "item"] == "item1"
     assert result.loc[2, "sales_day_3"] == 300
     assert result.loc[2, "store_med_day_3"] == 300
     assert result.loc[2, "item_med_day_3"] == 300
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "sales_day_2",
+        "sales_day_3",
+        "sales_day_4",
+        "sales_day_5",
+        "store_med_day_1",
+        "store_med_day_2",
+        "store_med_day_3",
+        "store_med_day_4",
+        "store_med_day_5",
+        "item_med_day_1",
+        "item_med_day_2",
+        "item_med_day_3",
+        "item_med_day_4",
+        "item_med_day_5",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 def test_generate_nonoverlap_window_features_missing_dates():
@@ -136,10 +226,26 @@ def test_generate_nonoverlap_window_features_missing_dates():
     )
     result = generate_nonoverlap_window_features(df, window_size=2)
     assert len(result) == 2
+    assert result["start_date"].iloc[0] == dates[0]
+    assert result["start_date"].iloc[1] == dates[2]
     assert result["sales_day_1"].iloc[0] == 100
     assert result["sales_day_2"].iloc[0] == 200
     assert result["sales_day_1"].iloc[1] == 300
     assert result["sales_day_2"].iloc[1] == 400
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "sales_day_2",
+        "store_med_day_1",
+        "store_med_day_2",
+        "item_med_day_1",
+        "item_med_day_2",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 def test_generate_nonoverlap_window_features_large_window():
@@ -172,12 +278,30 @@ def test_generate_nonoverlap_window_features_edge_dates():
     )
     result = generate_nonoverlap_window_features(df, window_size=3)
     assert len(result) == 1
+    assert result["start_date"].iloc[0] == datetime(2023, 12, 31)
     assert result["store_item"].iloc[0] == "store1_item1"
     assert result["store"].iloc[0] == "store1"
     assert result["item"].iloc[0] == "item1"
     assert result["sales_day_1"].iloc[0] == 100
     assert result["sales_day_2"].iloc[0] == 200
     assert result["sales_day_3"].iloc[0] == 300
+    # Verify column order
+    expected_columns = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "sales_day_1",
+        "sales_day_2",
+        "sales_day_3",
+        "store_med_day_1",
+        "store_med_day_2",
+        "store_med_day_3",
+        "item_med_day_1",
+        "item_med_day_2",
+        "item_med_day_3",
+    ]
+    assert list(result.columns) == expected_columns
 
 
 # if __name__ == "__main__":

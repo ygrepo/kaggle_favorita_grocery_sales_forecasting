@@ -5,7 +5,8 @@ import pandas as pd
 
 def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.DataFrame:
     """
-    Generate sine and cosine features for each day in the window.
+    Generate cyclical features for day of week, week of month, and month of year.
+    For each feature type, creates sine and cosine components for each day in the window.
 
     Args:
         df: Input DataFrame with 'date' and 'store_item' columns
@@ -19,14 +20,26 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
 
     # Create sine and cosine features for each day in the window
     for i in range(1, window_size + 1):
-        # Sine features
-        df[f"day_sin_{i}"] = np.sin(2 * np.pi * (df["date"].dt.dayofweek + 1) / 7)
-        # Cosine features
-        df[f"day_cos_{i}"] = np.cos(2 * np.pi * (df["date"].dt.dayofweek + 1) / 7)
+        # Day of week (0-6)
+        day_of_week = df["date"].dt.dayofweek
+        df[f"dayofweek_sin_{i}"] = np.sin(2 * np.pi * (day_of_week + 1) / 7)
+        df[f"dayofweek_cos_{i}"] = np.cos(2 * np.pi * (day_of_week + 1) / 7)
+
+        # Week of month (1-5)
+        week_of_month = df["date"].dt.day // 7 + 1
+        df[f"weekofmonth_sin_{i}"] = np.sin(2 * np.pi * week_of_month / 5)
+        df[f"weekofmonth_cos_{i}"] = np.cos(2 * np.pi * week_of_month / 5)
+
+        # Month of year (1-12)
+        month_of_year = df["date"].dt.month
+        df[f"monthofyear_sin_{i}"] = np.sin(2 * np.pi * month_of_year / 12)
+        df[f"monthofyear_cos_{i}"] = np.cos(2 * np.pi * month_of_year / 12)
 
         # Shift the features for each day
-        df[f"day_sin_{i}"] = df.groupby("store_item")[f"day_sin_{i}"].shift(i - 1)
-        df[f"day_cos_{i}"] = df.groupby("store_item")[f"day_cos_{i}"].shift(i - 1)
+        for feature in ["dayofweek", "weekofmonth", "monthofyear"]:
+            for trig in ["sin", "cos"]:
+                col_name = f"{feature}_{trig}_{i}"
+                df[col_name] = df.groupby("store_item")[col_name].shift(i - 1)
 
     # Fill NaNs with 0 for the first window_size days
     df.fillna(0, inplace=True)
@@ -45,9 +58,10 @@ def generate_nonoverlap_window_features(
       - median sales per item on each day
 
     Returns a DataFrame with columns organized in this order:
+      - store_item
       - store
       - item
-      - store_item
+      - start_date
       - sales_day_1 ... sales_day_{window_size}
       - store_med_day_1 ... store_med_day_{window_size}
       - item_med_day_1 ... item_med_day_{window_size}
@@ -86,6 +100,9 @@ def generate_nonoverlap_window_features(
         for (store, item), sales_vals in sales.iterrows():
             row = {"store_item": f"{store}_{item}", "store": store, "item": item}
 
+            # Add start_date of the window
+            row["start_date"] = window_dates[0]
+
             # sales_day_i
             for i, d in enumerate(window_dates, start=1):
                 row[f"sales_day_{i}"] = sales_vals.get(d, 0)
@@ -109,18 +126,22 @@ def generate_nonoverlap_window_features(
             records.append(row)
 
     # Create DataFrame and reorder columns
-    df_result = pd.DataFrame.from_records(records)
+    cols = ["start_date", "store_item", "store", "item"]
 
-    # Define column order: store, item, store_item first, then all sales_day, then all store_med_day, then all item_med_day
-    columns = ["store_item", "store", "item"]
-    for i in range(1, window_size + 1):
-        columns.extend([f"sales_day_{i}", f"store_med_day_{i}", f"item_med_day_{i}"])
+    # Create lists of columns for each type
+    sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
+    store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
+    item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
 
-    # Return full empty frame with expected columns if no data
+    # Combine all columns
+    cols.extend(sales_cols + store_med_cols + item_med_cols)
+
+    # Return empty DataFrame with all columns if no records
     if not records:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=cols)
 
-    return df_result[columns]
+    df = pd.DataFrame(records)
+    return df[cols]
 
 
 # def generate_nonoverlap_window_features(
