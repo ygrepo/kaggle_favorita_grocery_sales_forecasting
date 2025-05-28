@@ -139,6 +139,47 @@ def generate_nonoverlap_window_features(
     )
 
 
+def add_next_window_targets(
+    merged_df: pd.DataFrame, window_size: int = 16
+) -> pd.DataFrame:
+    """
+    Adds next-window shifted targets for:
+      - sales_day_i → y_sales_day_i
+      - store_med_day_i → y_store_med_day_i
+      - item_med_day_i → y_item_med_day_i
+      - dayofweek/ weekofmonth cyclical features → y_feature_trig_i
+
+    Parameters:
+        merged_df : pd.DataFrame
+            Output from merging cyclical and sales feature data.
+        window_size : int
+            Number of days in the input/output window.
+
+    Returns:
+        pd.DataFrame with target columns y_*
+    """
+    df = merged_df.sort_values(["store_item", "start_date"]).copy()
+
+    # --- Sales targets ---
+    for i in range(1, window_size + 1):
+        df[f"y_sales_day_{i}"] = df.groupby("store_item")[f"sales_day_{i}"].shift(-1)
+        df[f"y_store_med_day_{i}"] = df.groupby("store_item")[
+            f"store_med_day_{i}"
+        ].shift(-1)
+        df[f"y_item_med_day_{i}"] = df.groupby("store_item")[f"item_med_day_{i}"].shift(
+            -1
+        )
+
+    # --- Cyclical feature targets ---
+    for i in range(1, window_size + 1):
+        for feature in ["dayofweek", "weekofmonth", "monthofyear"]:
+            for trig in ["sin", "cos"]:
+                col = f"{feature}_{trig}_{i}"
+                df[f"y_{col}"] = df.groupby("store_item")[col].shift(-1)
+
+    return df
+
+
 def prepare_training_data_from_raw_df(
     df: pd.DataFrame, window_size: int = 16, dropna_targets: bool = True
 ) -> pd.DataFrame:
@@ -329,39 +370,6 @@ def prepare_training_data_from_raw_df(
 
 #     df = pd.DataFrame(records)
 #     return df[cols]
-
-
-def add_next_window_targets(
-    merged_df: pd.DataFrame, window_size: int = 16
-) -> pd.DataFrame:
-    """
-    Adds next-window shifted targets for:
-      - sales_day_i → y_sales_day_i
-      - dayofweek/ weekofmonth cyclical features → y_feature_trig_i
-
-    Parameters:
-        merged_df : pd.DataFrame
-            Output from merging cyclical and sales feature data.
-        window_size : int
-            Number of days in the input/output window.
-
-    Returns:
-        pd.DataFrame with target columns y_*
-    """
-    df = merged_df.sort_values(["store_item", "start_date"]).copy()
-
-    # --- Sales targets ---
-    for i in range(1, window_size + 1):
-        df[f"y_sales_day_{i}"] = df.groupby("store_item")[f"sales_day_{i}"].shift(-1)
-
-    # --- Cyclical feature targets ---
-    for i in range(1, window_size + 1):
-        for feature in ["dayofweek", "weekofmonth"]:
-            for trig in ["sin", "cos"]:
-                col = f"{feature}_{trig}_{i}"
-                df[f"y_{col}"] = df.groupby("store_item")[col].shift(-1)
-
-    return df
 
 
 # def generate_nonoverlap_window_features(

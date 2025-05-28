@@ -8,6 +8,7 @@ from sklearn.model_selection import TimeSeriesSplit, KFold
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
+from datetime import datetime
 
 
 class StoreItemDataset(Dataset):
@@ -60,7 +61,7 @@ class NWRMSLELoss(nn.Module):
 
 def train(
     df: pd.DataFrame,
-    scaler: object,
+    y_scaler: object,
     weights_df: pd.DataFrame,
     feature_cols: List[str],
     label_cols: List[str],
@@ -90,7 +91,7 @@ def train(
         # --- Prepare sid-specific data
         sub = (
             df[df["store_item"] == sid]
-            .sort_values("date")
+            .sort_values("start_date")
             .reset_index(drop=True)
             .merge(weights_df, on=item_col, how="left")
         )
@@ -101,23 +102,23 @@ def train(
 
         # train/test 80/20 by time
         train_size = int(len(sub) * train_frac)
-        X_tr, X_te = X[:train_size], X[train_size:]
-        y_tr, y_te = y[:train_size], y[train_size:]
-        w_tr, w_te = w[:train_size], w[train_size:]
+        X_train, X_test = X[:train_size], X[train_size:]
+        y_train, y_test = y[:train_size], y[train_size:]
+        w_train, w_test = w[:train_size], w[train_size:]
 
         # DataLoaders
-        ds_tr = TensorDataset(
-            torch.from_numpy(X_tr).float(),
-            torch.from_numpy(y_tr).float(),
-            torch.from_numpy(w_tr).float(),
+        ds_train = TensorDataset(
+            torch.from_numpy(X_train).float(),
+            torch.from_numpy(y_train).float(),
+            torch.from_numpy(w_train).float(),
         )
-        ds_te = TensorDataset(
-            torch.from_numpy(X_te).float(),
-            torch.from_numpy(y_te).float(),
-            torch.from_numpy(w_te).float(),
+        ds_test = TensorDataset(
+            torch.from_numpy(X_test).float(),
+            torch.from_numpy(y_test).float(),
+            torch.from_numpy(w_test).float(),
         )
-        ld_tr = DataLoader(ds_tr, batch_size=batch_size, shuffle=False)
-        ld_te = DataLoader(ds_te, batch_size=batch_size, shuffle=False)
+        ld_train = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
+        ld_test = DataLoader(ds_test, batch_size=batch_size, shuffle=False)
 
         # init model, loss, optimizer
         model = ShallowNN(input_dim=len(feature_cols)).to(device)
@@ -129,7 +130,7 @@ def train(
             # train
             model.train()
             tr_loss_acc = 0.0
-            for xb, yb, wb in ld_tr:
+            for xb, yb, wb in ld_train:
                 xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
                 preds = model(xb)
                 loss = loss_fn(preds, yb, wb)
@@ -137,15 +138,25 @@ def train(
                 loss.backward()
                 optim.step()
                 tr_loss_acc += loss.item() * xb.size(0)
-            tr_loss = tr_loss_acc / len(ds_tr)
+            tr_loss = tr_loss_acc / len(ds_train)
 
             # test
             model.eval()
             num, den = 0.0, 0.0
             with torch.no_grad():
-                for xb, yb, wb in ld_te:
+                for xb, yb, wb in ld_test:
                     xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
+                    if torch.any(torch.isnan(yb)) or torch.any(yb < 0):
+                        print(
+                            f"[{sid}] Warning: yb has NaN or negative values in test set at epoch {epoch}"
+                        )
+                        print(yb)
                     p = model(xb).clamp(min=1e-6)
+                    if torch.any(torch.isnan(p)) or torch.any(p < 0):
+                        print(
+                            f"[{sid}] Warning: p has NaN or negative values at epoch {epoch}"
+                        )
+                        print(p)
                     ld = torch.log(p + 1) - torch.log(yb + 1)
                     num += (wb * ld**2).sum().item()
                     den += wb.sum().item()
@@ -156,24 +167,24 @@ def train(
             abs_tr_sum = 0.0
             count_tr = 0
             with torch.no_grad():
-                for xb, yb, _ in ld_tr:
+                for xb, yb, _ in ld_train:
                     xb, yb = xb.to(device), yb.to(device)
                     p = model(xb)
-                    p_np = scaler.inverse_transform(p.cpu().numpy())
-                    yb_np = scaler.inverse_transform(yb.cpu().numpy())
+                    p_np = y_scaler.inverse_transform(p.cpu().numpy())
+                    yb_np = y_scaler.inverse_transform(yb.cpu().numpy())
                     abs_tr_sum += np.sum(np.abs(p_np - yb_np))
                     count_tr += yb_np.size
             true_train_mae = abs_tr_sum / count_tr
 
-            # — TRUE TEST MAE —
+            # TRUE TEST MAE
             abs_te_sum = 0.0
             count_te = 0
             with torch.no_grad():
-                for xb, yb, _ in ld_te:
+                for xb, yb, _ in ld_test:
                     xb, yb = xb.to(device), yb.to(device)
                     p = model(xb)
-                    p_np = scaler.inverse_transform(p.cpu().numpy())
-                    yb_np = scaler.inverse_transform(yb.cpu().numpy())
+                    p_np = y_scaler.inverse_transform(p.cpu().numpy())
+                    yb_np = y_scaler.inverse_transform(yb.cpu().numpy())
                     abs_te_sum += np.sum(np.abs(p_np - yb_np))
                     count_te += yb_np.size
             true_test_mae = abs_te_sum / count_te
@@ -191,12 +202,13 @@ def train(
 
             print(
                 f"[{sid}] Epoch {epoch}/{epochs} "
-                f"– train_RMSLE {tr_loss:.4f}, train_MAE {true_train_mae:.4f}, "
+                f"train_RMSLE {tr_loss:.4f}, train_MAE {true_train_mae:.4f}, "
                 f"test_RMSLE {te_loss:.4f}, test_MAE {true_test_mae:.4f}"
             )
 
         # save to disk
-        save_path = os.path.join(model_dir, f"model_{sid}.pth")
+        today_str = datetime.today().strftime("%Y-%m-%d")
+        save_path = os.path.join(model_dir, f"model_{sid}_{today_str}.pth")
         torch.save(
             {
                 "sid": sid,
