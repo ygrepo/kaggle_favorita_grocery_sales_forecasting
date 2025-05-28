@@ -42,6 +42,11 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     df["weekofmonth"] = df["date"].apply(lambda d: (d.day - 1) // 7 + 1)
     df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5)
     df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5)
+    # Compute monthofyear
+    df["monthofyear"] = df["date"].dt.month
+    # Cyclical encoding (sine and cosine)
+    df["monthofyear_sin"] = np.sin(2 * np.pi * df["monthofyear"] / 12)
+    df["monthofyear_cos"] = np.cos(2 * np.pi * df["monthofyear"] / 12)
 
     windows_by_item = generate_itemwise_sliding_windows(df, window_size)
     results = []
@@ -64,7 +69,7 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
 
             for i in range(window_size):
                 r = window_df.iloc[i]
-                for f in ["dayofweek", "weekofmonth"]:
+                for f in ["dayofweek", "weekofmonth", "monthofyear"]:
                     for t in ["sin", "cos"]:
                         row[f"{f}_{t}_{i+1}"] = r[f"{f}_{t}"]
 
@@ -73,7 +78,7 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     # Column ordering
     cols = ["start_date", "store_item", "store", "item"]
     for i in range(1, window_size + 1):
-        for feature in ["dayofweek", "weekofmonth"]:
+        for feature in ["dayofweek", "weekofmonth", "monthofyear"]:
             for trig in ["sin", "cos"]:
                 cols.append(f"{feature}_{trig}_{i}")
 
@@ -164,22 +169,25 @@ def prepare_training_data_from_raw_df(
 
     # Generate features
     cyc_df = generate_cyclical_features(df, window_size)
+    print(cyc_df.shape)
     sales_df = generate_nonoverlap_window_features(df, window_size)
+    print(sales_df.shape)
 
     # Merge features
-    merged_df = pd.merge(
+    sales_df = pd.merge(
         cyc_df, sales_df, on=["start_date", "store_item", "store", "item"], how="inner"
     )
 
     # Add targets
-    full_df = add_next_window_targets(merged_df, window_size)
+    sales_df = add_next_window_targets(sales_df, window_size)
 
     # Drop NaNs in any y_ column if requested
     if dropna_targets:
-        y_cols = [col for col in full_df.columns if col.startswith("y_")]
-        full_df = full_df.dropna(subset=y_cols)
+        y_cols = [col for col in sales_df.columns if col.startswith("y_")]
+        sales_df = sales_df.dropna(subset=y_cols)
 
-    return full_df
+    print(sales_df.shape)
+    return sales_df
 
 
 # def generate_aligned_windows(df, window_size):
