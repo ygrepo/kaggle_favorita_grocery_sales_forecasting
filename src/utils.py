@@ -134,6 +134,54 @@ def generate_nonoverlap_window_features(
     )
 
 
+def prepare_training_data_from_raw_df(
+    df: pd.DataFrame, window_size: int = 16, dropna_targets: bool = True
+) -> pd.DataFrame:
+    """
+    Full preprocessing pipeline:
+    - Compute sales and cyclical features from raw daily data
+    - Merge on sliding aligned windows
+    - Add next-window-shifted targets
+    - Optionally drop rows with incomplete y_ targets
+
+    Parameters:
+    ----------
+    df : pd.DataFrame
+        Input raw DataFrame with columns ["store", "item", "date", "unit_sales"]
+    window_size : int
+        Number of days in each window
+    dropna_targets : bool
+        Whether to drop rows with missing future target values (recommended for training)
+
+    Returns:
+    -------
+    pd.DataFrame
+        Cleaned and enriched training-ready dataset
+    """
+    # Ensure proper date format
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+
+    # Generate features
+    cyc_df = generate_cyclical_features(df, window_size)
+    sales_df = generate_nonoverlap_window_features(df, window_size)
+
+    # Merge features
+    merged_df = pd.merge(
+        cyc_df, sales_df, on=["start_date", "store_item", "store", "item"], how="inner"
+    )
+
+    # Add targets
+    full_df = add_next_window_targets(merged_df, window_size)
+
+    # Drop NaNs in any y_ column if requested
+    if dropna_targets:
+        y_cols = [col for col in full_df.columns if col.startswith("y_")]
+        full_df = full_df.dropna(subset=y_cols)
+
+    return full_df
+
+
 # def generate_aligned_windows(df, window_size):
 #     """
 #     Returns a list of aligned non-overlapping windows (including partial at end),
