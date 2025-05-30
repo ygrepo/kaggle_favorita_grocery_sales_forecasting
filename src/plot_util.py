@@ -7,7 +7,12 @@ from scipy.stats import sem, t
 
 
 def plot_loss_with_comparison(
-    hist_df_current, hist_df_previous=None, overall_title=None, fn=None, show_ci=False
+    hist_df_current,
+    hist_df_previous=None,
+    overall_title=None,
+    fn=None,
+    xvline=None,
+    show_ci=False,
 ):
     def compute_summary_stats(df, loss_col):
         grouped = df.groupby("epoch")[loss_col]
@@ -57,7 +62,7 @@ def plot_loss_with_comparison(
 
     ax_tr.set_title("Train Loss by Epoch", fontsize=16, fontweight="bold")
     ax_tr.set_ylabel("Train Loss", fontsize=14)
-    ax_tr.axvline(x=35, color="green", linestyle="--", label="Epoch 35")
+    ax_tr.axvline(x=xvline, color="green", linestyle="--", label=f"Epoch {xvline}")
 
     # ---- Validation Loss Plot ----
     ax_te.plot(epochs, med_te, color="orange", label="Median Val (Current)")
@@ -82,7 +87,7 @@ def plot_loss_with_comparison(
     ax_te.set_title("Validation Loss by Epoch", fontsize=16, fontweight="bold")
     ax_te.set_xlabel("Epoch", fontsize=14)
     ax_te.set_ylabel("Validation Loss", fontsize=14)
-    ax_te.axvline(x=35, color="green", linestyle="--", label="Epoch 35")
+    ax_te.axvline(x=50, color="green", linestyle="--", label="Epoch 50")
 
     # Shared formatting
     for ax in (ax_tr, ax_te):
@@ -204,7 +209,7 @@ def plot_all_sids_losses(hist_df, overall_title=None, fn=None):
     plt.close(fig)
 
 
-def plot_median_iqr_loss(hist_df, overall_title=None, fn=None):
+def plot_median_iqr_loss(hist_df, overall_title=None, fn=None, xvline=None):
     epochs = sorted(hist_df["epoch"].unique())
 
     # Group data by epoch
@@ -250,7 +255,7 @@ def plot_median_iqr_loss(hist_df, overall_title=None, fn=None):
         ax.tick_params(axis="x", which="major", length=6, labelsize=12)
         ax.tick_params(axis="y", which="major", length=6, labelsize=12)
         ax.legend(fontsize=12)
-        ax.axvline(x=35, linestyle="--", color="green", label="Epoch 35")
+        ax.axvline(x=xvline, linestyle="--", color="green", label=f"Epoch {xvline}")
 
     if overall_title:
         fig.suptitle(overall_title, fontsize=20, fontweight="bold")
@@ -265,7 +270,13 @@ def plot_median_iqr_loss(hist_df, overall_title=None, fn=None):
 
 
 def plot_loss_per_sid(
-    hist_df, title, sid, fn, train_col="train_loss", test_col="test_loss"
+    hist_df,
+    title,
+    sid,
+    fn,
+    y_label="Loss",
+    train_col="train_loss",
+    test_col="test_loss",
 ):
     """
     Plot train and test loss vs. epoch for a given store_item (sid),
@@ -284,7 +295,7 @@ def plot_loss_per_sid(
     # titles & labels
     ax.set_title(title, fontsize=24, fontweight="bold")
     ax.set_xlabel("Epoch", fontsize=16, fontweight="bold")
-    ax.set_ylabel("Loss", fontsize=16, fontweight="bold")
+    ax.set_ylabel(y_label, fontsize=16, fontweight="bold")
 
     # --- Dynamic x-axis ticks ---
     x_min, x_max = df["epoch"].min(), df["epoch"].max()

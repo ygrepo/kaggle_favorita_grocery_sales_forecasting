@@ -517,49 +517,94 @@ def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
     return store_item_id, model, feature_columns
 
 
-def load_models_from_dir(model_dir="../output/models/"):
+def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
     """
-    Loads all models from the specified directory and returns a dictionary
-    mapping store_item identifiers to their respective model and feature columns.
+    Loads models from the specified directory, optionally filtering by date_str.
+    Returns a dictionary mapping store_item identifiers to their model and feature columns.
 
     Args:
-        model_dir (str): The directory path containing the saved model files.
+        model_dir (str): Directory containing saved model files.
+        date_str (str): Date string to filter models (e.g., '2025-05-29'). If empty, loads all.
 
     Returns:
-        dict: A dictionary where each key is a store_item identifier (sid) and
-              the value is a tuple containing the model and its feature columns.
+        dict: Mapping store_item ID -> (model, feature_cols)
     """
     models = {}
     for filename in os.listdir(model_dir):
         if filename.endswith(".pth"):
+            if date_str and not filename.endswith(f"_{date_str}.pth"):
+                continue  # Skip non-matching date files
             model_path = os.path.join(model_dir, filename)
             sid, model, feature_cols = load_model(model_path)
             models[sid] = (model, feature_cols)
     return models
 
 
-def predict(model, data):
+def predict_next_days_for_sid(
+    sid: str,
+    last_date_df: pd.DataFrame,
+    models: dict,
+    y_scaler,
+    days_to_predict: int = 16,
+) -> pd.DataFrame:
+    model, feature_cols = models[sid]
+    model.eval()
+
+    input_data = last_date_df.query(f"store_item == '{sid}'")
+    x = input_data[feature_cols].values.astype("float32")
+    x_tensor = torch.tensor(x)
+
     with torch.no_grad():
-        inputs = torch.tensor(data.values, dtype=torch.float32)
-        outputs = model(inputs)
-        return outputs.numpy()
+        y_pred = model(x_tensor)
+
+    y_pred_scaled = pd.DataFrame(y_pred.numpy(), columns=feature_cols)
+    y_pred_df = pd.DataFrame(
+        y_scaler.inverse_transform(y_pred_scaled), columns=feature_cols
+    )
+
+    sales_day_cols = [col for col in y_pred_df.columns if col.startswith("sales_day_")]
+    sales_pred_df = y_pred_df[sales_day_cols]
+
+    meta = input_data.iloc[0][["store_item", "store", "item"]].to_dict()
+    start_date = pd.to_datetime(input_data.iloc[0]["start_date"]) + pd.Timedelta(
+        days=15
+    )
+
+    rows = []
+    for i, col in enumerate(sales_day_cols[:days_to_predict]):
+        row = {
+            "date": start_date + pd.Timedelta(days=i + 1),
+            **meta,
+            "unit_sales": sales_pred_df.at[0, col],
+        }
+        rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
-# def predict(
-#     df: pd.DataFrame,
-#     models: Dict[str, Tuple[nn.Module, List[str]]],
-#     feature_cols: List[str],
-#     label_cols: List[str],
-#     item_col: str,
-#     model_dir: str = "../output/models/",
-# ):
-#     """
-#     Predicts the target values for the given DataFrame using the provided models.
+def predict_next_days_for_sids(
+    last_date_df: pd.DataFrame, models: dict, y_scaler, days_to_predict: int = 16
+) -> pd.DataFrame:
+    """
+    Predicts the next `days_to_predict` days for all store_items present in the models dict.
 
-#     Args:
-#         df (pd.DataFrame): The DataFrame containing the input features.
-#         models (Dict[str, Tuple[nn.Module, List[str]]]): A dictionary mapping
-#             store_item identifiers to tuples containing the model and its
-#             feature columns.
-#         feature_cols (List[str]): The list of feature column names.
-#         label_cols (List[str]): The list of label column names.
+    Args:
+        last_date_df (pd.DataFrame): Latest input row per store_item.
+        models (dict): Dict of store_item -> (model, feature_cols).
+        y_scaler (MinMaxScaler): Fitted scaler to inverse-transform predictions.
+        days_to_predict (int): Number of days to forecast per store_item.
+
+    Returns:
+        pd.DataFrame: Combined predictions for all store_items.
+    """
+    all_preds = []
+    for sid in models.keys():
+        try:
+            pred_df = predict_next_days_for_sid(
+                sid, last_date_df, models, y_scaler, days_to_predict
+            )
+            all_preds.append(pred_df)
+        except Exception as e:
+            print(f"Skipping {sid} due to error: {e}")
+
+    return pd.concat(all_preds, ignore_index=True)
