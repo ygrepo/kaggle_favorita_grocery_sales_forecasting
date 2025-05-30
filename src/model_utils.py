@@ -65,6 +65,7 @@ def train(
     weights_df: pd.DataFrame,
     feature_cols: List[str],
     label_cols: List[str],
+    y_sales_features: list[str],
     item_col: str,
     train_frac: float = 0.8,
     batch_size: int = 32,
@@ -170,10 +171,23 @@ def train(
                 for xb, yb, _ in ld_train:
                     xb, yb = xb.to(device), yb.to(device)
                     p = model(xb)
-                    p_np = y_scaler.inverse_transform(p.cpu().numpy())
-                    yb_np = y_scaler.inverse_transform(yb.cpu().numpy())
-                    abs_tr_sum += np.sum(np.abs(p_np - yb_np))
-                    count_tr += yb_np.size
+
+                    # Inverse MinMax scaling
+                    p_inv = y_scaler.inverse_transform(p.cpu().numpy())
+                    yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
+
+                    # Apply expm1 ONLY to the sales columns
+                    sales_idx = [label_cols.index(col) for col in y_sales_features]
+
+                    p_actual = p_inv.copy()
+                    yb_actual = yb_inv.copy()
+                    p_actual[:, sales_idx] = np.expm1(p_actual[:, sales_idx])
+                    yb_actual[:, sales_idx] = np.expm1(yb_actual[:, sales_idx])
+
+                    # MAE in original scale
+                    abs_tr_sum += np.sum(np.abs(p_actual - yb_actual))
+                    count_tr += yb_actual.size
+
             true_train_mae = abs_tr_sum / count_tr
 
             # TRUE TEST MAE
@@ -183,11 +197,23 @@ def train(
                 for xb, yb, _ in ld_test:
                     xb, yb = xb.to(device), yb.to(device)
                     p = model(xb)
-                    p_np = y_scaler.inverse_transform(p.cpu().numpy())
-                    yb_np = y_scaler.inverse_transform(yb.cpu().numpy())
-                    abs_te_sum += np.sum(np.abs(p_np - yb_np))
-                    count_te += yb_np.size
+
+                    # Inverse MinMax scaling
+                    p_inv = y_scaler.inverse_transform(p.cpu().numpy())
+                    yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
+
+                    # Apply expm1 ONLY to the sales columns
+                    p_actual = p_inv.copy()
+                    yb_actual = yb_inv.copy()
+                    p_actual[:, sales_idx] = np.expm1(p_actual[:, sales_idx])
+                    yb_actual[:, sales_idx] = np.expm1(yb_actual[:, sales_idx])
+
+                    # MAE in original scale
+                    abs_te_sum += np.sum(np.abs(p_actual - yb_actual))
+                    count_te += yb_actual.size
+
             true_test_mae = abs_te_sum / count_te
+
             # record everything
             history.append(
                 {
@@ -564,6 +590,7 @@ def predict_next_days_for_sid(
 
     sales_day_cols = [col for col in y_pred_df.columns if col.startswith("sales_day_")]
     sales_pred_df = y_pred_df[sales_day_cols]
+    sales_pred_df = np.expm1(sales_pred_df)
 
     meta = input_data.iloc[0][["store_item", "store", "item"]].to_dict()
     start_date = pd.to_datetime(input_data.iloc[0]["start_date"]) + pd.Timedelta(
