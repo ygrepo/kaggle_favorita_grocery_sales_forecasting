@@ -3,12 +3,15 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader, Subset
 from torch.utils.data import TensorDataset, DataLoader
+from sklearn.preprocessing import MinMaxScaler
+import random
 
 from sklearn.model_selection import TimeSeriesSplit, KFold
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
 from datetime import datetime
+import pickle
 
 
 class StoreItemDataset(Dataset):
@@ -35,10 +38,12 @@ class ShallowNN(nn.Module):
         output_dim = output_dim or input_dim
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.Tanh(),
+            # nn.Tanh(),
+            nn.LeakyReLU(),
+            # nn.Dropout(0.2),
             nn.Linear(hidden_dim, output_dim),
-            # nn.Hardtanh(min_val=0.0, max_val=1.0),  # clips to [0,1]
-            nn.Sigmoid(),  # outputs in (0,1)
+            nn.Hardtanh(min_val=0.0, max_val=1.0),  # clips to [0,1]
+            # nn.Sigmoid(),  # outputs in (0,1)
         )
 
     def forward(self, x):
@@ -59,81 +64,180 @@ class NWRMSLELoss(nn.Module):
         return torch.sqrt(num / den)
 
 
+class HybridLoss(nn.Module):
+    def __init__(self, alpha=0.8):
+        super().__init__()
+        self.alpha = alpha
+
+    def forward(self, y_pred, y_true, w):
+        eps = 1e-6
+        y_pred = torch.clamp(y_pred, min=eps)
+        log_diff = torch.log(y_pred + 1.0) - torch.log(y_true + 1.0)
+        nwrmsle = torch.sqrt(torch.sum(w * log_diff**2) / torch.sum(w))
+        mae = torch.sum(w * torch.abs(y_pred - y_true)) / torch.sum(w)
+        return self.alpha * nwrmsle + (1 - self.alpha) * mae
+
+
+def compute_rmsle_manual(loader, model, device, eps=1e-6):
+    model.eval()
+    total_num, total_den = 0.0, 0.0
+
+    with torch.no_grad():
+        for xb, yb, wb in loader:
+            xb = xb.to(device)
+            yb = torch.clamp(yb.to(device), min=eps)
+            wb = wb.to(device)
+
+            preds = torch.clamp(model(xb), min=eps)
+
+            log_diff = torch.log(preds + 1.0) - torch.log(yb + 1.0)
+            weighted_sq_diff = wb * log_diff**2
+
+            # Valid (finite) mask
+            mask = torch.isfinite(weighted_sq_diff)
+
+            # Only count valid loss terms
+            safe_values = weighted_sq_diff[mask]
+            total_num += safe_values.sum().item()
+
+            # Count valid weights using same mask, broadcast-safe
+            valid_weights = wb.expand_as(weighted_sq_diff)[mask]
+            total_den += valid_weights.sum().item()
+
+    rmsle = (total_num / (total_den + eps)) ** 0.5
+    if np.isnan(rmsle):
+        print("Final RMSLE is NaN")
+        print("Numerator:", total_num)
+        print("Denominator:", total_den)
+    return rmsle
+
+
+def set_seed(seed: int = 42):
+    """Set seed for reproducibility across random, numpy, and torch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # for multi-GPU
+
+    # Ensure deterministic behavior
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # For full reproducibility in future versions
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def compute_mae(loader, model, device, y_scaler, sales_idx):
+    abs_sum, count = 0.0, 0
+    with torch.no_grad():
+        for xb, yb, _ in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            p = model(xb)
+            p_inv = y_scaler.inverse_transform(p.cpu().numpy())
+            yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
+            p_inv[:, sales_idx] = np.expm1(p_inv[:, sales_idx])
+            yb_inv[:, sales_idx] = np.expm1(yb_inv[:, sales_idx])
+            abs_sum += np.sum(np.abs(p_inv - yb_inv))
+            count += yb_inv.size
+    return abs_sum / count
+
+
 def train(
     df: pd.DataFrame,
-    y_scaler: object,
     weights_df: pd.DataFrame,
     feature_cols: List[str],
     label_cols: List[str],
-    y_sales_features: list[str],
+    y_sales_features: List[str],
+    y_cyclical_features: List[str],
     item_col: str,
     train_frac: float = 0.8,
     batch_size: int = 32,
     lr: float = 1e-3,
     epochs: int = 5,
     seed: int = 2025,
+    output_dir: str = "../output/data/",
     model_dir: str = "../output/models/",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, torch.nn.Module]]:
-    """
-    Trains a separate ShallowNN on each store_item's time series (no CV),
-    does an 80/20 split by time, saves each model, and returns:
-      - hist_df: per-epoch train/test losses
-      - summary_df: final losses by store_item
-      - models: dict mapping store_item -> trained model (on CPU)
-    """
-    torch.manual_seed(seed)
+
+    set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(model_dir, exist_ok=True)
 
     history = []
     models: Dict[str, torch.nn.Module] = {}
+    x_scalers: Dict[str, MinMaxScaler] = {}
+    y_scalers: Dict[str, MinMaxScaler] = {}
 
+    today_str = datetime.today().strftime("%Y-%m-%d")
     for sid in df["store_item"].unique():
-        # --- Prepare sid-specific data
         sub = (
             df[df["store_item"] == sid]
             .sort_values("start_date")
             .reset_index(drop=True)
             .merge(weights_df, on=item_col, how="left")
         )
+        # sub = sub.dropna(subset=label_cols + feature_cols)
 
-        X = sub[feature_cols].to_numpy(float)
-        y = sub[label_cols].to_numpy(float)
-        w = sub["weight"].to_numpy(float).reshape(-1, 1)
-
-        # train/test 80/20 by time
         train_size = int(len(sub) * train_frac)
-        X_train, X_test = X[:train_size], X[train_size:]
-        y_train, y_test = y[:train_size], y[train_size:]
+        X_train = sub[feature_cols][:train_size]
+        X_test = sub[feature_cols][train_size:]
+
+        y_train = sub[label_cols][:train_size]
+        y_test = sub[label_cols][train_size:]
+
+        x_scaler = MinMaxScaler()
+        X_train_scaled = x_scaler.fit_transform(X_train)
+        fn = f"{output_dir}/{today_str}_x_scaler_{sid}.pkl"
+        with open(fn, "wb") as f:
+            pickle.dump(x_scaler, f)
+        X_test_scaled = x_scaler.transform(X_test)
+
+        y_train_sales = y_train[y_sales_features].clip(lower=0)
+        y_test_sales = y_test[y_sales_features].clip(lower=0)
+        y_train_sales_log = np.log1p(y_train_sales)
+        y_test_sales_log = np.log1p(y_test_sales)
+
+        y_train_cyc = y_train[y_cyclical_features]
+        y_test_cyc = y_test[y_cyclical_features]
+        y_train_full = pd.concat([y_train_sales_log, y_train_cyc], axis=1)
+        y_test_full = pd.concat([y_test_sales_log, y_test_cyc], axis=1)
+
+        y_scaler = MinMaxScaler()
+        y_train_scaled = y_scaler.fit_transform(y_train_full)
+        fn = f"{output_dir}/{today_str}_y_scaler_{sid}.pkl"
+        with open(fn, "wb") as f:
+            pickle.dump(y_scaler, f)
+        y_test_scaled = y_scaler.transform(y_test_full)
+
+        w = sub["weight"].to_numpy(float).reshape(-1, 1)
         w_train, w_test = w[:train_size], w[train_size:]
 
-        # DataLoaders
         ds_train = TensorDataset(
-            torch.from_numpy(X_train).float(),
-            torch.from_numpy(y_train).float(),
+            torch.from_numpy(X_train_scaled).float(),
+            torch.from_numpy(y_train_scaled).float(),
             torch.from_numpy(w_train).float(),
         )
         ds_test = TensorDataset(
-            torch.from_numpy(X_test).float(),
-            torch.from_numpy(y_test).float(),
+            torch.from_numpy(X_test_scaled).float(),
+            torch.from_numpy(y_test_scaled).float(),
             torch.from_numpy(w_test).float(),
         )
         ld_train = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
         ld_test = DataLoader(ds_test, batch_size=batch_size, shuffle=False)
 
-        # init model, loss, optimizer
         model = ShallowNN(input_dim=len(feature_cols)).to(device)
         loss_fn = NWRMSLELoss()
         optim = torch.optim.Adam(model.parameters(), lr=lr)
 
-        # train epochs
         for epoch in range(1, epochs + 1):
-            # train
             model.train()
             tr_loss_acc = 0.0
             for xb, yb, wb in ld_train:
                 xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                preds = model(xb)
+                preds = torch.clamp(model(xb), min=1e-6)
                 loss = loss_fn(preds, yb, wb)
                 optim.zero_grad()
                 loss.backward()
@@ -141,88 +245,21 @@ def train(
                 tr_loss_acc += loss.item() * xb.size(0)
             tr_loss = tr_loss_acc / len(ds_train)
 
-            # test
             model.eval()
-            num, den = 0.0, 0.0
-            with torch.no_grad():
-                for xb, yb, wb in ld_test:
-                    xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                    if torch.any(torch.isnan(yb)) or torch.any(yb < 0):
-                        print(
-                            f"[{sid}] Warning: yb has NaN or negative values in test set at epoch {epoch}"
-                        )
-                        print(yb)
-                    p = model(xb).clamp(min=1e-6)
-                    if torch.any(torch.isnan(p)) or torch.any(p < 0):
-                        print(
-                            f"[{sid}] Warning: p has NaN or negative values at epoch {epoch}"
-                        )
-                        print(p)
-                    ld = torch.log(p + 1) - torch.log(yb + 1)
-                    num += (wb * ld**2).sum().item()
-                    den += wb.sum().item()
-            te_loss = (num / den) ** 0.5
+            te_loss = compute_rmsle_manual(ld_test, model, device)
 
-            # — TRUE TRAIN MAE —
-            model.eval()
-            abs_tr_sum = 0.0
-            count_tr = 0
-            with torch.no_grad():
-                for xb, yb, _ in ld_train:
-                    xb, yb = xb.to(device), yb.to(device)
-                    p = model(xb)
+            sales_idx = [label_cols.index(col) for col in y_sales_features]
+            true_train_mae = compute_mae(ld_train, model, device, y_scaler, sales_idx)
+            true_test_mae = compute_mae(ld_test, model, device, y_scaler, sales_idx)
 
-                    # Inverse MinMax scaling
-                    p_inv = y_scaler.inverse_transform(p.cpu().numpy())
-                    yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
-
-                    # Apply expm1 ONLY to the sales columns
-                    sales_idx = [label_cols.index(col) for col in y_sales_features]
-
-                    p_actual = p_inv.copy()
-                    yb_actual = yb_inv.copy()
-                    p_actual[:, sales_idx] = np.expm1(p_actual[:, sales_idx])
-                    yb_actual[:, sales_idx] = np.expm1(yb_actual[:, sales_idx])
-
-                    # MAE in original scale
-                    abs_tr_sum += np.sum(np.abs(p_actual - yb_actual))
-                    count_tr += yb_actual.size
-
-            true_train_mae = abs_tr_sum / count_tr
-
-            # TRUE TEST MAE
-            abs_te_sum = 0.0
-            count_te = 0
-            with torch.no_grad():
-                for xb, yb, _ in ld_test:
-                    xb, yb = xb.to(device), yb.to(device)
-                    p = model(xb)
-
-                    # Inverse MinMax scaling
-                    p_inv = y_scaler.inverse_transform(p.cpu().numpy())
-                    yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
-
-                    # Apply expm1 ONLY to the sales columns
-                    p_actual = p_inv.copy()
-                    yb_actual = yb_inv.copy()
-                    p_actual[:, sales_idx] = np.expm1(p_actual[:, sales_idx])
-                    yb_actual[:, sales_idx] = np.expm1(yb_actual[:, sales_idx])
-
-                    # MAE in original scale
-                    abs_te_sum += np.sum(np.abs(p_actual - yb_actual))
-                    count_te += yb_actual.size
-
-            true_test_mae = abs_te_sum / count_te
-
-            # record everything
             history.append(
                 {
                     "store_item": sid,
                     "epoch": epoch,
-                    "train_loss": tr_loss,  # your original
-                    "train_mae": true_train_mae,  # NEW MAE on train
-                    "test_loss": te_loss,  # RMSLE on test
-                    "test_mae": true_test_mae,  # NEW MAE on test
+                    "train_loss": tr_loss,
+                    "train_mae": true_train_mae,
+                    "test_loss": te_loss,
+                    "test_mae": true_test_mae,
                 }
             )
 
@@ -232,9 +269,7 @@ def train(
                 f"test_RMSLE {te_loss:.4f}, test_MAE {true_test_mae:.4f}"
             )
 
-        # save to disk
-        today_str = datetime.today().strftime("%Y-%m-%d")
-        save_path = os.path.join(model_dir, f"model_{sid}_{today_str}.pth")
+        save_path = os.path.join(model_dir, f"{today_str}_model_{sid}.pth")
         torch.save(
             {
                 "sid": sid,
@@ -248,10 +283,17 @@ def train(
         )
         print(f"Saved model for {sid} to {save_path}")
 
-        # keep in memory (on CPU) as well
         models[sid] = model.cpu()
+        x_scalers[sid] = x_scaler
+        y_scalers[sid] = y_scaler
 
-    # build DataFrames
+    # Save all scalers
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    with open(os.path.join(output_dir, f"{today_str}_x_scalers.pkl"), "wb") as f:
+        pickle.dump(x_scalers, f)
+    with open(os.path.join(output_dir, f"{today_str}_y_scalers.pkl"), "wb") as f:
+        pickle.dump(y_scalers, f)
+
     hist_df = pd.DataFrame(history)
     summary_df = (
         hist_df.groupby("store_item")
@@ -543,6 +585,33 @@ def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
     return store_item_id, model, feature_columns
 
 
+def load_scalers(
+    output_dir: str = "../output/data/", date_str: str = ""
+) -> Tuple[Dict[str, MinMaxScaler], Dict[str, MinMaxScaler]]:
+    x_scalers = {}
+    y_scalers = {}
+
+    for filename in os.listdir(output_dir):
+        if date_str and not filename.startswith(f"{date_str}"):
+            continue
+
+        full_path = os.path.join(output_dir, filename)
+        parts = filename.replace(".pkl", "").split("_")
+
+        if filename.startswith(f"{date_str}_x_scaler_"):
+            # Join last two parts to form store_item ID
+            store_item = f"{parts[-2]}_{parts[-1]}"
+            with open(full_path, "rb") as f:
+                x_scalers[store_item] = pickle.load(f)
+
+        elif filename.startswith(f"{date_str}_y_scaler_"):
+            store_item = f"{parts[-2]}_{parts[-1]}"
+            with open(full_path, "rb") as f:
+                y_scalers[store_item] = pickle.load(f)
+
+    return x_scalers, y_scalers
+
+
 def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
     """
     Loads models from the specified directory, optionally filtering by date_str.
@@ -570,7 +639,7 @@ def predict_next_days_for_sid(
     sid: str,
     last_date_df: pd.DataFrame,
     models: dict,
-    y_scaler,
+    y_scalers: dict,
     days_to_predict: int = 16,
 ) -> pd.DataFrame:
     model, feature_cols = models[sid]
@@ -585,7 +654,7 @@ def predict_next_days_for_sid(
 
     y_pred_scaled = pd.DataFrame(y_pred.numpy(), columns=feature_cols)
     y_pred_df = pd.DataFrame(
-        y_scaler.inverse_transform(y_pred_scaled), columns=feature_cols
+        y_scalers[sid].inverse_transform(y_pred_scaled), columns=feature_cols
     )
 
     sales_day_cols = [col for col in y_pred_df.columns if col.startswith("sales_day_")]
@@ -610,7 +679,7 @@ def predict_next_days_for_sid(
 
 
 def predict_next_days_for_sids(
-    last_date_df: pd.DataFrame, models: dict, y_scaler, days_to_predict: int = 16
+    last_date_df: pd.DataFrame, models: dict, y_scalers: dict, days_to_predict: int = 16
 ) -> pd.DataFrame:
     """
     Predicts the next `days_to_predict` days for all store_items present in the models dict.
@@ -618,7 +687,7 @@ def predict_next_days_for_sids(
     Args:
         last_date_df (pd.DataFrame): Latest input row per store_item.
         models (dict): Dict of store_item -> (model, feature_cols).
-        y_scaler (MinMaxScaler): Fitted scaler to inverse-transform predictions.
+        y_scalers (dict): Dict of store_item -> MinMaxScaler to inverse-transform predictions.
         days_to_predict (int): Number of days to forecast per store_item.
 
     Returns:
@@ -628,7 +697,7 @@ def predict_next_days_for_sids(
     for sid in models.keys():
         try:
             pred_df = predict_next_days_for_sid(
-                sid, last_date_df, models, y_scaler, days_to_predict
+                sid, last_date_df, models, y_scalers, days_to_predict
             )
             all_preds.append(pred_df)
         except Exception as e:
