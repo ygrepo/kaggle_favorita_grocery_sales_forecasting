@@ -1,8 +1,8 @@
 import pandas as pd
 from datetime import datetime
 import numpy as np
-from src.utils import (
-    generate_nonoverlap_window_features,
+from src.utils import (     
+    generate_sales_features,
     generate_cyclical_features,
     add_next_window_targets,
 )

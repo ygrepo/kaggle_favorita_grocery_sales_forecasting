@@ -405,3 +405,180 @@ def plot_sales_histogram(
         plt.savefig(fn, dpi=300)
     plt.show()
     plt.close()
+
+
+def visualize_clustered_matrix(X, U, V_list, title="Clustered Matrix", fn: str = None):
+    row_order = np.argsort(np.argmax(U, axis=1))
+    col_cluster_ids = np.zeros(X.shape[1], dtype=int)
+    for p, Vp in enumerate(V_list):
+        cluster_ids = np.argmax(Vp, axis=1)
+        mask = np.any(Vp, axis=1)
+        col_cluster_ids[mask] = cluster_ids[mask] + sum(
+            [v.shape[1] for v in V_list[:p]]
+        )
+    col_order = np.argsort(col_cluster_ids)
+    clustered_X = X[row_order, :][:, col_order]
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(clustered_X, cmap="viridis", cbar=True)
+    plt.title(title)
+    plt.xlabel("Variables (Clustered)")
+    plt.ylabel("Objects (Clustered)")
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300)
+    plt.show()
+    plt.close()
+
+
+def visualize_spectral_biclustering(
+    data, row_labels, col_labels, title="Spectral Biclustering", fn: str = None
+):
+    row_order = np.argsort(row_labels)
+    col_order = np.argsort(col_labels)
+    reordered_data = data[np.ix_(row_order, col_order)]
+
+    plt.figure(figsize=(6, 6))
+    sns.heatmap(reordered_data, cmap="viridis")
+    plt.title(title)
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300)
+    plt.show()
+    plt.close()
+
+
+def visualize_gdkm_cv_scores(results_df):
+    pivot_sil = results_df.pivot(index="P", columns="Q", values="Mean Silhouette")
+    pivot_loss = results_df.pivot(index="P", columns="Q", values="Mean Loss")
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    sns.heatmap(pivot_sil, annot=True, fmt=".2f", ax=axes[0], cmap="viridis")
+    axes[0].set_title("Mean Silhouette Score")
+    axes[0].set_xlabel("Q (Column Clusters)")
+    axes[0].set_ylabel("P (Row Clusters)")
+
+    sns.heatmap(pivot_loss, annot=True, fmt=".2f", ax=axes[1], cmap="viridis_r")
+    axes[1].set_title("Mean Loss (SSR)")
+    axes[1].set_xlabel("Q (Column Clusters)")
+    axes[1].set_ylabel("P (Row Clusters)")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_gdkm_elbow_curve(results_df):
+    """
+    Plots an elbow curve of GDKM loss vs. number of row clusters (P) for each Q.
+    This helps visualize the tradeoff in reconstruction loss as P increases.
+
+    Parameters:
+    - results_df: DataFrame returned by compute_gdkm_cv_scores
+    """
+    plt.figure(figsize=(8, 6))
+
+    for q in sorted(results_df["Q"].unique()):
+        subset = results_df[results_df["Q"] == q]
+        plt.plot(subset["P"], subset["Mean Loss"], marker="o", label=f"Q = {q}")
+
+    plt.title("GDKM Elbow Curve (Loss vs P for each Q)")
+    plt.xlabel("Number of Row Clusters (P)")
+    plt.ylabel("Mean Reconstruction Loss (SSR)")
+    plt.legend(title="Column Clusters (Q)")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_biclustering_elbow(
+    df: pd.DataFrame,
+    *,
+    title: str = "Biclustering Elbow",
+    title_fontsize: int = 24,
+    x_col: str = "n_clusters",
+    metric: str = "Explained Variance (%)",  # or "Mean Loss", "Mean Silhouette"
+    tick_step: int = 2,
+    vline_x: int | None = None,
+    vline_kwargs: dict | None = None,
+    figsize: tuple[int, int] = (9, 5),
+    fn: str | None = None,  # optional png filename
+):
+    """
+    Plot an elbow curve for Spectral Biclustering results.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Must contain columns 'n_clusters', and the chosen `metric`.
+    x_col : str
+        Column name in `df` to plot on the x‑axis.
+    metric : str
+        Column name in `df` to plot on the y‑axis.
+    fn : str or None
+        If provided, the plot is saved to this filename (dpi=300).
+    """
+    # --------------------  Plot  --------------------
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(
+        df[x_col],
+        df[metric],
+        marker="o",
+        label=metric,
+    )
+
+    ax.set_xlabel("Number of Store_Item Clusters", fontsize=16, fontweight="bold")
+    ax.set_ylabel(metric, fontsize=16, fontweight="bold")
+    ax.set_title(title, fontsize=title_fontsize, fontweight="bold")
+
+    # Force integer x‑ticks
+    # keep only every `tick_step`‑th integer
+    ticks = df[x_col]
+    sparse_ticks = ticks[::tick_step]
+    ax.set_xticks(sparse_ticks)
+    ax.set_xticklabels(sparse_ticks, rotation=0)
+
+    # -------- optional vertical line --------
+    if vline_x is not None:
+        default_line_style = dict(color="red", linestyle="--", linewidth=1.5)
+        if vline_kwargs:  # allow custom overrides
+            default_line_style.update(vline_kwargs)
+        ax.axvline(vline_x, **default_line_style)
+        # Optional text label
+        ax.text(
+            vline_x,
+            ax.get_ylim()[0],
+            f"  k={vline_x}",
+            color=default_line_style["color"],
+            va="bottom",
+            ha="left",
+            fontsize=12,
+            fontweight="bold",
+        )
+
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend()
+
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_spectral_biclustering_heatmap(results_df, fn: str = None):
+    pivot = results_df.pivot(
+        index="n_row", columns="n_col", values="Explained Variance (%)"
+    )
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(pivot, annot=True, fmt=".1f", cmap="viridis")
+    plt.title(
+        "Spectral Biclustering – % Variance Explained",
+        fontsize=24,
+        fontweight="bold",
+    )
+    plt.xlabel("n_col (column clusters)", fontsize=16, fontweight="bold")
+    plt.ylabel("n_row (row clusters)", fontsize=16, fontweight="bold")
+    plt.grid(True)
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300)
+    plt.show()
+    plt.close()

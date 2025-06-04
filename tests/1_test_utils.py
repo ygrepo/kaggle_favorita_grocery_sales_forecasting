@@ -1,15 +1,15 @@
 import pandas as pd
 from datetime import datetime
 import numpy as np
-from src.utils import generate_nonoverlap_window_features, generate_cyclical_features
+from src.utils import generate_sales_features, generate_cyclical_features
 
 import pytest
 
 
-def test_generate_nonoverlap_window_features_empty_df():
+def test_generate_sales_features_empty_df():
     """Test with empty DataFrame"""
     df = pd.DataFrame(columns=["store", "item", "date", "unit_sales"])
-    result = generate_nonoverlap_window_features(df, window_size=1)
+    result = generate_sales_features(df, window_size=1)
     assert result.empty
     assert "start_date" in result.columns
     assert "store_item" in result.columns

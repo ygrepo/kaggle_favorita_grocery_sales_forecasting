@@ -1,6 +1,10 @@
 import heapq
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import KFold
+from sklearn.metrics import adjusted_rand_score, silhouette_score
+from sklearn.cluster import SpectralBiclustering
 
 
 def generate_aligned_windows(df, window_size):
@@ -256,3 +260,276 @@ class SmoothOnlineMedian:
             raise AttributeError(
                 "History tracking is disabled. Enable debug mode to track history."
             )
+
+
+def preprocess_sales_matrix(
+    df: pd.DataFrame, log_transform=True, smooth_window=7, zscore_rows=True
+):
+    """
+    Preprocesses a pivoted sales matrix for GDKM:
+    1. Optionally applies log1p transform
+    2. Applies rolling mean smoothing
+    3. Drops rows with zero variance
+    4. Z-score normalization per row (optional)
+
+    Parameters:
+    - pivot_df: DataFrame of shape (store_item, date)
+    - log_transform: whether to apply log1p to unit_sales
+    - smooth_window: window size for rolling mean smoothing
+    - zscore_rows: whether to z-score normalize each row
+
+    Returns:
+    - X: np.ndarray, processed matrix
+    - pivot_df_filtered: filtered version of the input DataFrame
+    """
+    df = df.copy()
+
+    # Apply log(1 + x) to reduce spike influence
+    if log_transform:
+        df = np.log1p(df)
+
+    # Apply rolling mean to smooth spikes
+    df = df.rolling(window=smooth_window, axis=1, min_periods=1).mean()
+
+    # Drop rows with no variance (flat after smoothing)
+    df = df[df.var(axis=1) > 0]
+
+    # Normalize each row (Z-score)
+    if zscore_rows:
+        X = StandardScaler().fit_transform(df)
+        X = StandardScaler().fit_transform(X.T).T
+    else:
+        X = df.values
+
+    return X, df
+
+
+def compute_spectral_biclustering_row_cv_scores(
+    data,
+    n_clusters_row_range=range(2, 11),  # e.g. 2…10 clusters
+    cv_folds=3,
+    true_row_labels=None,
+):
+    """
+    Cross‑validate SpectralBiclustering over a range of row‑cluster counts
+    (one column cluster) and return a DataFrame with:
+      * Explained Variance (%)
+      * Mean Silhouette
+      * Mean ARI (if `true_row_labels` supplied)
+    """
+
+    # ------------------------------------------------------------------
+    # Helper to avoid warnings when all values are NaN
+    # ------------------------------------------------------------------
+    def _safe_mean(arr):
+        return np.nan if np.all(np.isnan(arr)) else np.nanmean(arr)
+
+    X = data.copy()
+    n_rows, _ = X.shape
+    results = []
+    kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+
+    # Restrict range so we never request more row‑clusters than rows‑1
+    max_row = min(n_rows - 1, max(n_clusters_row_range))
+    row_range = range(
+        max(2, min(n_clusters_row_range)),  # start ≥2
+        max_row + 1,  # inclusive end
+    )
+
+    for n_row in row_range:
+        print(f"Evaluating n_row = {n_row}")
+        pve_fold, sil_fold, ari_fold = [], [], []
+
+        for train_idx, test_idx in kf.split(X):
+            X_train, X_test = X[train_idx], X[test_idx]
+
+            try:
+                # --- Fit SpectralBiclustering with *row* clusters only ----
+                model = SpectralBiclustering(
+                    n_clusters=n_row,  # integer → clusters rows only
+                    method="log",
+                    random_state=42,
+                )
+                model.fit(X_train)
+
+                row_labels = model.row_labels_
+
+                # ----- % Variance Explained on test rows -----
+                global_mean = X_train.mean(axis=0)
+                total_ss = np.sum((X_test - global_mean) ** 2)
+
+                recon_err = 0.0
+                for xi in X_test:
+                    # nearest row‑cluster centroid
+                    best_err = np.inf
+                    for cid in range(n_row):
+                        mask = row_labels == cid
+                        if np.any(mask):
+                            centroid = X_train[mask].mean(axis=0)
+                            best_err = min(best_err, np.linalg.norm(xi - centroid) ** 2)
+                    recon_err += best_err
+
+                pve_fold.append(100 * (1 - recon_err / total_ss))
+
+                # ----- Assign test rows to nearest centroid -----
+                test_labels = np.array(
+                    [
+                        np.argmin(
+                            [
+                                (
+                                    np.linalg.norm(
+                                        xi - X_train[row_labels == cid].mean(axis=0)
+                                    )
+                                    if np.any(row_labels == cid)
+                                    else np.inf
+                                )
+                                for cid in range(n_row)
+                            ]
+                        )
+                        for xi in X_test
+                    ]
+                )
+
+                # ARI if ground‑truth supplied
+                if true_row_labels is not None:
+                    ari_fold.append(
+                        adjusted_rand_score(true_row_labels[test_idx], test_labels)
+                    )
+
+                # Silhouette
+                try:
+                    sil_fold.append(silhouette_score(X_test, test_labels))
+                except ValueError:  # only one label in this fold
+                    sil_fold.append(np.nan)
+
+            except Exception as e:
+                print(f"[FAIL] n_row={n_row} → {e}")
+                pve_fold.append(np.nan)
+                sil_fold.append(np.nan)
+                ari_fold.append(np.nan)
+
+        # Aggregate across CV folds
+        results.append(
+            {
+                "n_row": n_row,
+                "Explained Variance (%)": _safe_mean(pve_fold),
+                "Mean Silhouette": _safe_mean(sil_fold),
+                "Mean ARI": _safe_mean(ari_fold),
+            }
+        )
+
+    return pd.DataFrame(results)
+
+
+def compute_spectral_biclustering_row_col_cv_scores(
+    data,
+    n_clusters_row_range=range(2, 6),
+    n_clusters_col_range=range(2, 6),
+    cv_folds=3,
+    true_row_labels=None,
+):
+    """
+    Cross‑validate SpectralBiclustering for every (n_row, n_col)
+    in the supplied ranges and return a DataFrame with:
+      * Explained Variance (%)
+      * Silhouette
+      * ARI (optional, if true_row_labels supplied)
+    """
+
+    def _safe_mean(arr):
+        """Return nan if everything is nan, else nanmean."""
+        return np.nan if np.all(np.isnan(arr)) else np.nanmean(arr)
+
+    X = data.copy()
+    n_rows, n_cols = X.shape
+    results = []
+    kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+
+    for n_row in n_clusters_row_range:
+        if n_row > n_rows:
+            continue  # impossible, skip
+        for n_col in n_clusters_col_range:
+            if n_col > n_cols:
+                continue  # impossible, skip
+
+            print(f"Evaluating n_row={n_row}, n_col={n_col}")
+            pve_list, sil_list, ari_list = [], [], []
+
+            for train_idx, test_idx in kf.split(X):
+                X_train, X_test = X[train_idx], X[test_idx]
+
+                try:
+                    model = SpectralBiclustering(
+                        n_clusters=(n_row, n_col),
+                        method="log",
+                        random_state=42,
+                    )
+                    model.fit(X_train)
+
+                    # ------- Percentage of variance explained -------
+                    row_labels = model.row_labels_
+                    global_mean = X_train.mean(axis=0)
+                    total_ss = np.sum((X_test - global_mean) ** 2)
+
+                    recon_error = 0.0
+                    for xi in X_test:
+                        best_err = np.inf
+                        for cid in range(n_row):
+                            mask = row_labels == cid
+                            if np.any(mask):
+                                centroid = X_train[mask].mean(axis=0)
+                                best_err = min(
+                                    best_err, np.linalg.norm(xi - centroid) ** 2
+                                )
+                        recon_error += best_err
+                    pve_list.append(100 * (1 - recon_error / total_ss))
+
+                    # ------- Row labels for test set (nearest centroid) -------
+                    test_labels = np.array(
+                        [
+                            np.argmin(
+                                [
+                                    (
+                                        np.linalg.norm(
+                                            xi - X_train[row_labels == cid].mean(axis=0)
+                                        )
+                                        if np.any(row_labels == cid)
+                                        else np.inf
+                                    )
+                                    for cid in range(n_row)
+                                ]
+                            )
+                            for xi in X_test
+                        ]
+                    )
+
+                    # ARI (if truth provided)
+                    if true_row_labels is not None:
+                        ari_list.append(
+                            adjusted_rand_score(true_row_labels[test_idx], test_labels)
+                        )
+
+                    # Silhouette
+                    try:
+                        sil_list.append(silhouette_score(X_test, test_labels))
+                    except ValueError:  # only one label present
+                        sil_list.append(np.nan)
+
+                except Exception as e:
+                    print(f"[FAIL] (n_row={n_row}, n_col={n_col}) → {e}")
+                    pve_list.append(np.nan)
+                    sil_list.append(np.nan)
+                    ari_list.append(np.nan)
+
+            # ---- Aggregate fold results ----
+            results.append(
+                {
+                    "n_row": n_row,
+                    "n_col": n_col,
+                    "Explained Variance (%)": _safe_mean(pve_list),
+                    "Mean Silhouette": _safe_mean(sil_list),
+                    "Mean ARI": _safe_mean(ari_list),
+                }
+            )
+
+    return pd.DataFrame(results)
