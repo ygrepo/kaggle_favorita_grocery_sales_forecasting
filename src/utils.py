@@ -7,6 +7,26 @@ from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.cluster import SpectralBiclustering
 
 
+def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
+    """Return feature and label column names for a given window size."""
+    cyclical_features = [
+        f"{feat}_{trig}_{i}"
+        for feat in ["dayofweek", "weekofmonth", "monthofyear", "paycycle", "season"]
+        for trig in ["sin", "cos"]
+        for i in range(1, window_size + 1)
+    ]
+
+    sales_features = [
+        f"{name}_{i}"
+        for name in ["sales_day", "store_med_day", "item_med_day"]
+        for i in range(1, window_size + 1)
+    ]
+
+    feature_cols = sales_features + cyclical_features
+    label_cols = [f"y_{c}" for c in feature_cols]
+    return feature_cols, label_cols
+
+
 def generate_aligned_windows(df, window_size):
     """
     Returns a list of exact non-overlapping date-aligned windows ending at the last date in the data,
@@ -269,6 +289,8 @@ def add_y_targets_from_shift(df, window_size=16):
                         "dayofweek_",
                         "weekofmonth_",
                         "monthofyear_",
+                        "paycycle_",
+                        "season_",
                     ]
                 ):
                     row[f"y_{col}"] = next_row[col]
@@ -289,6 +311,7 @@ def add_next_window_targets(df: pd.DataFrame, window_size: int = 5) -> pd.DataFr
         "weekofmonth_",
         "monthofyear_",
         "paycycle_",
+        "season_",
     ]
 
     cols_to_shift = [c for c in df.columns if any(c.startswith(p) for p in prefixes)]
@@ -643,23 +666,3 @@ def compute_spectral_biclustering_row_col_cv_scores(
             )
 
     return pd.DataFrame(results)
-
-
-def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
-    """Return feature and label column names for a given window size."""
-    cyclical_features = [
-        f"{feat}_{trig}_{i}"
-        for feat in ["dayofweek", "weekofmonth", "monthofyear", "paycycle", "season"]
-        for trig in ["sin", "cos"]
-        for i in range(1, window_size + 1)
-    ]
-
-    sales_features = [
-        f"{name}_{i}"
-        for name in ["sales_day", "store_med_day", "item_med_day"]
-        for i in range(1, window_size + 1)
-    ]
-
-    feature_cols = sales_features + cyclical_features
-    label_cols = [f"y_{c}" for c in feature_cols]
-    return feature_cols, label_cols
