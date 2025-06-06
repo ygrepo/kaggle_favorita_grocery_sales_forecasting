@@ -320,10 +320,18 @@ def test_generate_cyclical_features_empty_df():
         "dayofweek_cos_1",
         "weekofmonth_sin_1",
         "weekofmonth_cos_1",
+        "monthofyear_sin_1",
+        "monthofyear_cos_1",
+        "paycycle_sin_1",
+        "paycycle_cos_1",
         "dayofweek_sin_2",
         "dayofweek_cos_2",
         "weekofmonth_sin_2",
         "weekofmonth_cos_2",
+        "monthofyear_sin_2",
+        "monthofyear_cos_2",
+        "paycycle_sin_2",
+        "paycycle_cos_2",
     ]
     assert list(result.columns) == expected_columns
 
