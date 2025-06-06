@@ -126,7 +126,9 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     return pd.DataFrame(results, columns=cols)
 
 
-def generate_nonoverlap_window_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
+def generate_nonoverlap_window_features(
+    df: pd.DataFrame, window_size: int = 5
+) -> pd.DataFrame:
     """Create overlapping sales windows for each store_item."""
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -268,6 +270,7 @@ def add_next_window_targets(df: pd.DataFrame, window_size: int = 5) -> pd.DataFr
         "dayofweek_",
         "weekofmonth_",
         "monthofyear_",
+        "paycycle_",
     ]
 
     cols_to_shift = [c for c in df.columns if any(c.startswith(p) for p in prefixes)]
