@@ -625,3 +625,23 @@ def compute_spectral_biclustering_row_col_cv_scores(
             )
 
     return pd.DataFrame(results)
+
+
+def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
+    """Return feature and label column names for a given window size."""
+    cyclical_features = [
+        f"{feat}_{trig}_{i}"
+        for feat in ["dayofweek", "weekofmonth", "monthofyear", "paycycle"]
+        for trig in ["sin", "cos"]
+        for i in range(1, window_size + 1)
+    ]
+
+    sales_features = [
+        f"{name}_{i}"
+        for name in ["sales_day", "store_med_day", "item_med_day"]
+        for i in range(1, window_size + 1)
+    ]
+
+    feature_cols = sales_features + cyclical_features
+    label_cols = [f"y_{c}" for c in feature_cols]
+    return feature_cols, label_cols
