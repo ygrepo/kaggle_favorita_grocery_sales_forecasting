@@ -4,7 +4,10 @@ from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 import pandas as pd
-from src.utils import safe_mean
+
+
+def _safe_mean(arr):
+    return np.nan if np.all(np.isnan(arr)) else np.nanmean(arr)
 
 
 def initialize_partitions(I, J, P, Q_list, random_state=None):
