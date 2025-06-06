@@ -29,6 +29,15 @@ def generate_aligned_windows(df, window_size):
     ]
 
 
+def _generate_sliding_windows(dates: pd.Series, window_size: int):
+    """Return list of date ranges for standard sliding windows."""
+    dates = pd.to_datetime(dates).sort_values().reset_index(drop=True)
+    return [
+        pd.date_range(dates[i], periods=window_size).to_pydatetime()
+        for i in range(len(dates) - window_size + 1)
+    ]
+
+
 def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.DataFrame:
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -75,16 +84,14 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     df["paycycle_sin"] = np.sin(2 * np.pi * df["paycycle_ratio"])
     df["paycycle_cos"] = np.cos(2 * np.pi * df["paycycle_ratio"])
 
-    windows = generate_aligned_windows(df, window_size)
     results = []
 
     for store_item, group in df.groupby("store_item"):
         group = group.sort_values("date").reset_index(drop=True)
+        windows = _generate_sliding_windows(group["date"], window_size)
 
         for window_dates in windows:
             window_df = group[group["date"].isin(window_dates)]
-            if window_df.empty:
-                continue
 
             row = {
                 "start_date": window_df["date"].min(),
@@ -117,6 +124,39 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
             results.append(row)
 
     return pd.DataFrame(results, columns=cols)
+
+
+def generate_nonoverlap_window_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
+    """Create overlapping sales windows for each store_item."""
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+
+    if "store_item" not in df.columns:
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+
+    cols = ["start_date", "store_item", "store", "item"] + [
+        f"sales_day_{i}" for i in range(1, window_size + 1)
+    ]
+
+    if df.empty or df.groupby("store_item")["date"].count().max() < window_size:
+        return pd.DataFrame(columns=cols)
+
+    records = []
+    for store_item, group in df.groupby("store_item"):
+        group = group.sort_values("date").reset_index(drop=True)
+        for start in range(len(group) - window_size + 1):
+            window = group.iloc[start : start + window_size]
+            row = {
+                "start_date": window["date"].iloc[0],
+                "store_item": store_item,
+                "store": window["store"].iloc[0],
+                "item": window["item"].iloc[0],
+            }
+            for i in range(window_size):
+                row[f"sales_day_{i+1}"] = window["unit_sales"].iloc[i]
+            records.append(row)
+
+    return pd.DataFrame(records, columns=cols)
 
 
 def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
@@ -216,6 +256,28 @@ def add_y_targets_from_shift(df, window_size=16):
             result.append(row)
 
     return pd.DataFrame(result)
+
+
+def add_next_window_targets(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
+    """Attach next window's features with a y_ prefix without dropping rows."""
+    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+    prefixes = [
+        "sales_day_",
+        "store_med_day_",
+        "item_med_day_",
+        "dayofweek_",
+        "weekofmonth_",
+        "monthofyear_",
+    ]
+
+    cols_to_shift = [c for c in df.columns if any(c.startswith(p) for p in prefixes)]
+    result = df.copy()
+
+    for store_item, group in df.groupby("store_item"):
+        shifted = group[cols_to_shift].shift(-1)
+        result.loc[group.index, [f"y_{c}" for c in cols_to_shift]] = shifted.values
+
+    return result
 
 
 def prepare_training_data_from_raw_df(df, window_size=16):
