@@ -49,7 +49,13 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     # Prepare full column structure regardless of input size
     cols = ["start_date", "store_item", "store", "item"]
     for i in range(1, window_size + 1):
-        for feature in ["dayofweek", "weekofmonth", "monthofyear", "paycycle"]:
+        for feature in [
+            "dayofweek",
+            "weekofmonth",
+            "monthofyear",
+            "paycycle",
+            "season",
+        ]:
             for trig in ["sin", "cos"]:
                 cols.append(f"{feature}_{trig}_{i}")
 
@@ -84,6 +90,16 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     df["paycycle_sin"] = np.sin(2 * np.pi * df["paycycle_ratio"])
     df["paycycle_cos"] = np.cos(2 * np.pi * df["paycycle_ratio"])
 
+    def _season_ratio(d: pd.Timestamp) -> float:
+        base = pd.Timestamp(year=d.year, month=3, day=20)
+        if d < base:
+            base = pd.Timestamp(year=d.year - 1, month=3, day=20)
+        return ((d - base).days % 365) / 365
+
+    df["season_ratio"] = df["date"].apply(_season_ratio)
+    df["season_sin"] = np.sin(2 * np.pi * df["season_ratio"])
+    df["season_cos"] = np.cos(2 * np.pi * df["season_ratio"])
+
     results = []
 
     for store_item, group in df.groupby("store_item"):
@@ -108,6 +124,7 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
                         "weekofmonth",
                         "monthofyear",
                         "paycycle",
+                        "season",
                     ]:
                         for t in ["sin", "cos"]:
                             row[f"{f}_{t}_{i+1}"] = r[f"{f}_{t}"]
@@ -117,6 +134,7 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
                         "weekofmonth",
                         "monthofyear",
                         "paycycle",
+                        "season",
                     ]:
                         for t in ["sin", "cos"]:
                             row[f"{f}_{t}_{i+1}"] = 0.0
@@ -631,7 +649,7 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     """Return feature and label column names for a given window size."""
     cyclical_features = [
         f"{feat}_{trig}_{i}"
-        for feat in ["dayofweek", "weekofmonth", "monthofyear", "paycycle"]
+        for feat in ["dayofweek", "weekofmonth", "monthofyear", "paycycle", "season"]
         for trig in ["sin", "cos"]
         for i in range(1, window_size + 1)
     ]

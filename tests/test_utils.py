@@ -156,7 +156,7 @@ def test_add_next_window_targets_column_integrity():
     result = add_next_window_targets(merged_df, window_size=window_size)
 
     y_cols = [col for col in result.columns if col.startswith("y_")]
-    assert len(y_cols) == 2 + 4 * 2 * 2  #  2 sales + 3 cyc_feats × 2 trigs × 2 days
+    assert len(y_cols) == 6 + 20  # 3 sales + 5 cyc_feats × 2 trigs × 2 days
     assert all(col in result.columns for col in y_cols)
 
 
@@ -194,8 +194,8 @@ def test_add_next_window_targets_drop_nan_rows():
 def test_build_feature_and_label_cols():
     feature_cols, label_cols = build_feature_and_label_cols(window_size=2)
     assert feature_cols[0] == 'sales_day_1'
-    assert feature_cols[-1] == 'paycycle_cos_2'
-    assert len(feature_cols) == 6 + 16
+    assert feature_cols[-1] == 'season_cos_2'
+    assert len(feature_cols) == 6 + 20
     assert label_cols[0] == 'y_sales_day_1'
-    assert label_cols[-1] == 'y_paycycle_cos_2'
+    assert label_cols[-1] == 'y_season_cos_2'
     assert len(label_cols) == len(feature_cols)
