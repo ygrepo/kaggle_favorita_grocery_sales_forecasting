@@ -158,7 +158,7 @@ def test_add_next_window_targets_column_integrity():
     result = add_next_window_targets(merged_df, window_size=window_size)
 
     y_cols = [col for col in result.columns if col.startswith("y_")]
-    assert len(y_cols) == 2 + 2 * 2 * 2  # 2 sales + 2 cyc_feats × 2 trigs × 2 days
+    assert len(y_cols) == 2 + 3 * 2 * 2  # 2 sales + 3 cyc_feats × 2 trigs × 2 days
     assert all(col in result.columns for col in y_cols)
 
 
