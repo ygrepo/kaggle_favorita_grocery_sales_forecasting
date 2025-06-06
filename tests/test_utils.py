@@ -4,6 +4,7 @@ from src.utils import (
     generate_nonoverlap_window_features,
     generate_cyclical_features,
     add_next_window_targets,
+    build_feature_and_label_cols,
 )
 
 
@@ -188,3 +189,13 @@ def test_add_next_window_targets_drop_nan_rows():
 
     # Check all y_ columns in cleaned data are fully non-null
     assert cleaned[y_cols].notna().all().all()
+
+
+def test_build_feature_and_label_cols():
+    feature_cols, label_cols = build_feature_and_label_cols(window_size=2)
+    assert feature_cols[0] == 'sales_day_1'
+    assert feature_cols[-1] == 'paycycle_cos_2'
+    assert len(feature_cols) == 6 + 16
+    assert label_cols[0] == 'y_sales_day_1'
+    assert label_cols[-1] == 'y_paycycle_cos_2'
+    assert len(label_cols) == len(feature_cols)
