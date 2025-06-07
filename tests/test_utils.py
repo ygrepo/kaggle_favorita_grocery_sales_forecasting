@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from src.utils import (
     generate_sales_features,
@@ -21,6 +22,8 @@ def test_generate_sales_features_single_item():
     )
     result = generate_sales_features(df, window_size=5)
     assert len(result) == 2  # 10 days -> two non-overlapping windows
+    assert "cluster_id" in result.columns
+    assert result["cluster_id"].isna().all()
     assert result["store_item"].nunique() == 1
     assert result["sales_day_1"].iloc[0] == 100
     assert result["sales_day_5"].iloc[-1] == 109
@@ -38,6 +41,8 @@ def test_generate_sales_features_multiple_items():
     )
     result = generate_sales_features(df, window_size=3)
     assert len(result) == 4  # two windows per item
+    assert "cluster_id" in result.columns
+    assert result["cluster_id"].isna().all()
     assert sorted(result["store_item"].unique()) == ["store1_item1", "store2_item2"]
     assert all(result.groupby("store_item")["start_date"].count() == 2)
 
@@ -54,6 +59,7 @@ def test_generate_sales_features_insufficient_data():
     )
     result = generate_sales_features(df, window_size=5)
     assert result.empty
+    assert "cluster_id" in result.columns
 
 
 def test_sliding_cyclical_single_item_multiple_windows():
@@ -303,3 +309,33 @@ def test_generate_store_item_clusters_basic():
     assert list(result.columns) == ["store_item", "clusterId"]
     assert len(result) == 4
     assert set(result["clusterId"]).issubset({0, 1})
+
+
+def test_generate_sales_features_with_clusters():
+    """Ensure cluster medians are computed when cluster_map provided."""
+    df = pd.DataFrame(
+        {
+            "store": ["s1"] * 4 + ["s2"] * 4,
+            "item": ["i1"] * 4 + ["i2"] * 4,
+            "date": list(pd.date_range("2023-01-01", periods=4)) * 2,
+            "unit_sales": [1, 2, 3, 4, 5, 6, 7, 8],
+        }
+    )
+    pivot = df.pivot_table(
+        index=df["store"] + "_" + df["item"],
+        columns="date",
+        values="unit_sales",
+    )
+    from sklearn.cluster import KMeans
+
+    clusters = generate_store_item_clusters(
+        pivot, n_clusters=1, cluster_algo=KMeans(random_state=0, n_init="auto")
+    )
+    result = generate_sales_features(df, window_size=2, cluster_map=clusters)
+    assert "cluster_id" in result.columns
+    assert "cluster_med_day_1" in result.columns
+    # All store_items should share the same cluster
+    assert result["cluster_id"].nunique() == 1
+    # Cluster median for first window day 1 should equal median of [1,5]
+    first_med = np.median([1, 5])
+    assert result.loc[result["start_date"] == df["date"].min(), "cluster_med_day_1"].iloc[0] == first_med
