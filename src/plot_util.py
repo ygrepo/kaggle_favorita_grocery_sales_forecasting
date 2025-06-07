@@ -633,3 +633,68 @@ def plot_spectral_biclustering_heatmap(results_df, fn: str = None):
         plt.savefig(fn, dpi=300)
     plt.show()
     plt.close()
+
+
+def plot_spectral_clustering_elbows(
+    result_dfs: list[pd.DataFrame],
+    *,
+    metric: str = "Explained Variance (%)",
+    titles: list[str] | None = None,
+    figsize: tuple[int, int] = (8, 12),
+    fn: str | None = None,
+):
+    """Plot elbow curves from multiple spectral clustering results.
+
+    Parameters
+    ----------
+    result_dfs : list of DataFrame
+        Each DataFrame is returned by :func:`compute_spectral_clustering_cv_scores`.
+    metric : str, optional
+        Metric column to plot on the y-axis.
+    titles : list of str, optional
+        Optional subplot titles. Must match the length of ``result_dfs`` if
+        provided.
+    figsize : tuple of int, optional
+        Overall figure size.
+    fn : str, optional
+        If given, save the figure to this path.
+    """
+
+    if titles and len(titles) != len(result_dfs):
+        raise ValueError("Length of titles must match result_dfs")
+
+    fig, axes = plt.subplots(len(result_dfs), 1, figsize=figsize, sharex=True)
+    if len(result_dfs) == 1:
+        axes = [axes]
+
+    for idx, (df, ax) in enumerate(zip(result_dfs, axes)):
+        col_values = (
+            sorted(df["n_col"].dropna().unique())
+            if "n_col" in df.columns and df["n_col"].notna().any()
+            else [None]
+        )
+
+        for n_col in col_values:
+            if n_col is None:
+                subset = df.copy()
+                label = None
+            else:
+                subset = df[df["n_col"] == n_col]
+                label = f"n_col={n_col}"
+
+            ax.plot(subset["n_row"], subset[metric], marker="o", label=label)
+
+        ax.set_ylabel(metric, fontsize=12, fontweight="bold")
+        if titles:
+            ax.set_title(titles[idx], fontsize=14, fontweight="bold")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        if len(col_values) > 1 or col_values[0] is not None:
+            ax.legend(title="n_col")
+
+    axes[-1].set_xlabel("n_row", fontsize=12, fontweight="bold")
+
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
