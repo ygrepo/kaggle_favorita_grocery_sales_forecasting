@@ -193,7 +193,40 @@ def test_add_next_window_targets_drop_nan_rows():
 
 
 def test_build_feature_and_label_cols():
-    feature_cols, label_cols = build_feature_and_label_cols(window_size=2)
+    meta_cols, feature_cols, label_cols, y_sales_features, y_cyclical_features = (
+        build_feature_and_label_cols(window_size=2)
+    )
+    assert meta_cols == ["start_date", "store_item", "store", "item"]
+    assert y_sales_features == [
+        "y_sales_day_1",
+        "y_sales_day_2",
+        "y_store_med_day_1",
+        "y_store_med_day_2",
+        "y_item_med_day_1",
+        "y_item_med_day_2",
+    ]
+    assert y_cyclical_features == [
+        "y_dayofweek_sin_1",
+        "y_dayofweek_sin_2",
+        "y_dayofweek_cos_1",
+        "y_dayofweek_cos_2",
+        "y_weekofmonth_sin_1",
+        "y_weekofmonth_sin_2",
+        "y_weekofmonth_cos_1",
+        "y_weekofmonth_cos_2",
+        "y_monthofyear_sin_1",
+        "y_monthofyear_sin_2",
+        "y_monthofyear_cos_1",
+        "y_monthofyear_cos_2",
+        "y_paycycle_sin_1",
+        "y_paycycle_sin_2",
+        "y_paycycle_cos_1",
+        "y_paycycle_cos_2",
+        "y_season_sin_1",
+        "y_season_sin_2",
+        "y_season_cos_1",
+        "y_season_cos_2",
+    ]
     assert feature_cols[0] == "sales_day_1"
     assert feature_cols[1] == "sales_day_2"
     assert feature_cols[2] == "store_med_day_1"
