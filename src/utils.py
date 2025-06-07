@@ -526,6 +526,45 @@ def compute_spectral_biclustering_row_cv_scores(
     return pd.DataFrame(results)
 
 
+def generate_store_item_clusters(
+    pivot_clean: pd.DataFrame,
+    n_clusters: int,
+    cluster_algo,
+) -> pd.DataFrame:
+    """Cluster store/item series and return labels.
+
+    Parameters
+    ----------
+    pivot_clean : pd.DataFrame
+        Pivot table where each row corresponds to a ``store_item`` and
+        columns are the time series values.
+    n_clusters : int
+        Desired number of clusters to fit.
+    cluster_algo : type | object
+        Scikit‑learn clustering estimator class or instance.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with ``store_item`` and ``clusterId`` columns.
+    """
+
+    # Instantiate algorithm if a class is provided
+    if isinstance(cluster_algo, type):
+        model = cluster_algo(n_clusters=n_clusters)
+    else:
+        model = cluster_algo
+        if hasattr(model, "set_params"):
+            model.set_params(n_clusters=n_clusters)
+
+    labels = model.fit_predict(pivot_clean.values)
+
+    return pd.DataFrame({
+        "store_item": pivot_clean.index,
+        "clusterId": labels,
+    })
+
+
 def compute_spectral_clustering_cv_scores(
     data,
     *,
