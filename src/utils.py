@@ -25,7 +25,9 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     feature_cols = sales_features + cyclical_features
     label_cols = [f"y_{c}" for c in feature_cols]
     meta_cols = ["start_date", "store_item", "store", "item"]
-    return meta_cols, feature_cols, label_cols
+    y_sales_features = [f"y_{c}" for c in sales_features]
+    y_cyclical_features = [f"y_{c}" for c in cyclical_features]
+    return meta_cols, feature_cols, label_cols, y_sales_features, y_cyclical_features
 
 
 def generate_aligned_windows(df, window_size):
