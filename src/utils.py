@@ -171,9 +171,46 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     return pd.DataFrame(results, columns=cols)
 
 
-def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
+def generate_sales_features(
+    df: pd.DataFrame,
+    window_size: int = 5,
+    cluster_map: pd.DataFrame | dict | None = None,
+) -> pd.DataFrame:
+    """Generate sales based window features.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input sales data with ``store``, ``item``, ``date`` and ``unit_sales``.
+    window_size : int, optional
+        Size of each rolling window, by default 5.
+    cluster_map : DataFrame or dict, optional
+        Mapping of ``store_item`` to ``clusterId`` produced by
+        :func:`generate_store_item_clusters`.  If provided, cluster
+        medians will be computed and a ``cluster_id`` column will be added.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing sales features.
+    """
+
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
+
+    if "store_item" not in df.columns:
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+
+    cluster_lookup: dict[str, int] | None = None
+    if cluster_map is not None:
+        if isinstance(cluster_map, pd.DataFrame):
+            name = "clusterId" if "clusterId" in cluster_map.columns else cluster_map.columns[-1]
+            cluster_lookup = cluster_map.set_index("store_item")[name].to_dict()
+        else:
+            cluster_lookup = dict(cluster_map)
+        df["cluster_id"] = df["store_item"].map(cluster_lookup)
+    else:
+        df["cluster_id"] = np.nan
 
     windows = generate_aligned_windows(df, window_size)
     records = []
@@ -187,6 +224,11 @@ def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFr
         item_med = (
             w_df.groupby(["item", "date"])["unit_sales"].median().unstack(fill_value=0)
         )
+        cluster_med = None
+        if cluster_lookup is not None:
+            cluster_med = (
+                w_df.groupby(["cluster_id", "date"])["unit_sales"].median().unstack(fill_value=0)
+            )
         sales = (
             w_df.groupby(["store", "item", "date"])["unit_sales"]
             .sum()
@@ -200,6 +242,10 @@ def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFr
                 "item": item,
                 "start_date": window_dates[0],
             }
+            if cluster_lookup is not None:
+                row["cluster_id"] = cluster_lookup.get(f"{store}_{item}")
+            else:
+                row["cluster_id"] = np.nan
 
             for i in range(1, window_size + 1):
                 try:
@@ -213,20 +259,29 @@ def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFr
                     row[f"item_med_day_{i}"] = (
                         item_med.loc[item].get(d, 0) if item in item_med.index else 0
                     )
+                    if cluster_lookup is not None:
+                        row[f"cluster_med_day_{i}"] = (
+                            cluster_med.loc[row["cluster_id"]].get(d, 0)
+                            if row["cluster_id"] in cluster_med.index
+                            else 0
+                        )
                 except IndexError:
                     row[f"sales_day_{i}"] = 0
                     row[f"store_med_day_{i}"] = 0
                     row[f"item_med_day_{i}"] = 0
+                    if cluster_lookup is not None:
+                        row[f"cluster_med_day_{i}"] = 0
 
             records.append(row)
 
     # Assemble DataFrame
-    cols = ["start_date", "store_item", "store", "item"]
+    cols = ["start_date", "store_item", "store", "item", "cluster_id"]
     sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
     store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
     item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
+    cluster_med_cols = [f"cluster_med_day_{i}" for i in range(1, window_size + 1)] if cluster_lookup is not None else []
 
-    cols.extend(sales_cols + store_med_cols + item_med_cols)
+    cols.extend(sales_cols + store_med_cols + item_med_cols + cluster_med_cols)
 
     if not records:
         return pd.DataFrame(columns=cols)
