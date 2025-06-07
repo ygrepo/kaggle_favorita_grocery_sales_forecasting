@@ -399,7 +399,7 @@ def preprocess_sales_matrix(
     # Drop rows with no variance (flat after smoothing)
     df = df[df.var(axis=1) > 0]
 
-    # Normalize each row (Z-score)
+    # Normalize each row and columns (Z-score)
     if zscore_rows:
         X = StandardScaler().fit_transform(df)
         X = StandardScaler().fit_transform(X.T).T
