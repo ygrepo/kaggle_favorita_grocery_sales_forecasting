@@ -684,14 +684,14 @@ def plot_spectral_clustering_elbows(
 
             ax.plot(subset["n_row"], subset[metric], marker="o", label=label)
 
-        ax.set_ylabel(metric, fontsize=12, fontweight="bold")
+        ax.set_ylabel(metric, fontsize=16, fontweight="bold")
         if titles:
-            ax.set_title(titles[idx], fontsize=14, fontweight="bold")
+            ax.set_title(titles[idx], fontsize=20, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.5)
         if len(col_values) > 1 or col_values[0] is not None:
             ax.legend(title="n_col")
 
-    axes[-1].set_xlabel("n_row", fontsize=12, fontweight="bold")
+    axes[-1].set_xlabel("# Cluster", fontsize=16, fontweight="bold")
 
     plt.tight_layout()
     if fn:

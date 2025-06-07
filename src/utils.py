@@ -536,76 +536,81 @@ def compute_spectral_clustering_cv_scores(
     true_row_labels=None,
     model_kwargs=None,
 ):
-    """Cross‑validate a spectral clustering model over cluster ranges.
-
-    Parameters
-    ----------
-    data : array-like
-        Data matrix to cluster.
-    model_class : type, optional
-        The spectral clustering class to instantiate (``SpectralBiclustering``
-        by default). ``SpectralClustering`` ignores ``n_clusters_col_range``.
-    n_clusters_row_range : Iterable[int]
-        Range of row cluster counts to evaluate.
-    n_clusters_col_range : Iterable[int]
-        Range of column cluster counts when supported by ``model_class``.
-    cv_folds : int, optional
-        Number of cross‑validation folds.
-    true_row_labels : array-like, optional
-        True labels for computing ARI on the rows.
-    model_kwargs : dict, optional
-        Additional keyword arguments passed to ``model_class``.
-    """
+    """Cross‑validate Spectral[Bic|Co]clustering and SpectralClustering."""
 
     def _safe_mean(arr):
-        """Return NaN if all values are NaN, else the nanmean."""
         return np.nan if np.all(np.isnan(arr)) else np.nanmean(arr)
 
     if model_kwargs is None:
         model_kwargs = {}
-    model_kwargs = dict(model_kwargs)  # copy
+    model_kwargs = dict(model_kwargs)
     model_kwargs.setdefault("random_state", 42)
 
-    X = data.copy()
+    X = np.asarray(data)
     n_rows, n_cols = X.shape
     results = []
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
 
+    # ------------------------------------------------------------------ #
+    # Decide how many loop dimensions we actually have                   #
+    # ------------------------------------------------------------------ #
     if model_class is SpectralClustering:
+        # Only a single “row” cluster count matters
         col_range = [None]
-    else:
+        loop_over_col = False
+    elif model_class is SpectralCoclustering:
+        # One integer for both rows & columns → use n_clusters_row_range only
+        col_range = [None]
+        loop_over_col = False
+    else:  # SpectralBiclustering
         col_range = [c for c in n_clusters_col_range if c <= n_cols]
+        loop_over_col = False
 
+    # ------------------------------------------------------------------ #
+    # Grid search                                                        #
+    # ------------------------------------------------------------------ #
     for n_row in n_clusters_row_range:
         if n_row > n_rows:
-            continue  # impossible, skip
+            continue
         for n_col in col_range:
-
             msg = f"Evaluating n_row={n_row}"
-            if n_col is not None:
+            if loop_over_col:
                 msg += f", n_col={n_col}"
             print(msg)
+
             pve_list, sil_list, ari_list = [], [], []
 
             for train_idx, test_idx in kf.split(X):
                 X_train, X_test = X[train_idx], X[test_idx]
 
                 try:
+                    # -------------------------------------------------- #
+                    # Instantiate the model                              #
+                    # -------------------------------------------------- #
                     if model_class is SpectralClustering:
                         model = model_class(n_clusters=n_row, **model_kwargs)
-                    else:
-                        model = model_class(
-                            n_clusters=(n_row, n_col),
-                            **model_kwargs,
-                        )
+
+                    elif model_class is SpectralCoclustering:
+                        model = model_class(n_clusters=n_row, **model_kwargs)
+
+                    else:  # SpectralBiclustering
+                        model = model_class(n_clusters=(n_row, n_col), **model_kwargs)
+
                     model.fit(X_train)
 
-                    # ------- Percentage of variance explained -------
-                    row_labels = (
-                        model.row_labels_
-                        if hasattr(model, "row_labels_")
-                        else model.labels_
-                    )
+                    # -------------------------------------------------- #
+                    # Row labels                                         #
+                    # -------------------------------------------------- #
+                    if hasattr(model, "row_labels_"):  # SpectralBiclustering
+                        row_labels = model.row_labels_
+                    elif hasattr(model, "labels_"):  # SpectralClustering
+                        row_labels = model.labels_
+                    else:  # SpectralCoclustering: derive from boolean rows_
+                        row_labels = np.argmax(model.rows_, axis=0)
+
+                    # -------------------------------------------------- #
+                    # % Variance explained                               #
+                    # -------------------------------------------------- #
                     global_mean = X_train.mean(axis=0)
                     total_ss = np.sum((X_test - global_mean) ** 2)
 
@@ -622,7 +627,9 @@ def compute_spectral_clustering_cv_scores(
                         recon_error += best_err
                     pve_list.append(100 * (1 - recon_error / total_ss))
 
-                    # ------- Row labels for test set (nearest centroid) -------
+                    # -------------------------------------------------- #
+                    # Predict cluster of test rows (nearest centroid)    #
+                    # -------------------------------------------------- #
                     test_labels = np.array(
                         [
                             np.argmin(
@@ -641,7 +648,7 @@ def compute_spectral_clustering_cv_scores(
                         ]
                     )
 
-                    # ARI (if truth provided)
+                    # ARI
                     if true_row_labels is not None:
                         ari_list.append(
                             adjusted_rand_score(true_row_labels[test_idx], test_labels)
@@ -650,23 +657,22 @@ def compute_spectral_clustering_cv_scores(
                     # Silhouette
                     try:
                         sil_list.append(silhouette_score(X_test, test_labels))
-                    except ValueError:  # only one label present
+                    except ValueError:
                         sil_list.append(np.nan)
 
                 except Exception as e:
                     fail_msg = f"[FAIL] n_row={n_row}"
-                    if n_col is not None:
+                    if loop_over_col:
                         fail_msg += f", n_col={n_col}"
                     print(f"{fail_msg} → {e}")
                     pve_list.append(np.nan)
                     sil_list.append(np.nan)
                     ari_list.append(np.nan)
 
-            # ---- Aggregate fold results ----
             results.append(
                 {
                     "n_row": n_row,
-                    "n_col": n_col,
+                    "n_col": n_col if loop_over_col else np.nan,
                     "Explained Variance (%)": _safe_mean(pve_list),
                     "Mean Silhouette": _safe_mean(sil_list),
                     "Mean ARI": _safe_mean(ari_list),
