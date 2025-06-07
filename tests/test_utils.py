@@ -331,9 +331,15 @@ def test_generate_sales_features_with_clusters():
     clusters = generate_store_item_clusters(
         pivot, n_clusters=1, cluster_algo=KMeans(random_state=0, n_init="auto")
     )
+    # Duplicate labels to mimic store/item clusters
+    clusters["store_cluster_id"] = clusters["clusterId"]
+    clusters["item_cluster_id"] = clusters["clusterId"]
+
     result = generate_sales_features(df, window_size=2, cluster_map=clusters)
     assert "cluster_id" in result.columns
     assert "cluster_med_day_1" in result.columns
+    assert "store_cluster_med_day_1" in result.columns
+    assert "item_cluster_med_day_1" in result.columns
     # All store_items should share the same cluster
     assert result["cluster_id"].nunique() == 1
     # Cluster median for first window day 1 should equal median of [1,5]
