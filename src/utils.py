@@ -4,7 +4,11 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 from sklearn.metrics import adjusted_rand_score, silhouette_score
-from sklearn.cluster import SpectralBiclustering
+from sklearn.cluster import (
+    SpectralBiclustering,
+    SpectralClustering,
+    SpectralCoclustering,
+)
 
 
 def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
@@ -522,53 +526,86 @@ def compute_spectral_biclustering_row_cv_scores(
     return pd.DataFrame(results)
 
 
-def compute_spectral_biclustering_row_col_cv_scores(
+def compute_spectral_clustering_cv_scores(
     data,
+    *,
+    model_class=SpectralBiclustering,
     n_clusters_row_range=range(2, 6),
     n_clusters_col_range=range(2, 6),
     cv_folds=3,
     true_row_labels=None,
+    model_kwargs=None,
 ):
-    """
-    Cross‑validate SpectralBiclustering for every (n_row, n_col)
-    in the supplied ranges and return a DataFrame with:
-      * Explained Variance (%)
-      * Silhouette
-      * ARI (optional, if true_row_labels supplied)
+    """Cross‑validate a spectral clustering model over cluster ranges.
+
+    Parameters
+    ----------
+    data : array-like
+        Data matrix to cluster.
+    model_class : type, optional
+        The spectral clustering class to instantiate (``SpectralBiclustering``
+        by default). ``SpectralClustering`` ignores ``n_clusters_col_range``.
+    n_clusters_row_range : Iterable[int]
+        Range of row cluster counts to evaluate.
+    n_clusters_col_range : Iterable[int]
+        Range of column cluster counts when supported by ``model_class``.
+    cv_folds : int, optional
+        Number of cross‑validation folds.
+    true_row_labels : array-like, optional
+        True labels for computing ARI on the rows.
+    model_kwargs : dict, optional
+        Additional keyword arguments passed to ``model_class``.
     """
 
     def _safe_mean(arr):
-        """Return nan if everything is nan, else nanmean."""
+        """Return NaN if all values are NaN, else the nanmean."""
         return np.nan if np.all(np.isnan(arr)) else np.nanmean(arr)
+
+    if model_kwargs is None:
+        model_kwargs = {}
+    model_kwargs = dict(model_kwargs)  # copy
+    model_kwargs.setdefault("random_state", 42)
 
     X = data.copy()
     n_rows, n_cols = X.shape
     results = []
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
 
+    if model_class is SpectralClustering:
+        col_range = [None]
+    else:
+        col_range = [c for c in n_clusters_col_range if c <= n_cols]
+
     for n_row in n_clusters_row_range:
         if n_row > n_rows:
             continue  # impossible, skip
-        for n_col in n_clusters_col_range:
-            if n_col > n_cols:
-                continue  # impossible, skip
+        for n_col in col_range:
 
-            print(f"Evaluating n_row={n_row}, n_col={n_col}")
+            msg = f"Evaluating n_row={n_row}"
+            if n_col is not None:
+                msg += f", n_col={n_col}"
+            print(msg)
             pve_list, sil_list, ari_list = [], [], []
 
             for train_idx, test_idx in kf.split(X):
                 X_train, X_test = X[train_idx], X[test_idx]
 
                 try:
-                    model = SpectralBiclustering(
-                        n_clusters=(n_row, n_col),
-                        method="log",
-                        random_state=42,
-                    )
+                    if model_class is SpectralClustering:
+                        model = model_class(n_clusters=n_row, **model_kwargs)
+                    else:
+                        model = model_class(
+                            n_clusters=(n_row, n_col),
+                            **model_kwargs,
+                        )
                     model.fit(X_train)
 
                     # ------- Percentage of variance explained -------
-                    row_labels = model.row_labels_
+                    row_labels = (
+                        model.row_labels_
+                        if hasattr(model, "row_labels_")
+                        else model.labels_
+                    )
                     global_mean = X_train.mean(axis=0)
                     total_ss = np.sum((X_test - global_mean) ** 2)
 
@@ -617,7 +654,10 @@ def compute_spectral_biclustering_row_col_cv_scores(
                         sil_list.append(np.nan)
 
                 except Exception as e:
-                    print(f"[FAIL] (n_row={n_row}, n_col={n_col}) → {e}")
+                    fail_msg = f"[FAIL] n_row={n_row}"
+                    if n_col is not None:
+                        fail_msg += f", n_col={n_col}"
+                    print(f"{fail_msg} → {e}")
                     pve_list.append(np.nan)
                     sil_list.append(np.nan)
                     ari_list.append(np.nan)
