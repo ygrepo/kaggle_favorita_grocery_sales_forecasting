@@ -145,6 +145,18 @@ def compute_mae(loader, model, device, y_scaler, sales_idx):
     return abs_sum / count
 
 
+def compute_mav(loader, y_scaler, sales_idx):
+    """Compute Mean Absolute Value of the true targets in the loader."""
+    abs_sum, count = 0.0, 0
+    with torch.no_grad():
+        for _, yb, _ in loader:
+            yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
+            yb_inv[:, sales_idx] = np.expm1(yb_inv[:, sales_idx])
+            abs_sum += np.sum(np.abs(yb_inv))
+            count += yb_inv.size
+    return abs_sum / count
+
+
 def train(
     df: pd.DataFrame,
     weights_df: pd.DataFrame,
@@ -228,6 +240,10 @@ def train(
         ld_train = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
         ld_test = DataLoader(ds_test, batch_size=batch_size, shuffle=False)
 
+        sales_idx = [label_cols.index(col) for col in y_sales_features]
+        train_mav = compute_mav(ld_train, y_scaler, sales_idx)
+        test_mav = compute_mav(ld_test, y_scaler, sales_idx)
+
         model = ShallowNN(input_dim=len(feature_cols)).to(device)
         loss_fn = NWRMSLELoss()
         optim = torch.optim.Adam(model.parameters(), lr=lr)
@@ -248,9 +264,10 @@ def train(
             model.eval()
             te_loss = compute_rmsle_manual(ld_test, model, device)
 
-            sales_idx = [label_cols.index(col) for col in y_sales_features]
             true_train_mae = compute_mae(ld_train, model, device, y_scaler, sales_idx)
             true_test_mae = compute_mae(ld_test, model, device, y_scaler, sales_idx)
+            train_percent_mae = true_train_mae / train_mav if train_mav else float('inf')
+            test_percent_mae = true_test_mae / test_mav if test_mav else float('inf')
 
             history.append(
                 {
@@ -258,15 +275,19 @@ def train(
                     "epoch": epoch,
                     "train_loss": tr_loss,
                     "train_mae": true_train_mae,
+                    "train_percent_mae": train_percent_mae,
                     "test_loss": te_loss,
                     "test_mae": true_test_mae,
+                    "test_percent_mae": test_percent_mae,
                 }
             )
 
             print(
                 f"[{sid}] Epoch {epoch}/{epochs} "
                 f"train_RMSLE {tr_loss:.4f}, train_MAE {true_train_mae:.4f}, "
-                f"test_RMSLE {te_loss:.4f}, test_MAE {true_test_mae:.4f}"
+                f"train_%MAE {train_percent_mae:.4f}, "
+                f"test_RMSLE {te_loss:.4f}, test_MAE {true_test_mae:.4f}, "
+                f"test_%MAE {test_percent_mae:.4f}"
             )
 
         save_path = os.path.join(model_dir, f"{today_str}_model_{sid}.pth")
@@ -300,6 +321,8 @@ def train(
         .agg(
             final_train_loss=("train_loss", "last"),
             final_test_loss=("test_loss", "last"),
+            final_train_percent_mae=("train_percent_mae", "last"),
+            final_test_percent_mae=("test_percent_mae", "last"),
         )
         .reset_index()
     )
