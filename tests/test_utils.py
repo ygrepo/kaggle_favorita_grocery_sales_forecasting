@@ -5,6 +5,7 @@ from src.utils import (
     generate_cyclical_features,
     add_next_window_targets,
     build_feature_and_label_cols,
+    generate_store_item_clusters,
 )
 
 
@@ -247,3 +248,25 @@ def test_build_feature_and_label_cols():
     assert label_cols[24] == "y_season_cos_1"
     assert label_cols[25] == "y_season_cos_2"
     assert len(label_cols) == len(feature_cols)
+
+
+def test_generate_store_item_clusters_basic():
+    pivot = pd.DataFrame(
+        [
+            [1, 2],
+            [2, 1],
+            [10, 10],
+            [11, 11],
+        ],
+        index=["s1_i1", "s1_i2", "s2_i1", "s2_i2"],
+    )
+
+    from sklearn.cluster import KMeans
+
+    result = generate_store_item_clusters(
+        pivot, n_clusters=2, cluster_algo=KMeans(random_state=42, n_init="auto")
+    )
+
+    assert list(result.columns) == ["store_item", "clusterId"]
+    assert len(result) == 4
+    assert set(result["clusterId"]).issubset({0, 1})
