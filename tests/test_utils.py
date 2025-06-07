@@ -1,15 +1,15 @@
 import pandas as pd
 from datetime import datetime
 from src.utils import (
-    generate_nonoverlap_window_features,
+    generate_sales_features,
     generate_cyclical_features,
     add_next_window_targets,
     build_feature_and_label_cols,
 )
 
 
-def test_sliding_windows_single_item_multiple_windows():
-    """Sliding window test for one store/item with multiple overlapping windows."""
+def test_generate_sales_features_single_item():
+    """Sales feature window test for one store/item using aligned windows."""
     df = pd.DataFrame(
         {
             "store": ["store1"] * 10,
@@ -18,15 +18,15 @@ def test_sliding_windows_single_item_multiple_windows():
             "unit_sales": list(range(100, 110)),
         }
     )
-    result = generate_nonoverlap_window_features(df, window_size=5)
-    assert len(result) == 6  # 10 - 5 + 1 = 6 sliding windows
+    result = generate_sales_features(df, window_size=5)
+    assert len(result) == 2  # 10 days -> two non-overlapping windows
     assert result["store_item"].nunique() == 1
     assert result["sales_day_1"].iloc[0] == 100
     assert result["sales_day_5"].iloc[-1] == 109
 
 
-def test_sliding_windows_multiple_items():
-    """Sliding window test for multiple store/items."""
+def test_generate_sales_features_multiple_items():
+    """Sales features for multiple store/items with aligned windows."""
     df = pd.DataFrame(
         {
             "store": ["store1"] * 6 + ["store2"] * 6,
@@ -35,14 +35,14 @@ def test_sliding_windows_multiple_items():
             "unit_sales": list(range(100, 106)) + list(range(200, 206)),
         }
     )
-    result = generate_nonoverlap_window_features(df, window_size=3)
-    assert len(result) == 8  # 4 per item
+    result = generate_sales_features(df, window_size=3)
+    assert len(result) == 4  # two windows per item
     assert sorted(result["store_item"].unique()) == ["store1_item1", "store2_item2"]
-    assert all(result.groupby("store_item")["start_date"].count() == 4)
+    assert all(result.groupby("store_item")["start_date"].count() == 2)
 
 
-def test_sliding_windows_insufficient_data():
-    """Should return 0 rows if window is larger than the number of dates."""
+def test_generate_sales_features_insufficient_data():
+    """Should return 0 rows if window is larger than available dates."""
     df = pd.DataFrame(
         {
             "store": ["store1"] * 3,
@@ -51,7 +51,7 @@ def test_sliding_windows_insufficient_data():
             "unit_sales": [100, 200, 300],
         }
     )
-    result = generate_nonoverlap_window_features(df, window_size=5)
+    result = generate_sales_features(df, window_size=5)
     assert result.empty
 
 
@@ -112,15 +112,15 @@ def test_add_next_window_targets_basic_shift():
 
     # Generate merged feature set
     cyc_df = generate_cyclical_features(df, window_size=3)
-    sales_df = generate_nonoverlap_window_features(df, window_size=3)
+    sales_df = generate_sales_features(df, window_size=3)
     merged_df = pd.merge(
         cyc_df, sales_df, on=["start_date", "store_item", "store", "item"]
     )
 
     result = add_next_window_targets(merged_df, window_size=3)
 
-    # Should have 4 input rows, 3 target rows (last has NaNs)
-    assert len(result) == 4
+    # Should have 2 input rows, 1 target row (last has NaNs)
+    assert len(result) == 2
 
     # First row's target sales should match second row's input sales
     for i in range(1, 4):
@@ -149,7 +149,7 @@ def test_add_next_window_targets_column_integrity():
 
     window_size = 2
     cyc_df = generate_cyclical_features(df, window_size=window_size)
-    sales_df = generate_nonoverlap_window_features(df, window_size=window_size)
+    sales_df = generate_sales_features(df, window_size=window_size)
     merged_df = pd.merge(
         cyc_df, sales_df, on=["start_date", "store_item", "store", "item"]
     )
@@ -173,7 +173,7 @@ def test_add_next_window_targets_drop_nan_rows():
 
     window_size = 3
     cyc_df = generate_cyclical_features(df, window_size=window_size)
-    sales_df = generate_nonoverlap_window_features(df, window_size=window_size)
+    sales_df = generate_sales_features(df, window_size=window_size)
     merged_df = pd.merge(
         cyc_df, sales_df, on=["start_date", "store_item", "store", "item"]
     )
