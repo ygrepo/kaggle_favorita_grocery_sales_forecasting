@@ -326,10 +326,10 @@ def test_generate_sales_features_with_clusters():
         columns="date",
         values="unit_sales",
     )
-    from sklearn.cluster import KMeans
+    from sklearn.cluster import SpectralClustering
 
     clusters = generate_store_item_clusters(
-        pivot, n_clusters=1, cluster_algo=KMeans(random_state=0, n_init="auto")
+        pivot, n_clusters=1, model_class=SpectralClustering(random_state=0)
     )
     # Duplicate labels to mimic store/item clusters
     clusters["store_cluster_id"] = clusters["clusterId"]
@@ -344,4 +344,9 @@ def test_generate_sales_features_with_clusters():
     assert result["cluster_id"].nunique() == 1
     # Cluster median for first window day 1 should equal median of [1,5]
     first_med = np.median([1, 5])
-    assert result.loc[result["start_date"] == df["date"].min(), "cluster_med_day_1"].iloc[0] == first_med
+    assert (
+        result.loc[result["start_date"] == df["date"].min(), "cluster_med_day_1"].iloc[
+            0
+        ]
+        == first_med
+    )
