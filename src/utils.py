@@ -164,40 +164,6 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     return pd.DataFrame(results, columns=cols)
 
 
-def generate_nonoverlap_window_features(
-    df: pd.DataFrame, window_size: int = 5
-) -> pd.DataFrame:
-    """Create overlapping sales windows for each store_item."""
-    df = df.copy()
-    df["date"] = pd.to_datetime(df["date"])
-
-    if "store_item" not in df.columns:
-        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
-    cols = ["start_date", "store_item", "store", "item"] + [
-        f"sales_day_{i}" for i in range(1, window_size + 1)
-    ]
-
-    if df.empty or df.groupby("store_item")["date"].count().max() < window_size:
-        return pd.DataFrame(columns=cols)
-
-    records = []
-    for store_item, group in df.groupby("store_item"):
-        group = group.sort_values("date").reset_index(drop=True)
-        for start in range(len(group) - window_size + 1):
-            window = group.iloc[start : start + window_size]
-            row = {
-                "start_date": window["date"].iloc[0],
-                "store_item": store_item,
-                "store": window["store"].iloc[0],
-                "item": window["item"].iloc[0],
-            }
-            for i in range(window_size):
-                row[f"sales_day_{i+1}"] = window["unit_sales"].iloc[i]
-            records.append(row)
-
-    return pd.DataFrame(records, columns=cols)
-
 
 def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
     df = df.copy()
