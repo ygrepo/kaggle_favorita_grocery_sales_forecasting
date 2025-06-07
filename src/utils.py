@@ -164,7 +164,6 @@ def generate_cyclical_features(df: pd.DataFrame, window_size: int = 7) -> pd.Dat
     return pd.DataFrame(results, columns=cols)
 
 
-
 def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
