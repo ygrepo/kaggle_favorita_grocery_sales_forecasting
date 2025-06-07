@@ -185,9 +185,11 @@ def generate_sales_features(
     window_size : int, optional
         Size of each rolling window, by default 5.
     cluster_map : DataFrame or dict, optional
-        Mapping of ``store_item`` to ``clusterId`` produced by
-        :func:`generate_store_item_clusters`.  If provided, cluster
-        medians will be computed and a ``cluster_id`` column will be added.
+        Mapping of ``store_item`` to cluster identifiers produced by
+        :func:`generate_store_item_clusters`.  If provided, a ``cluster_id``
+        column will be added as before.  Additionally, if ``cluster_map``
+        contains ``store_cluster_id`` or ``item_cluster_id`` columns,
+        corresponding median features will be generated.
 
     Returns
     -------
@@ -202,15 +204,34 @@ def generate_sales_features(
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
     cluster_lookup: dict[str, int] | None = None
+    store_cluster_lookup: dict[str, int] | None = None
+    item_cluster_lookup: dict[str, int] | None = None
     if cluster_map is not None:
         if isinstance(cluster_map, pd.DataFrame):
-            name = "clusterId" if "clusterId" in cluster_map.columns else cluster_map.columns[-1]
-            cluster_lookup = cluster_map.set_index("store_item")[name].to_dict()
+            cols = cluster_map.columns
+            if "clusterId" in cols:
+                cluster_lookup = cluster_map.set_index("store_item")["clusterId"].to_dict()
+            elif len(cols) > 1:
+                cluster_lookup = cluster_map.set_index("store_item")[cols[-1]].to_dict()
+            if "store_cluster_id" in cols:
+                store_cluster_lookup = cluster_map.set_index("store_item")["store_cluster_id"].to_dict()
+            if "item_cluster_id" in cols:
+                item_cluster_lookup = cluster_map.set_index("store_item")["item_cluster_id"].to_dict()
         else:
             cluster_lookup = dict(cluster_map)
-        df["cluster_id"] = df["store_item"].map(cluster_lookup)
+        df["cluster_id"] = df["store_item"].map(cluster_lookup) if cluster_lookup is not None else np.nan
+        if store_cluster_lookup is not None:
+            df["store_cluster_id"] = df["store_item"].map(store_cluster_lookup)
+        else:
+            df["store_cluster_id"] = np.nan
+        if item_cluster_lookup is not None:
+            df["item_cluster_id"] = df["store_item"].map(item_cluster_lookup)
+        else:
+            df["item_cluster_id"] = np.nan
     else:
         df["cluster_id"] = np.nan
+        df["store_cluster_id"] = np.nan
+        df["item_cluster_id"] = np.nan
 
     windows = generate_aligned_windows(df, window_size)
     records = []
@@ -225,9 +246,19 @@ def generate_sales_features(
             w_df.groupby(["item", "date"])["unit_sales"].median().unstack(fill_value=0)
         )
         cluster_med = None
+        store_cluster_med = None
+        item_cluster_med = None
         if cluster_lookup is not None:
             cluster_med = (
                 w_df.groupby(["cluster_id", "date"])["unit_sales"].median().unstack(fill_value=0)
+            )
+        if store_cluster_lookup is not None:
+            store_cluster_med = (
+                w_df.groupby(["store_cluster_id", "date"])["unit_sales"].median().unstack(fill_value=0)
+            )
+        if item_cluster_lookup is not None:
+            item_cluster_med = (
+                w_df.groupby(["item_cluster_id", "date"])["unit_sales"].median().unstack(fill_value=0)
             )
         sales = (
             w_df.groupby(["store", "item", "date"])["unit_sales"]
@@ -246,6 +277,14 @@ def generate_sales_features(
                 row["cluster_id"] = cluster_lookup.get(f"{store}_{item}")
             else:
                 row["cluster_id"] = np.nan
+            if store_cluster_lookup is not None:
+                row["store_cluster_id"] = store_cluster_lookup.get(f"{store}_{item}")
+            else:
+                row["store_cluster_id"] = np.nan
+            if item_cluster_lookup is not None:
+                row["item_cluster_id"] = item_cluster_lookup.get(f"{store}_{item}")
+            else:
+                row["item_cluster_id"] = np.nan
 
             for i in range(1, window_size + 1):
                 try:
@@ -265,23 +304,52 @@ def generate_sales_features(
                             if row["cluster_id"] in cluster_med.index
                             else 0
                         )
+                    if store_cluster_lookup is not None:
+                        row[f"store_cluster_med_day_{i}"] = (
+                            store_cluster_med.loc[row["store_cluster_id"]].get(d, 0)
+                            if row["store_cluster_id"] in store_cluster_med.index
+                            else 0
+                        )
+                    if item_cluster_lookup is not None:
+                        row[f"item_cluster_med_day_{i}"] = (
+                            item_cluster_med.loc[row["item_cluster_id"]].get(d, 0)
+                            if row["item_cluster_id"] in item_cluster_med.index
+                            else 0
+                        )
                 except IndexError:
                     row[f"sales_day_{i}"] = 0
                     row[f"store_med_day_{i}"] = 0
                     row[f"item_med_day_{i}"] = 0
                     if cluster_lookup is not None:
                         row[f"cluster_med_day_{i}"] = 0
+                    if store_cluster_lookup is not None:
+                        row[f"store_cluster_med_day_{i}"] = 0
+                    if item_cluster_lookup is not None:
+                        row[f"item_cluster_med_day_{i}"] = 0
 
             records.append(row)
 
     # Assemble DataFrame
     cols = ["start_date", "store_item", "store", "item", "cluster_id"]
+    if store_cluster_lookup is not None:
+        cols.append("store_cluster_id")
+    if item_cluster_lookup is not None:
+        cols.append("item_cluster_id")
     sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
     store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
     item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
     cluster_med_cols = [f"cluster_med_day_{i}" for i in range(1, window_size + 1)] if cluster_lookup is not None else []
+    store_cluster_med_cols = [f"store_cluster_med_day_{i}" for i in range(1, window_size + 1)] if store_cluster_lookup is not None else []
+    item_cluster_med_cols = [f"item_cluster_med_day_{i}" for i in range(1, window_size + 1)] if item_cluster_lookup is not None else []
 
-    cols.extend(sales_cols + store_med_cols + item_med_cols + cluster_med_cols)
+    cols.extend(
+        sales_cols
+        + store_med_cols
+        + item_med_cols
+        + cluster_med_cols
+        + store_cluster_med_cols
+        + item_cluster_med_cols
+    )
 
     if not records:
         return pd.DataFrame(columns=cols)
