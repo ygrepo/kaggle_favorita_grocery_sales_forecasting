@@ -407,6 +407,46 @@ def plot_sales_histogram(
     plt.close()
 
 
+def plot_final_percent_mae_per_sid(summary_df, title=None, fn=None):
+    """Plot final train/test percent MAE for each store_item (sid).
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Must contain columns ``store_item``, ``final_train_percent_mae`` and
+        ``final_test_percent_mae``.
+    title : str or None
+        Optional overall title for the plot.
+    fn : str or None
+        If provided, save the figure to this filename (dpi=300).
+    """
+
+    if summary_df.empty:
+        raise ValueError("summary_df is empty")
+
+    df = summary_df.sort_values("store_item").reset_index(drop=True)
+    x = np.arange(len(df))
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(x, df["final_train_percent_mae"], marker="o", label="Train %MAE")
+    ax.plot(x, df["final_test_percent_mae"], marker="o", label="Test %MAE")
+
+    ax.set_xlabel("store_item", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Percent MAE", fontsize=12, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(df["store_item"], rotation=90, fontsize=8)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend()
+
+    if title:
+        ax.set_title(title, fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
 def visualize_clustered_matrix(X, U, V_list, title="Clustered Matrix", fn: str = None):
     row_order = np.argsort(np.argmax(U, axis=1))
     col_cluster_ids = np.zeros(X.shape[1], dtype=int)
