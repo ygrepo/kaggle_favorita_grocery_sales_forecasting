@@ -222,6 +222,9 @@ def generate_sales_features(
             )
         else:  # DataFrame
             cluster_df = cluster_map.copy()
+            # normalise common column names
+            if "clusterId" in cluster_df.columns and "cluster_id" not in cluster_df.columns:
+                cluster_df = cluster_df.rename(columns={"clusterId": "cluster_id"})
 
         cluster_df["store_item"] = cluster_df["store_item"].astype(str)
 
