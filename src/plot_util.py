@@ -407,39 +407,50 @@ def plot_sales_histogram(
     plt.close()
 
 
-def plot_final_percent_mae_per_sid(summary_df, title=None, fn=None):
-    """Plot final train/test percent MAE for each store_item (sid).
+def plot_final_percent_mae_per_sid(
+    summary_df: pd.DataFrame,
+    title: str | None = None,
+    fn: str | None = None,
+    y_lim: tuple[float, float] | None = None,
+):
+    """
+    Plot final train/test percent MAE for each store_item (sid).
 
     Parameters
     ----------
-    summary_df : pandas.DataFrame
+    summary_df : DataFrame
         Must contain columns ``store_item``, ``final_train_percent_mae`` and
         ``final_test_percent_mae``.
-    title : str or None
-        Optional overall title for the plot.
-    fn : str or None
+    title : str, optional
+        Overall title for the plot.
+    fn : str, optional
         If provided, save the figure to this filename (dpi=300).
+    y_lim : (float, float), optional
+        y‑axis limits as (ymin, ymax).  Pass None to let Matplotlib auto‑scale.
     """
-
     if summary_df.empty:
         raise ValueError("summary_df is empty")
 
     df = summary_df.sort_values("store_item").reset_index(drop=True)
     x = np.arange(len(df))
 
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(x, df["final_train_percent_mae"], marker="o", label="Train %MAE")
-    ax.plot(x, df["final_test_percent_mae"], marker="o", label="Test %MAE")
+    _, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(x, df["final_train_percent_mae"], marker="o", label="Train %MAV")
+    ax.plot(x, df["final_test_percent_mae"], marker="o", label="Validation %MAV")
 
-    ax.set_xlabel("store_item", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Percent MAE", fontsize=12, fontweight="bold")
+    ax.set_xlabel("store_item", fontsize=16, fontweight="bold")
+    ax.set_ylabel("%MAV", fontsize=16, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(df["store_item"], rotation=90, fontsize=8)
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.legend()
 
+    if y_lim is not None:
+        ax.set_ylim(y_lim)
+
     if title:
-        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.set_title(title, fontsize=24, fontweight="bold")
+
     plt.tight_layout()
     if fn:
         plt.savefig(fn, dpi=300, bbox_inches="tight")
