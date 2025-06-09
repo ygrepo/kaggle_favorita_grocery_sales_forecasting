@@ -16,25 +16,33 @@ from typing import Union, Dict
 
 def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
     """Return feature and label column names for a given window size."""
-    cyclical_features = [
+    meta_cols = ["start_date", "store_item", "store", "item"]
+    x_cyclical_features = [
         f"{feat}_{trig}_{i}"
         for feat in ["dayofweek", "weekofmonth", "monthofyear", "paycycle", "season"]
         for trig in ["sin", "cos"]
         for i in range(1, window_size + 1)
     ]
 
-    sales_features = [
+    x_sales_features = [
         f"{name}_{i}"
         for name in ["sales_day", "store_med_day", "item_med_day"]
         for i in range(1, window_size + 1)
     ]
 
-    feature_cols = sales_features + cyclical_features
-    label_cols = [f"y_{c}" for c in feature_cols]
-    meta_cols = ["start_date", "store_item", "store", "item"]
-    y_sales_features = [f"y_{c}" for c in sales_features]
-    y_cyclical_features = [f"y_{c}" for c in cyclical_features]
-    return meta_cols, feature_cols, label_cols, y_sales_features, y_cyclical_features
+    x_feature_cols = x_sales_features + x_cyclical_features
+    label_cols = [f"y_{c}" for c in x_feature_cols]
+    y_sales_features = [f"y_{c}" for c in x_sales_features]
+    y_cyclical_features = [f"y_{c}" for c in x_cyclical_features]
+    return (
+        meta_cols,
+        x_sales_features,
+        x_cyclical_features,
+        x_feature_cols,
+        label_cols,
+        y_sales_features,
+        y_cyclical_features,
+    )
 
 
 def generate_aligned_windows(df, window_size):
@@ -191,117 +199,22 @@ def generate_aligned_windows(
     ]
 
 
-# ------------------------------------------------------------------ #
-# main function                                                      #
-# ------------------------------------------------------------------ #
-def generate_sales_features(
-    df: pd.DataFrame,
-    window_size: int = 5,
-    cluster_map: Union[pd.DataFrame, Dict[str, int], None] = None,
-) -> pd.DataFrame:
-    """
-    Create rolling‑window sales features with optional cluster medians.
-    """
-    # --------------------------- housekeeping -------------------------- #
+def generate_sales_features(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
     df = df.copy()
-    df["date"] = pd.to_datetime(df["date"], errors="raise")
+    df["date"] = pd.to_datetime(df["date"])
 
-    # ensure the composite key exists and is STRING everywhere
-    if "store_item" not in df.columns:
-        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-    df["store_item"] = df["store_item"].astype(str)
-
-    # ------------- enrich df with cluster_id / store_cluster_id -------- #
-    if cluster_map is not None:
-        # normalise to DataFrame with a string store_item index
-        if isinstance(cluster_map, dict):
-            cluster_df = (
-                pd.Series(cluster_map, name="cluster_id")
-                .rename_axis("store_item")
-                .reset_index()
-            )
-        else:  # DataFrame
-            cluster_df = cluster_map.copy()
-            # normalise common column names
-            if "clusterId" in cluster_df.columns and "cluster_id" not in cluster_df.columns:
-                cluster_df = cluster_df.rename(columns={"clusterId": "cluster_id"})
-
-        cluster_df["store_item"] = cluster_df["store_item"].astype(str)
-
-        # merge brings in any available columns; missing → NaN
-        df = df.merge(cluster_df, on="store_item", how="left")
-
-        # keep nullable integers (Int64) instead of float NaNs
-        for col in ("cluster_id", "store_cluster_id", "item_cluster_id"):
-            if col in df.columns:
-                df[col] = df[col].astype("Int64")
-            else:  # ensure column exists for downstream logic
-                df[col] = pd.Series([pd.NA] * len(df), dtype="Int64")
-    else:
-        # create empty nullable‐int columns
-        df["cluster_id"] = pd.Series([pd.NA] * len(df), dtype="Int64")
-        df["store_cluster_id"] = pd.Series([pd.NA] * len(df), dtype="Int64")
-        df["item_cluster_id"] = pd.Series([pd.NA] * len(df), dtype="Int64")
-
-    # ------------------------------------------------------------------ #
-    # iterate over rolling windows                                       #
-    # ------------------------------------------------------------------ #
     windows = generate_aligned_windows(df, window_size)
     records = []
-
-    # pre‑declare all column names for final DataFrame
-    base_cols = [
-        "start_date",
-        "store_item",
-        "store",
-        "item",
-        "cluster_id",
-        "store_cluster_id",
-        "item_cluster_id",
-    ]
-    dyn_cols = sum(
-        (
-            [f"{prefix}_day_{i}" for i in range(1, window_size + 1)]
-            for prefix in (
-                "sales",
-                "store_med",
-                "item_med",
-                "cluster_med",
-                "store_cluster_med",
-                "item_cluster_med",
-            )
-        ),
-        [],
-    )
-    out_cols = base_cols + dyn_cols
 
     for window_dates in windows:
         w_df = df[df["date"].isin(window_dates)]
 
-        # daily medians within this window
         store_med = (
             w_df.groupby(["store", "date"])["unit_sales"].median().unstack(fill_value=0)
         )
         item_med = (
             w_df.groupby(["item", "date"])["unit_sales"].median().unstack(fill_value=0)
         )
-        cluster_med = (
-            w_df.groupby(["cluster_id", "date"])["unit_sales"]
-            .median()
-            .unstack(fill_value=0)
-        )
-        sc_med = (
-            w_df.groupby(["store_cluster_id", "date"])["unit_sales"]
-            .median()
-            .unstack(fill_value=0)
-        )
-        ic_med = (
-            w_df.groupby(["item_cluster_id", "date"])["unit_sales"]
-            .median()
-            .unstack(fill_value=0)
-        )
-
-        # sales aggregated by (store,item,date)
         sales = (
             w_df.groupby(["store", "item", "date"])["unit_sales"]
             .sum()
@@ -309,285 +222,45 @@ def generate_sales_features(
         )
 
         for (store, item), sales_vals in sales.iterrows():
-            sid = f"{store}_{item}"
-
             row = {
-                "start_date": window_dates[0],
-                "store_item": sid,
+                "store_item": f"{store}_{item}",
                 "store": store,
                 "item": item,
-                "cluster_id": df.loc[df["store_item"] == sid, "cluster_id"].iloc[0],
-                "store_cluster_id": df.loc[
-                    df["store_item"] == sid, "store_cluster_id"
-                ].iloc[0],
-                "item_cluster_id": df.loc[
-                    df["store_item"] == sid, "item_cluster_id"
-                ].iloc[0],
+                "start_date": window_dates[0],
             }
 
-            for i, d in enumerate(window_dates, start=1):
-                row[f"sales_day_{i}"] = sales_vals.get(d, 0)
-                row[f"store_med_day_{i}"] = (
-                    store_med.loc[store].get(d, 0) if store in store_med.index else 0
-                )
-                row[f"item_med_day_{i}"] = (
-                    item_med.loc[item].get(d, 0) if item in item_med.index else 0
-                )
-                cid = row["cluster_id"]
-                sc = row["store_cluster_id"]
-                ic = row["item_cluster_id"]
-                row[f"cluster_med_day_{i}"] = (
-                    cluster_med.loc[cid].get(d, 0) if cid in cluster_med.index else 0
-                )
-                row[f"store_cluster_med_day_{i}"] = (
-                    sc_med.loc[sc].get(d, 0) if sc in sc_med.index else 0
-                )
-                row[f"item_cluster_med_day_{i}"] = (
-                    ic_med.loc[ic].get(d, 0) if ic in ic_med.index else 0
-                )
-
-            # pad missing days (if last window shorter than window_size)
-            for i in range(len(window_dates) + 1, window_size + 1):
-                for prefix in (
-                    "sales",
-                    "store_med",
-                    "item_med",
-                    "cluster_med",
-                    "store_cluster_med",
-                    "item_cluster_med",
-                ):
-                    row[f"{prefix}_day_{i}"] = 0
+            for i in range(1, window_size + 1):
+                try:
+                    d = window_dates[i - 1]
+                    row[f"sales_day_{i}"] = sales_vals.get(d, 0)
+                    row[f"store_med_day_{i}"] = (
+                        store_med.loc[store].get(d, 0)
+                        if store in store_med.index
+                        else 0
+                    )
+                    row[f"item_med_day_{i}"] = (
+                        item_med.loc[item].get(d, 0) if item in item_med.index else 0
+                    )
+                except IndexError:
+                    row[f"sales_day_{i}"] = 0
+                    row[f"store_med_day_{i}"] = 0
+                    row[f"item_med_day_{i}"] = 0
 
             records.append(row)
 
-    return pd.DataFrame(records, columns=out_cols)
+    # Assemble DataFrame
+    cols = ["start_date", "store_item", "store", "item"]
+    sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
+    store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
+    item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
 
+    cols.extend(sales_cols + store_med_cols + item_med_cols)
 
-# def generate_sales_features(
-#     df: pd.DataFrame,
-#     window_size: int = 5,
-#     cluster_map: pd.DataFrame | dict | None = None,
-# ) -> pd.DataFrame:
-#     """Generate sales based window features.
+    if not records:
+        return pd.DataFrame(columns=cols)
 
-#     Parameters
-#     ----------
-#     df : pd.DataFrame
-#         Input sales data with ``store``, ``item``, ``date`` and ``unit_sales``.
-#     window_size : int, optional
-#         Size of each rolling window, by default 5.
-#     cluster_map : DataFrame or dict, optional
-#         Mapping of ``store_item`` to cluster identifiers produced by
-#         :func:`generate_store_item_clusters`.  If provided, a ``cluster_id``
-#         column will be added as before.  Additionally, if ``cluster_map``
-#         contains ``store_cluster_id`` or ``item_cluster_id`` columns,
-#         corresponding median features will be generated.
-
-#     Returns
-#     -------
-#     pd.DataFrame
-#         DataFrame containing sales features.
-#     """
-
-#     df = df.copy()
-#     df["date"] = pd.to_datetime(df["date"])
-
-#     if "store_item" not in df.columns:
-#         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
-#     cluster_lookup: dict[str, int] | None = None
-#     store_cluster_lookup: dict[str, int] | None = None
-#     item_cluster_lookup: dict[str, int] | None = None
-#     if cluster_map is not None:
-#         if isinstance(cluster_map, pd.DataFrame):
-#             cols = cluster_map.columns
-#             if "clusterId" in cols:
-#                 cluster_lookup = cluster_map.set_index("store_item")[
-#                     "clusterId"
-#                 ].to_dict()
-#             elif len(cols) > 1:
-#                 cluster_lookup = cluster_map.set_index("store_item")[cols[-1]].to_dict()
-#             if "store_cluster_id" in cols:
-#                 store_cluster_lookup = cluster_map.set_index("store_item")[
-#                     "store_cluster_id"
-#                 ].to_dict()
-#             if "item_cluster_id" in cols:
-#                 item_cluster_lookup = cluster_map.set_index("store_item")[
-#                     "item_cluster_id"
-#                 ].to_dict()
-#         else:
-#             cluster_lookup = dict(cluster_map)
-#         df["cluster_id"] = (
-#             df["store_item"].map(cluster_lookup)
-#             if cluster_lookup is not None
-#             else np.nan
-#         )
-#         if store_cluster_lookup is not None:
-#             df["store_cluster_id"] = df["store_item"].map(store_cluster_lookup)
-#         else:
-#             df["store_cluster_id"] = np.nan
-#         if item_cluster_lookup is not None:
-#             df["item_cluster_id"] = df["store_item"].map(item_cluster_lookup)
-#         else:
-#             df["item_cluster_id"] = np.nan
-#     else:
-#         df["cluster_id"] = np.nan
-#         df["store_cluster_id"] = np.nan
-#         df["item_cluster_id"] = np.nan
-
-#     windows = generate_aligned_windows(df, window_size)
-#     records = []
-
-#     for window_dates in windows:
-#         w_df = df[df["date"].isin(window_dates)]
-
-#         store_med = (
-#             w_df.groupby(["store", "date"])["unit_sales"].median().unstack(fill_value=0)
-#         )
-#         item_med = (
-#             w_df.groupby(["item", "date"])["unit_sales"].median().unstack(fill_value=0)
-#         )
-#         cluster_med = None
-#         store_cluster_med = None
-#         item_cluster_med = None
-#         if cluster_lookup is not None:
-#             cluster_med = (
-#                 w_df.groupby(["cluster_id", "date"])["unit_sales"]
-#                 .median()
-#                 .unstack(fill_value=0)
-#             )
-#         if store_cluster_lookup is not None:
-#             store_cluster_med = (
-#                 w_df.groupby(["store_cluster_id", "date"])["unit_sales"]
-#                 .median()
-#                 .unstack(fill_value=0)
-#             )
-#         if item_cluster_lookup is not None:
-#             item_cluster_med = (
-#                 w_df.groupby(["item_cluster_id", "date"])["unit_sales"]
-#                 .median()
-#                 .unstack(fill_value=0)
-#             )
-#         if store_cluster_lookup is not None:
-#             store_cluster_med = (
-#                 w_df.groupby(["store_cluster_id", "date"])["unit_sales"]
-#                 .median()
-#                 .unstack(fill_value=0)
-#             )
-#         if item_cluster_lookup is not None:
-#             item_cluster_med = (
-#                 w_df.groupby(["item_cluster_id", "date"])["unit_sales"]
-#                 .median()
-#                 .unstack(fill_value=0)
-#             )
-#         sales = (
-#             w_df.groupby(["store", "item", "date"])["unit_sales"]
-#             .sum()
-#             .unstack(fill_value=0)
-#         )
-
-#         for (store, item), sales_vals in sales.iterrows():
-#             row = {
-#                 "store_item": f"{store}_{item}",
-#                 "store": store,
-#                 "item": item,
-#                 "start_date": window_dates[0],
-#             }
-#             if cluster_lookup is not None:
-#                 row["cluster_id"] = cluster_lookup.get(f"{store}_{item}")
-#             else:
-#                 row["cluster_id"] = np.nan
-#             if store_cluster_lookup is not None:
-#                 row["store_cluster_id"] = store_cluster_lookup.get(f"{store}_{item}")
-#             else:
-#                 row["store_cluster_id"] = np.nan
-#             if item_cluster_lookup is not None:
-#                 row["item_cluster_id"] = item_cluster_lookup.get(f"{store}_{item}")
-#             else:
-#                 row["item_cluster_id"] = np.nan
-
-#             for i in range(1, window_size + 1):
-#                 try:
-#                     d = window_dates[i - 1]
-#                     row[f"sales_day_{i}"] = sales_vals.get(d, 0)
-#                     row[f"store_med_day_{i}"] = (
-#                         store_med.loc[store].get(d, 0)
-#                         if store in store_med.index
-#                         else 0
-#                     )
-#                     row[f"item_med_day_{i}"] = (
-#                         item_med.loc[item].get(d, 0) if item in item_med.index else 0
-#                     )
-#                     if cluster_lookup is not None:
-#                         row[f"cluster_med_day_{i}"] = (
-#                             cluster_med.loc[row["cluster_id"]].get(d, 0)
-#                             if row["cluster_id"] in cluster_med.index
-#                             else 0
-#                         )
-#                     if store_cluster_lookup is not None:
-#                         row[f"store_cluster_med_day_{i}"] = (
-#                             store_cluster_med.loc[row["store_cluster_id"]].get(d, 0)
-#                             if row["store_cluster_id"] in store_cluster_med.index
-#                             else 0
-#                         )
-#                     if item_cluster_lookup is not None:
-#                         row[f"item_cluster_med_day_{i}"] = (
-#                             item_cluster_med.loc[row["item_cluster_id"]].get(d, 0)
-#                             if row["item_cluster_id"] in item_cluster_med.index
-#                             else 0
-#                         )
-#                 except IndexError:
-#                     row[f"sales_day_{i}"] = 0
-#                     row[f"store_med_day_{i}"] = 0
-#                     row[f"item_med_day_{i}"] = 0
-#                     if cluster_lookup is not None:
-#                         row[f"cluster_med_day_{i}"] = 0
-#                     if store_cluster_lookup is not None:
-#                         row[f"store_cluster_med_day_{i}"] = 0
-#                     if item_cluster_lookup is not None:
-#                         row[f"item_cluster_med_day_{i}"] = 0
-
-#             records.append(row)
-
-#     # Assemble DataFrame
-#     cols = ["start_date", "store_item", "store", "item", "cluster_id"]
-#     if store_cluster_lookup is not None:
-#         cols.append("store_cluster_id")
-#     if item_cluster_lookup is not None:
-#         cols.append("item_cluster_id")
-#     sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
-#     store_med_cols = [f"store_med_day_{i}" for i in range(1, window_size + 1)]
-#     item_med_cols = [f"item_med_day_{i}" for i in range(1, window_size + 1)]
-#     cluster_med_cols = (
-#         [f"cluster_med_day_{i}" for i in range(1, window_size + 1)]
-#         if cluster_lookup is not None
-#         else []
-#     )
-#     store_cluster_med_cols = (
-#         [f"store_cluster_med_day_{i}" for i in range(1, window_size + 1)]
-#         if store_cluster_lookup is not None
-#         else []
-#     )
-#     item_cluster_med_cols = (
-#         [f"item_cluster_med_day_{i}" for i in range(1, window_size + 1)]
-#         if item_cluster_lookup is not None
-#         else []
-#     )
-
-#     cols.extend(
-#         sales_cols
-#         + store_med_cols
-#         + item_med_cols
-#         + cluster_med_cols
-#         + store_cluster_med_cols
-#         + item_cluster_med_cols
-#     )
-
-#     if not records:
-#         return pd.DataFrame(columns=cols)
-
-#     df = pd.DataFrame(records)
-#     return df[cols]
+    df = pd.DataFrame(records)
+    return df[cols]
 
 
 def add_y_targets_from_shift(df, window_size=16):
@@ -990,7 +663,9 @@ def compute_spectral_clustering_cv_scores(
                         model = model_class(n_clusters=n_row, **model_kwargs)
                     else:  # SpectralBiclustering
                         n_col_eff = n_row if n_col is None else n_col
-                        model = model_class(n_clusters=(n_row, n_col_eff), **model_kwargs)
+                        model = model_class(
+                            n_clusters=(n_row, n_col_eff), **model_kwargs
+                        )
 
                     model.fit(X_train)
 

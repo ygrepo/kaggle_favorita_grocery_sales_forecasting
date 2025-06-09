@@ -33,21 +33,77 @@ class StoreItemDataset(Dataset):
 
 
 class ShallowNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim=64, output_dim=None):
+    def __init__(self, input_dim, hidden_dim=128, output_dim=None, dropout=0.2):
         super().__init__()
         output_dim = output_dim or input_dim
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             # nn.Tanh(),
             nn.LeakyReLU(),
-            # nn.Dropout(0.2),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, output_dim),
-            nn.Hardtanh(min_val=0.0, max_val=1.0),  # clips to [0,1]
+            nn.Hardtanh(),  # clips to [0,1]
             # nn.Sigmoid(),  # outputs in (0,1)
         )
 
     def forward(self, x):
         return self.net(x)
+
+
+class TwoLayerNN(nn.Module):
+    def __init__(self, input_dim, h1=128, h2=64, dropout=0.2):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, h1),
+            nn.BatchNorm1d(h1),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(h1, h2),
+            nn.BatchNorm1d(h2),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(h2, input_dim),
+            nn.Sigmoid(),  # already in (0,1)
+        )
+
+    def forward(self, x):
+        out = self.net(x)
+        # optional extra safety, **not in‑place**
+        return torch.clamp(out, 1e-6, 1.1)
+        # or simply: return out
+
+
+class ResidualMLP(nn.Module):
+    def __init__(self, input_dim, hidden=128, depth=3, dropout=0.2):
+        super().__init__()
+        layers = []
+        for _ in range(depth):
+            layers += [
+                nn.Linear(input_dim, hidden),
+                nn.BatchNorm1d(hidden),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden, input_dim),
+            ]
+        self.blocks = nn.ModuleList(layers)
+
+    def forward(self, x):
+        out = x
+        for i in range(0, len(self.blocks), 5):
+            h = self.blocks[i + 0](out)
+            h = self.blocks[i + 1](h)
+            h = self.blocks[i + 2](h)
+            h = self.blocks[i + 3](h)
+            h = self.blocks[i + 4](h)
+            out = out + h  # residual add (not in‑place)
+        return torch.clamp(torch.sigmoid(out), 1e-6, 1.1)  # out‑of‑place clamp
+
+
+# ----- initialise every nn.Linear in the network ----------
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        nn.init.kaiming_uniform_(m.weight, a=0.01)  # He initialisation for LeakyReLU
+        nn.init.zeros_(m.bias)
 
 
 class NWRMSLELoss(nn.Module):
@@ -130,46 +186,141 @@ def set_seed(seed: int = 42):
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def compute_mae(loader, model, device, y_scaler, sales_idx):
-    abs_sum, count = 0.0, 0
+# ─────────────────────────────────────────────────────────────────────
+# Helper metrics
+# ─────────────────────────────────────────────────────────────────────
+def compute_mpe(
+    loader: DataLoader,
+    model: torch.nn.Module,
+    device: torch.device,
+    sc_sales: MinMaxScaler,  # log‑sales scaler
+    sc_cyc: MinMaxScaler,  # sin/cos scaler  (‑1…1 ↔ 0…1)
+    sales_idx: list[int],
+    cyc_idx: list[int],
+    eps: float = 1e-9,
+) -> float:
+    """
+    Mean Percentage Error on the *full* target vector (sales + cyclical):
+
+        MPE = mean( (ŷ – y) / (y + eps) ).
+
+    • Sales cols are inverse‑scaled → expm1 to get unit sales.
+    • Cyclical cols are inverse‑scaled to get values back in [‑1, 1].
+    """
+    err_sum, count = 0.0, 0
+    model.eval()
+
     with torch.no_grad():
         for xb, yb, _ in loader:
-            xb, yb = xb.to(device), yb.to(device)
-            p = model(xb)
-            p_inv = y_scaler.inverse_transform(p.cpu().numpy())
-            yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
-            p_inv[:, sales_idx] = np.expm1(p_inv[:, sales_idx])
-            yb_inv[:, sales_idx] = np.expm1(yb_inv[:, sales_idx])
-            abs_sum += np.sum(np.abs(p_inv - yb_inv))
-            count += yb_inv.size
-    return abs_sum / count
+            # ---------- predictions ----------
+            preds_np = model(xb.to(device)).cpu().numpy()
+            preds_inv = preds_np.copy()
+
+            # sales block
+            p_sales_scaled = preds_np[:, sales_idx]
+            p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
+            preds_inv[:, sales_idx] = np.expm1(p_sales_unscaled)
+
+            # cyclical block
+            p_cyc_scaled = preds_np[:, cyc_idx]
+            preds_inv[:, cyc_idx] = sc_cyc.inverse_transform(p_cyc_scaled)
+
+            # ---------- ground truth ----------
+            yb_np = yb.cpu().numpy()
+            yb_inv = yb_np.copy()
+
+            y_sales_scaled = yb_np[:, sales_idx]
+            y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
+            yb_inv[:, sales_idx] = np.expm1(y_sales_unscaled)
+
+            y_cyc_scaled = yb_np[:, cyc_idx]
+            yb_inv[:, cyc_idx] = sc_cyc.inverse_transform(y_cyc_scaled)
+
+            # ---------- percentage error ----------
+            pct_err = (preds_inv - yb_inv) / (yb_inv + eps)  # element‑wise
+            err_sum += pct_err.sum()
+            count += pct_err.size
+
+    return np.abs(err_sum / count)
 
 
-def compute_mav(loader, y_scaler, sales_idx):
-    """Compute Mean Absolute Value of the true targets in the loader."""
+def compute_mav(
+    loader: DataLoader,
+    y_scaler: MinMaxScaler,  # fitted on *log‑sales* columns only
+    sales_idx: list[int],  # positions of the sales targets in y
+) -> float:
+    """
+    Mean absolute value of the sales targets in original units.
+    Cyclical sin/cos columns are ignored.
+    """
     abs_sum, count = 0.0, 0
     with torch.no_grad():
         for _, yb, _ in loader:
-            yb_inv = y_scaler.inverse_transform(yb.cpu().numpy())
-            yb_inv[:, sales_idx] = np.expm1(yb_inv[:, sales_idx])
-            abs_sum += np.sum(np.abs(yb_inv))
-            count += yb_inv.size
+            # --- slice the sales block (scaled log space) -----------------
+            sales_scaled = yb.cpu().numpy()[:, sales_idx]  # shape (batch, n_sales)
+
+            # --- restore to original units -------------------------------
+            sales_unscaled = y_scaler.inverse_transform(sales_scaled)  # undo MinMax
+            sales_units = np.expm1(sales_unscaled)  # undo log1p
+
+            # --- accumulate ---------------------------------------------
+            abs_sum += np.abs(sales_units).sum()
+            count += sales_units.size
+
+    return abs_sum / count
+
+
+def compute_mae(
+    loader: DataLoader,
+    model: torch.nn.Module,
+    device: torch.device,
+    sc_sales: MinMaxScaler,  # fitted on log‑sales columns only
+    sales_idx: list[int],  # positions of the sales targets in y
+) -> float:
+    """
+    Mean Absolute Error on SALES ONLY, expressed in original units.
+    Cyclical targets are excluded from the calculation.
+    """
+    abs_sum, count = 0.0, 0
+    model.eval()
+
+    with torch.no_grad():
+        for xb, yb, _ in loader:
+            # ----- predictions -----
+            preds_np = model(xb.to(device)).cpu().numpy()  # (batch, n_targets)
+            p_sales_scaled = preds_np[:, sales_idx]  # take sales block
+            p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
+            p_sales_units = np.expm1(p_sales_unscaled)  # back to unit sales
+
+            # ----- ground truth ----
+            yb_np = yb.cpu().numpy()
+            y_sales_scaled = yb_np[:, sales_idx]
+            y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
+            y_sales_units = np.expm1(y_sales_unscaled)
+
+            # ----- accumulate -----
+            abs_sum += np.abs(p_sales_units - y_sales_units).sum()
+            count += y_sales_units.size
+
     return abs_sum / count
 
 
 def train(
     df: pd.DataFrame,
     weights_df: pd.DataFrame,
-    feature_cols: List[str],
+    x_feature_cols: List[str],
+    x_sales_features: List[str],
+    x_cyclical_features: List[str],
     label_cols: List[str],
     y_sales_features: List[str],
     y_cyclical_features: List[str],
     item_col: str,
     train_frac: float = 0.8,
     batch_size: int = 32,
-    lr: float = 1e-3,
+    lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
+    model_cls: type = ShallowNN,
     output_dir: str = "../output/data/",
     model_dir: str = "../output/models/",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, torch.nn.Module]]:
@@ -191,62 +342,136 @@ def train(
             .reset_index(drop=True)
             .merge(weights_df, on=item_col, how="left")
         )
-        # sub = sub.dropna(subset=label_cols + feature_cols)
 
         train_size = int(len(sub) * train_frac)
-        X_train = sub[feature_cols][:train_size]
-        X_test = sub[feature_cols][train_size:]
 
-        y_train = sub[label_cols][:train_size]
-        y_test = sub[label_cols][train_size:]
+        # -----------------------------------
+        # SPLIT
+        # -----------------------------------
+        X_train_df = sub.loc[: train_size - 1, x_feature_cols]
+        X_test_df = sub.loc[train_size:, x_feature_cols]
 
-        x_scaler = MinMaxScaler()
-        X_train_scaled = x_scaler.fit_transform(X_train)
-        fn = f"{output_dir}/{today_str}_x_scaler_{sid}.pkl"
-        with open(fn, "wb") as f:
-            pickle.dump(x_scaler, f)
-        X_test_scaled = x_scaler.transform(X_test)
+        # ---------------------------------
+        #  X  SIDE  (cyc sin/cos untouched)
+        # ---------------------------------
+        x_sales_idx = [x_feature_cols.index(c) for c in x_sales_features]
+        x_cyc_idx = [x_feature_cols.index(c) for c in x_cyclical_features]
+        x_sales_train = np.clip(X_train_df.iloc[:, x_sales_idx].to_numpy(), 0, None)
+        x_sales_test = np.clip(X_test_df.iloc[:, x_sales_idx].to_numpy(), 0, None)
+        x_sales_train_log = np.log1p(x_sales_train)
+        x_sales_test_log = np.log1p(x_sales_test)
 
-        y_train_sales = y_train[y_sales_features].clip(lower=0)
-        y_test_sales = y_test[y_sales_features].clip(lower=0)
-        y_train_sales_log = np.log1p(y_train_sales)
-        y_test_sales_log = np.log1p(y_test_sales)
+        x_sales_scaler = MinMaxScaler().fit(x_sales_train_log)
 
-        y_train_cyc = y_train[y_cyclical_features]
-        y_test_cyc = y_test[y_cyclical_features]
-        y_train_full = pd.concat([y_train_sales_log, y_train_cyc], axis=1)
-        y_test_full = pd.concat([y_test_sales_log, y_test_cyc], axis=1)
+        x_cyc_train = X_train_df.iloc[:, x_cyc_idx].to_numpy()  # still -1…1
+        x_cyc_scaler = MinMaxScaler(feature_range=(0, 1)).fit(x_cyc_train)
+        X_train_full = np.hstack(
+            [
+                x_sales_scaler.transform(x_sales_train_log),  # scaled log‑sales 0…1
+                x_cyc_scaler.transform(x_cyc_train),  # NEW: cyc 0…1
+            ]
+        )
 
-        y_scaler = MinMaxScaler()
-        y_train_scaled = y_scaler.fit_transform(y_train_full)
-        fn = f"{output_dir}/{today_str}_y_scaler_{sid}.pkl"
-        with open(fn, "wb") as f:
-            pickle.dump(y_scaler, f)
-        y_test_scaled = y_scaler.transform(y_test_full)
+        x_cyc_test = X_test_df.iloc[:, x_cyc_idx].to_numpy()
+        X_test_full = np.hstack(
+            [
+                x_sales_scaler.transform(x_sales_test_log),
+                x_cyc_scaler.transform(x_cyc_test),
+            ]
+        )
+
+        pickle.dump(
+            x_sales_scaler,
+            open(f"{output_dir}/scalers/{today_str}_x_sales_scaler_{sid}.pkl", "wb"),
+        )
+
+        pickle.dump(
+            x_cyc_scaler,
+            open(f"{output_dir}/scalers/{today_str}_x_cyc_scaler_{sid}.pkl", "wb"),
+        )
+
+        # ---------------------------------
+        #  Y  SIDE  (same idea)
+        # ---------------------------------
+        y_sales_train = np.clip(
+            sub.loc[: train_size - 1, y_sales_features].to_numpy(), 0, None
+        )
+        y_sales_test = np.clip(
+            sub.loc[train_size:, y_sales_features].to_numpy(), 0, None
+        )
+
+        y_sales_train_log = np.log1p(y_sales_train)
+        y_sales_test_log = np.log1p(y_sales_test)
+        y_sales_scaler = MinMaxScaler().fit(y_sales_train_log)
+
+        y_cyc_train = sub.loc[: train_size - 1, y_cyclical_features].to_numpy()
+
+        y_cyc_scaler = MinMaxScaler(feature_range=(0, 1)).fit(y_cyc_train)
+
+        y_train_full = np.hstack(
+            [
+                y_sales_scaler.transform(y_sales_train_log),
+                y_cyc_scaler.transform(y_cyc_train),  # NEW
+            ]
+        )
+
+        y_cyc_test = sub.loc[train_size:, y_cyclical_features].to_numpy()
+        y_test_full = np.hstack(
+            [
+                y_sales_scaler.transform(y_sales_test_log),
+                y_cyc_scaler.transform(y_cyc_test),
+            ]
+        )
+
+        pickle.dump(
+            y_sales_scaler,
+            open(f"{output_dir}/scalers/{today_str}_y_sales_scaler_{sid}.pkl", "wb"),
+        )
+        pickle.dump(
+            y_cyc_scaler,
+            open(f"{output_dir}/scalers/{today_str}_y_cyc_scaler_{sid}.pkl", "wb"),
+        )
+
+        # ---------------------------------
+        #  DATASETS & MODEL
+        # ---------------------------------
 
         w = sub["weight"].to_numpy(float).reshape(-1, 1)
         w_train, w_test = w[:train_size], w[train_size:]
 
         ds_train = TensorDataset(
-            torch.from_numpy(X_train_scaled).float(),
-            torch.from_numpy(y_train_scaled).float(),
-            torch.from_numpy(w_train).float(),
-        )
-        ds_test = TensorDataset(
-            torch.from_numpy(X_test_scaled).float(),
-            torch.from_numpy(y_test_scaled).float(),
-            torch.from_numpy(w_test).float(),
+            torch.from_numpy(X_train_full).float(),  # features
+            torch.from_numpy(y_train_full).float(),  # targets
+            torch.from_numpy(w_train).float(),  # weights
         )
         ld_train = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
+
+        ds_test = TensorDataset(
+            torch.from_numpy(X_test_full).float(),
+            torch.from_numpy(y_test_full).float(),
+            torch.from_numpy(w_test).float(),
+        )
         ld_test = DataLoader(ds_test, batch_size=batch_size, shuffle=False)
 
         sales_idx = [label_cols.index(col) for col in y_sales_features]
-        train_mav = compute_mav(ld_train, y_scaler, sales_idx)
-        test_mav = compute_mav(ld_test, y_scaler, sales_idx)
+        train_mav = compute_mav(ld_train, y_sales_scaler, sales_idx)
+        test_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
 
-        model = ShallowNN(input_dim=len(feature_cols)).to(device)
+        if model_cls is ShallowNN:
+            model = ShallowNN(input_dim=X_train_full.shape[1]).to(device)
+        elif model_cls is TwoLayerNN:
+            model = TwoLayerNN(input_dim=X_train_full.shape[1]).to(device)
+        elif model_cls is ResidualMLP:
+            model = ResidualMLP(input_dim=X_train_full.shape[1]).to(device)
+        else:
+            raise ValueError(f"Unknown model: {model}")
+
+        model.apply(init_weights)
         loss_fn = NWRMSLELoss()
         optim = torch.optim.Adam(model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optim, mode="min", factor=0.5, patience=4, min_lr=1e-5, verbose=False
+        )
 
         for epoch in range(1, epochs + 1):
             model.train()
@@ -259,35 +484,67 @@ def train(
                 loss.backward()
                 optim.step()
                 tr_loss_acc += loss.item() * xb.size(0)
-            tr_loss = tr_loss_acc / len(ds_train)
+            train_loss = tr_loss_acc / len(ds_train)
 
             model.eval()
-            te_loss = compute_rmsle_manual(ld_test, model, device)
+            test_loss = compute_rmsle_manual(ld_test, model, device)
 
-            true_train_mae = compute_mae(ld_train, model, device, y_scaler, sales_idx)
-            true_test_mae = compute_mae(ld_test, model, device, y_scaler, sales_idx)
-            train_percent_mae = true_train_mae / train_mav if train_mav else float('inf')
-            test_percent_mae = true_test_mae / test_mav if test_mav else float('inf')
+            train_mae = compute_mae(ld_train, model, device, y_sales_scaler, sales_idx)
+            train_percent_mav = (
+                (train_mae / train_mav) * 100 if train_mav else float("inf")
+            )
+            test_mae = compute_mae(ld_test, model, device, y_sales_scaler, sales_idx)
+            test_percent_mav = (test_mae / test_mav) * 100 if test_mav else float("inf")
+
+            scheduler.step(test_loss)
+
+            # --- MPE ---
+            sales_idx = [label_cols.index(c) for c in y_sales_features]
+            cyc_idx = [label_cols.index(col) for col in y_cyclical_features]
+            train_mpe = compute_mpe(
+                ld_train,
+                model,
+                device,
+                sc_sales=y_sales_scaler,
+                sc_cyc=y_cyc_scaler,
+                sales_idx=sales_idx,
+                cyc_idx=cyc_idx,
+            )
+
+            test_mpe = compute_mpe(
+                ld_test,
+                model,
+                device,
+                sc_sales=y_sales_scaler,
+                sc_cyc=y_cyc_scaler,
+                sales_idx=sales_idx,
+                cyc_idx=cyc_idx,
+            )
 
             history.append(
                 {
                     "store_item": sid,
                     "epoch": epoch,
-                    "train_loss": tr_loss,
-                    "train_mae": true_train_mae,
-                    "train_percent_mae": train_percent_mae,
-                    "test_loss": te_loss,
-                    "test_mae": true_test_mae,
-                    "test_percent_mae": test_percent_mae,
+                    "train_loss": train_loss,
+                    "train_mae": train_mae,
+                    "train_percent_mav": train_percent_mav,
+                    "test_loss": test_loss,
+                    "test_mae": test_mae,
+                    "test_percent_mav": test_percent_mav,
+                    "train_mpe": train_mpe,
+                    "test_mpe": test_mpe,
                 }
             )
 
             print(
                 f"[{sid}] Epoch {epoch}/{epochs} "
-                f"train_RMSLE {tr_loss:.4f}, train_MAE {true_train_mae:.4f}, "
-                f"train_%MAE {train_percent_mae:.4f}, "
-                f"test_RMSLE {te_loss:.4f}, test_MAE {true_test_mae:.4f}, "
-                f"test_%MAE {test_percent_mae:.4f}"
+                f"train_loss {train_loss:.4f}, "
+                f"train_MAE {train_mae:.4f}, "
+                f"train_%MAV {train_percent_mav:.4f}, "
+                f"test_loss {test_loss:.4f}, "
+                f"test_MAE {test_mae:.4f}, "
+                f"test_%MAV {test_percent_mav:.4f}, "
+                f"train_MPE {train_mpe:.4f}, test_MPE {test_mpe:.4f}"
             )
 
         save_path = os.path.join(model_dir, f"{today_str}_model_{sid}.pth")
@@ -295,8 +552,8 @@ def train(
             {
                 "sid": sid,
                 "model_state_dict": model.cpu().state_dict(),
-                "feature_cols": feature_cols,
-                "label_cols": label_cols,
+                "x_feature_cols": x_feature_cols,
+                "y_feature_cols": label_cols,
                 "train_frac": train_frac,
                 "epochs": epochs,
             },
@@ -305,15 +562,8 @@ def train(
         print(f"Saved model for {sid} to {save_path}")
 
         models[sid] = model.cpu()
-        x_scalers[sid] = x_scaler
-        y_scalers[sid] = y_scaler
-
-    # Save all scalers
-    today_str = datetime.today().strftime("%Y-%m-%d")
-    with open(os.path.join(output_dir, f"{today_str}_x_scalers.pkl"), "wb") as f:
-        pickle.dump(x_scalers, f)
-    with open(os.path.join(output_dir, f"{today_str}_y_scalers.pkl"), "wb") as f:
-        pickle.dump(y_scalers, f)
+        x_scalers[sid] = x_sales_scaler
+        y_scalers[sid] = y_sales_scaler
 
     hist_df = pd.DataFrame(history)
     summary_df = (
@@ -321,8 +571,12 @@ def train(
         .agg(
             final_train_loss=("train_loss", "last"),
             final_test_loss=("test_loss", "last"),
-            final_train_percent_mae=("train_percent_mae", "last"),
-            final_test_percent_mae=("test_percent_mae", "last"),
+            final_train_mae=("train_mae", "last"),
+            final_test_mae=("test_mae", "last"),
+            final_train_percent_mav=("train_percent_mav", "last"),
+            final_test_percent_mav=("test_percent_mav", "last"),
+            final_train_mpe=("train_mpe", "last"),
+            final_test_mpe=("test_mpe", "last"),
         )
         .reset_index()
     )

@@ -407,7 +407,7 @@ def plot_sales_histogram(
     plt.close()
 
 
-def plot_final_percent_mae_per_sid(
+def plot_final_percent_mav_per_sid(
     summary_df: pd.DataFrame,
     title: str | None = None,
     fn: str | None = None,
@@ -435,11 +435,11 @@ def plot_final_percent_mae_per_sid(
     x = np.arange(len(df))
 
     _, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(x, df["final_train_percent_mae"], marker="o", label="Train %MAV")
-    ax.plot(x, df["final_test_percent_mae"], marker="o", label="Validation %MAV")
+    ax.plot(x, df["final_train_percent_mav"], marker="o", label="Train %MAV")
+    ax.plot(x, df["final_test_percent_mav"], marker="o", label="Validation %MAV")
 
     ax.set_xlabel("store_item", fontsize=16, fontweight="bold")
-    ax.set_ylabel("%MAV", fontsize=16, fontweight="bold")
+    ax.set_ylabel("Error as %MAV", fontsize=16, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(df["store_item"], rotation=90, fontsize=8)
     ax.grid(True, linestyle="--", alpha=0.5)
