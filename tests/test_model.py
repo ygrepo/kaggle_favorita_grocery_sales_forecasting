@@ -1,7 +1,17 @@
 import pytest
+import os
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+
 torch = pytest.importorskip("torch")
 
-from src.model_utils import ShallowNN, TwoLayerNN, NWRMSLELoss  # adjust import
+from src.model_utils import (
+    ShallowNN,
+    NWRMSLELoss,
+    TwoLayerNN,
+    ResidualMLP,
+    HybridLoss,
+)  # adjust import
 
 
 def test_shallow_nn_output_shape_and_reproducibility():
@@ -62,6 +72,24 @@ def test_nwrmsle_loss_known_values():
     ), "Loss should match hand‑computed NWRMSLE"
 
 
+def test_hybrid_loss():
+    loss_fn = HybridLoss(alpha=0.8)
+    y_true = torch.tensor([[1.0, 3.0], [2.0, 4.0]])
+    y_pred = torch.tensor([[1.5, 3.5], [2.5, 4.5]])
+    w = torch.ones_like(y_true)
+
+    loss = loss_fn(y_pred, y_true, w)
+    assert loss >= 0, "Loss should be non-negative"
+
+    # Test that alpha=1.0 gives pure NWRMSLE
+    loss_fn_alpha1 = HybridLoss(alpha=1.0)
+    loss_alpha1 = loss_fn_alpha1(y_pred, y_true, w)
+    assert (
+        pytest.approx(loss_alpha1.item(), abs=1e-6)
+        == loss_fn.nwrmse(y_pred, y_true, w).item()
+    )
+
+
 def test_two_layer_nn_output_shape_and_reproducibility():
     torch.manual_seed(0)
     model = TwoLayerNN(input_dim=21)
@@ -77,3 +105,81 @@ def test_two_layer_nn_output_shape_and_reproducibility():
     assert torch.all(y1 >= 0) and torch.all(
         y1 <= 1
     ), "Outputs should be clamped between 0 and 1"
+
+
+def test_residual_mlp_output_shape():
+    torch.manual_seed(0)
+    model = ResidualMLP(input_dim=21, hidden=128, depth=3)
+    x = torch.randn(5, 21)
+
+    y = model(x)
+    assert y.shape == (5, 21), "Expected output shape (batch, output_dim)"
+
+    # Check that the output is close to the input (residual property)
+    assert torch.allclose(
+        y, x, atol=0.1
+    ), "Output should be close to input due to residual connections"
+
+
+def test_model_loading_and_prediction():
+    # Create a temporary model
+    model = TwoLayerNN(input_dim=10)
+    model_path = "test_model.pth"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "store_item": "test_store_item",
+            "feature_cols": ["feat1", "feat2"],
+        },
+        model_path,
+    )
+
+    try:
+        # Test loading
+        loaded_store_item, loaded_model, loaded_feature_cols = load_model(model_path)
+        assert loaded_store_item == "test_store_item"
+        assert loaded_feature_cols == ["feat1", "feat2"]
+
+        # Test prediction
+        x = torch.randn(1, 10)
+        pred = loaded_model(x)
+        assert pred.shape == (1, 10)
+        assert torch.all(pred >= 0) and torch.all(pred <= 1)
+    finally:
+        # Clean up
+        if os.path.exists(model_path):
+            os.remove(model_path)
+
+
+def test_predict_next_days_for_sid():
+    # Create mock data
+    last_date_df = pd.DataFrame(
+        {"store_item": ["test_store_item"], "feat1": [0.5], "feat2": [0.3]}
+    )
+
+    # Create mock model and scaler
+    model = TwoLayerNN(input_dim=2)
+    feature_cols = ["feat1", "feat2"]
+    models = {"test_store_item": (model, feature_cols)}
+
+    # Create mock scaler
+    scaler = MinMaxScaler()
+    scaler.fit(np.array([[0, 0], [1, 1]]))
+    y_scalers = {"test_store_item": scaler}
+
+    # Test prediction
+    predictions = predict_next_days_for_sid(
+        sid="test_store_item",
+        last_date_df=last_date_df,
+        models=models,
+        y_scalers=y_scalers,
+        days_to_predict=2,
+    )
+
+    assert len(predictions) == 2
+    assert "store_item" in predictions.columns
+    assert "date" in predictions.columns
+
+    # Check that predictions are in the correct range (0-1)
+    assert predictions.iloc[:, 2:].min().min() >= 0
+    assert predictions.iloc[:, 2:].max().max() <= 1
