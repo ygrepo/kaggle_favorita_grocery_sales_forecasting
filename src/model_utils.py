@@ -60,25 +60,36 @@ class ShallowNN(nn.Module):
 
 
 class TwoLayerNN(nn.Module):
-    def __init__(self, input_dim, h1=128, h2=64, dropout=0.2):
+    def __init__(self, input_dim, h1=128, h2=64, dropout=0.0):
+        """Two layer feed forward network used in unit tests.
+
+        ``dropout`` defaults to ``0.0`` so that the forward pass is
+        deterministic by default (matching :class:`ShallowNN`).  Tests that
+        require stochastic behaviour can pass a different value.
+        """
+
         super().__init__()
+
+        dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+
         self.net = nn.Sequential(
             nn.Linear(input_dim, h1),
             nn.BatchNorm1d(h1),
             nn.LeakyReLU(),
-            nn.Dropout(dropout),
+            dropout_layer,
             nn.Linear(h1, h2),
             nn.BatchNorm1d(h2),
             nn.LeakyReLU(),
-            nn.Dropout(dropout),
+            dropout_layer,
             nn.Linear(h2, input_dim),
             nn.Sigmoid(),  # already in (0,1)
         )
 
     def forward(self, x):
         out = self.net(x)
-        # optional extra safety, **not in‑place**
-        return torch.clamp(out, 1e-6, 1.1)
+        # optional extra safety, **not in-place**
+        # Limit outputs strictly to the [0, 1] range for testing
+        return torch.clamp(out, 1e-6, 1.0)
         # or simply: return out
 
 
