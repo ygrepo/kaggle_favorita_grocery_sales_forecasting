@@ -1,7 +1,7 @@
 import pytest
 torch = pytest.importorskip("torch")
 
-from src.model_utils import ShallowNN, NWRMSLELoss  # adjust import
+from src.model_utils import ShallowNN, TwoLayerNN, NWRMSLELoss  # adjust import
 
 
 def test_shallow_nn_output_shape_and_reproducibility():
@@ -60,3 +60,20 @@ def test_nwrmsle_loss_known_values():
     assert (
         pytest.approx(expected, rel=1e-6) == loss.item()
     ), "Loss should match hand‑computed NWRMSLE"
+
+
+def test_two_layer_nn_output_shape_and_reproducibility():
+    torch.manual_seed(0)
+    model = TwoLayerNN(input_dim=21)
+    x = torch.randn(5, 21)
+
+    y1 = model(x)
+    y2 = model(x)
+
+    assert y1.shape == (5, 21), "Expected output shape (batch, output_dim)"
+    assert torch.allclose(
+        y1, y2
+    ), "Model forward pass should be deterministic given same seed"
+    assert torch.all(y1 >= 0) and torch.all(
+        y1 <= 1
+    ), "Outputs should be clamped between 0 and 1"
