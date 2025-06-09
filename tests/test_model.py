@@ -1,5 +1,5 @@
-import torch
 import pytest
+torch = pytest.importorskip("torch")
 
 from src.model_utils import ShallowNN, NWRMSLELoss  # adjust import
 
