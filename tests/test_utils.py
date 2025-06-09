@@ -1,5 +1,6 @@
-import pandas as pd
-import numpy as np
+import pytest
+pd = pytest.importorskip("pandas")
+np = pytest.importorskip("numpy")
 from datetime import datetime
 from src.utils import (
     generate_sales_features,
@@ -300,6 +301,7 @@ def test_generate_store_item_clusters_basic():
         index=["s1_i1", "s1_i2", "s2_i1", "s2_i2"],
     )
 
+    pytest.importorskip("sklearn")
     from sklearn.cluster import KMeans
 
     result = generate_store_item_clusters(
@@ -326,6 +328,7 @@ def test_generate_sales_features_with_clusters():
         columns="date",
         values="unit_sales",
     )
+    pytest.importorskip("sklearn")
     from sklearn.cluster import SpectralClustering
 
     clusters = generate_store_item_clusters(
