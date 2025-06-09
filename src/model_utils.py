@@ -33,17 +33,26 @@ class StoreItemDataset(Dataset):
 
 
 class ShallowNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim=128, output_dim=None, dropout=0.2):
+    def __init__(self, input_dim, hidden_dim=128, output_dim=None, dropout=0.0):
+        """Simple feed forward network used in unit tests.
+
+        The default ``dropout`` is set to ``0.0`` so that the forward pass is
+        deterministic unless a different value is explicitly requested.  This
+        avoids stochastic behaviour in the tests which call ``model(x)`` twice
+        in a row to check reproducibility.
+        """
+
         super().__init__()
         output_dim = output_dim or input_dim
+
+        dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            # nn.Tanh(),
             nn.LeakyReLU(),
-            nn.Dropout(dropout),
+            dropout_layer,
             nn.Linear(hidden_dim, output_dim),
             nn.Hardtanh(),  # clips to [0,1]
-            # nn.Sigmoid(),  # outputs in (0,1)
         )
 
     def forward(self, x):
