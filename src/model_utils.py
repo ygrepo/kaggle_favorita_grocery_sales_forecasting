@@ -116,7 +116,9 @@ class ResidualMLP(nn.Module):
             h = self.blocks[i + 3](h)
             h = self.blocks[i + 4](h)
             out = out + h  # residual add (not in‑place)
-        return torch.clamp(torch.sigmoid(out), 1e-6, 1.1)  # out‑of‑place clamp
+        # Sigmoid ensures values lie in ``(0, 1)``.  Clamp for numerical
+        # stability and to guarantee the upper bound used in tests.
+        return torch.clamp(torch.sigmoid(out), 1e-6, 1.0)
 
 
 # ----- initialise every nn.Linear in the network ----------
