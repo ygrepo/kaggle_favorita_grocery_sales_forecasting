@@ -635,66 +635,164 @@ def plot_spectral_biclustering_heatmap(results_df, fn: str = None):
     plt.close()
 
 
+from matplotlib.ticker import MaxNLocator
+from typing import Sequence, Union, Mapping
+
+Number = Union[int, float]
+
+
 def plot_spectral_clustering_elbows(
-    result_dfs: list[pd.DataFrame],
+    result_dfs: Sequence[pd.DataFrame],
     *,
     metric: str = "Explained Variance (%)",
-    titles: list[str] | None = None,
-    figsize: tuple[int, int] = (8, 12),
+    titles: Sequence[str] | None = None,
+    figsize: tuple[int, int] = (10, 4),
     fn: str | None = None,
-):
-    """Plot elbow curves from multiple spectral clustering results.
+    vline_x: Number | None = None,
+    hline_y: Number | None = None,
+    annotate_intersection: bool = True,
+    line_palette: Sequence[str] | None = None,
+    vline_kwargs: Mapping | None = None,
+    hline_kwargs: Mapping | None = None,
+) -> None:
+    """
+    Plot elbow curves (variance‑explained vs. number of clusters) for one or
+    several spectral‑clustering runs.
 
     Parameters
     ----------
-    result_dfs : list of DataFrame
-        Each DataFrame is returned by :func:`compute_spectral_clustering_cv_scores`.
-    metric : str, optional
-        Metric column to plot on the y-axis.
-    titles : list of str, optional
-        Optional subplot titles. Must match the length of ``result_dfs`` if
-        provided.
-    figsize : tuple of int, optional
-        Overall figure size.
-    fn : str, optional
-        If given, save the figure to this path.
+    result_dfs :
+        Iterable of DataFrames, each returned by
+        ``compute_spectral_clustering_cv_scores``. Must contain 'n_row'
+        (number of clusters) and the chosen *metric* column.  If the run
+        explored the column dimension the frame should also contain 'n_col'.
+    metric :
+        Column to plot on the y‑axis.
+    titles :
+        Sub‑plot titles; length must match *result_dfs* if given.
+    figsize :
+        Matplotlib figure size in inches.
+    fn :
+        Optional path to save the figure (300 dpi PNG/TIFF etc.).
+    vline_x, hline_y :
+        X‑ and Y‑coordinates for decision lines (e.g. *k* = 5, 80 %).
+    annotate_intersection :
+        If *True*, annotate the point (vline_x, hline_y) when both lines are
+        drawn and that point exists in the data.
+    line_palette :
+        Sequence of colours for different ``n_col`` curves.  Defaults to a
+        colour‑blind‑safe palette of up to six hues.
+    vline_kwargs, hline_kwargs :
+        Extra keyword arguments forwarded to *ax.axvline* / *ax.axhline*.
     """
+    # ───────────────────────────────────────── theme ───────────────────────
+    sns.set_theme(
+        style="whitegrid",
+        rc={
+            "axes.spines.right": False,
+            "axes.spines.top": False,
+            "grid.linestyle": "--",
+            "grid.alpha": 0.3,
+        },
+    )
 
     if titles and len(titles) != len(result_dfs):
-        raise ValueError("Length of titles must match result_dfs")
+        raise ValueError("Length of *titles* must match *result_dfs*")
 
-    fig, axes = plt.subplots(len(result_dfs), 1, figsize=figsize, sharex=True)
-    if len(result_dfs) == 1:
-        axes = [axes]
+    if line_palette is None:
+        line_palette = sns.color_palette("colorblind", 6)
+
+    fig, axes = plt.subplots(
+        1,
+        len(result_dfs),
+        figsize=figsize,
+        sharey=True,
+        squeeze=False,  # always returns 2‑D array
+    )
+    axes = axes.flatten()  # easier iteration
 
     for idx, (df, ax) in enumerate(zip(result_dfs, axes)):
+        # ───── draw curves ────────────────────────────────────────────────
         col_values = (
             sorted(df["n_col"].dropna().unique())
             if "n_col" in df.columns and df["n_col"].notna().any()
             else [None]
         )
+        colour_cycle = iter(line_palette)
 
         for n_col in col_values:
-            if n_col is None:
-                subset = df.copy()
-                label = None
-            else:
+            if n_col is None:  # 1‑D spectral clustering run
+                subset = df
+                lbl, colour = None, next(colour_cycle)
+            else:  # bi/co‑clustering: slice by n_col
                 subset = df[df["n_col"] == n_col]
-                label = f"n_col={n_col}"
+                lbl, colour = f"n_col = {n_col}", next(colour_cycle)
 
-            ax.plot(subset["n_row"], subset[metric], marker="o", label=label)
+            ax.plot(
+                subset["n_row"],
+                subset[metric],
+                marker="o",
+                linewidth=2,
+                color=colour,
+                label=lbl,
+            )
 
-        ax.set_ylabel(metric, fontsize=16, fontweight="bold")
-        if titles:
-            ax.set_title(titles[idx], fontsize=20, fontweight="bold")
-        ax.grid(True, linestyle="--", alpha=0.5)
+        # ───── decision lines ─────────────────────────────────────────────
+        if vline_x is not None:
+            ax.axvline(
+                vline_x,
+                **{
+                    "color": "red",
+                    "linestyle": "--",
+                    "linewidth": 1.4,
+                    **(vline_kwargs or {}),
+                },
+            )
+        if hline_y is not None:
+            ax.axhline(
+                hline_y,
+                **{
+                    "color": "grey",
+                    "linestyle": "--",
+                    "linewidth": 1.0,
+                    **(hline_kwargs or {}),
+                },
+            )
+        # annotate the intersection if desired and sensible
+        if (
+            annotate_intersection
+            and (vline_x is not None)
+            and (hline_y is not None)
+            and df["n_row"].isin([vline_x]).any()
+        ):
+            ax.annotate(
+                f"{hline_y:.0f} %",
+                xy=(vline_x, hline_y),
+                xytext=(5, -15),
+                textcoords="offset points",
+                fontsize=10,
+                fontweight="bold",
+                arrowprops=dict(arrowstyle="->", lw=0.8),
+            )
+
+        # ───── axes cosmetics ─────────────────────────────────────────────
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.set_xlabel("Number of clusters (k)", labelpad=6, fontsize=13)
+        if idx == 0:
+            ax.set_ylabel(metric, labelpad=6, fontsize=13)
+        else:
+            ax.set_ylabel(None)
+
         if len(col_values) > 1 or col_values[0] is not None:
-            ax.legend(title="n_col")
+            ax.legend(frameon=False, fontsize=10, loc="best")
 
-    axes[-1].set_xlabel("# Cluster", fontsize=16, fontweight="bold")
+        if titles:
+            ax.set_title(titles[idx], fontsize=14, fontweight="bold", pad=8)
 
-    plt.tight_layout()
+    sns.despine(fig=fig)
+    fig.tight_layout()
+
     if fn:
-        plt.savefig(fn, dpi=300, bbox_inches="tight")
+        fig.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close(fig)

@@ -11,7 +11,7 @@ from sklearn.cluster import (
 )
 
 
-from typing import Union, Dict
+from typing import Dict
 
 
 def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
@@ -429,8 +429,8 @@ def preprocess_sales_matrix(
 
     # Normalize each row and columns (Z-score)
     if zscore_rows:
-        X = StandardScaler().fit_transform(df)
-        X = StandardScaler().fit_transform(X.T).T
+        X = MinMaxScaler().fit_transform(df)
+        #X = MinMaxScaler().fit_transform(X.T).T
     else:
         X = df.values
 
@@ -593,8 +593,7 @@ def compute_spectral_clustering_cv_scores(
     *,
     model_class=SpectralBiclustering,
     n_clusters_row_range=range(2, 6),
-    n_clusters_col_range=range(2, 6),
-    cv_folds=3,
+]    cv_folds=3,
     true_row_labels=None,
     model_kwargs=None,
 ):
