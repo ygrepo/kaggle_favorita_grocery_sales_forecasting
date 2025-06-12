@@ -366,10 +366,13 @@ def test_generate_sales_features_with_clusters():
     assert "item_med_day_2" in result.columns
     assert "storeClusterId" in result.columns
     assert "itemClusterId" in result.columns
-    # All store_items should share the same cluster
-    # Cluster median for first window day 1 should equal median of [1,5]
+
+    # All store_items should share the same cluster label (0)
+    assert set(result["storeClusterId"]) == {0}
+    assert set(result["itemClusterId"]) == {0}
+
+    # Cluster median for first window day 1 should equal median of [1, 5]
     first_med = np.median([1, 5])
-    assert (
-        result.loc[result["start_date"] == df["date"].min(), "storeClusterId"].iloc[0]
-        == first_med
-    )
+    first_row = result[result["start_date"] == df["date"].min()].iloc[0]
+    assert first_row["store_med_day_1"] == first_med
+    assert first_row["item_med_day_1"] == first_med
