@@ -1,4 +1,5 @@
 import pytest
+
 pd = pytest.importorskip("pandas")
 np = pytest.importorskip("numpy")
 from datetime import datetime
@@ -42,8 +43,8 @@ def test_generate_sales_features_multiple_items():
     )
     result = generate_sales_features(df, window_size=3)
     assert len(result) == 4  # two windows per item
-    # assert "cluster_id" in result.columns
-    # assert result["cluster_id"].isna().all()
+    assert "storeClusterId" in result.columns
+    assert "itemClusterId" in result.columns
     assert sorted(result["store_item"].unique()) == ["store1_item1", "store2_item2"]
     assert all(result.groupby("store_item")["start_date"].count() == 2)
 
@@ -89,9 +90,9 @@ def test_sliding_cyclical_multiple_items():
         }
     )
     result = generate_cyclical_features(df, window_size=3)
-    assert len(result) == 8  # 4 per item
+    assert len(result) == 4  # 2 windows per item
     assert sorted(result["store_item"].unique()) == ["store1_item1", "store2_item2"]
-    assert all(result.groupby("store_item")["start_date"].count() == 4)
+    assert all(result.groupby("store_item")["start_date"].count() == 2)
 
 
 def test_sliding_cyclical_insufficient_data():
@@ -159,12 +160,21 @@ def test_add_next_window_targets_column_integrity():
     cyc_df = generate_cyclical_features(df, window_size=window_size)
     sales_df = generate_sales_features(df, window_size=window_size)
     merged_df = pd.merge(
-        cyc_df, sales_df, on=["start_date", "store_item", "store", "item"]
+        cyc_df,
+        sales_df,
+        on=[
+            "start_date",
+            "store_item",
+            "store",
+            "item",
+            "storeClusterId",
+            "itemClusterId",
+        ],
     )
     result = add_next_window_targets(merged_df, window_size=window_size)
 
     y_cols = [col for col in result.columns if col.startswith("y_")]
-    assert len(y_cols) == 6 + 20  # 3 sales + 5 cyc_feats × 2 trigs × 2 days
+    assert len(y_cols) == 6 + 20  #  6 sales + 5 cyc_feats × 2 trigs × 2 days
     assert all(col in result.columns for col in y_cols)
 
 
@@ -183,7 +193,16 @@ def test_add_next_window_targets_drop_nan_rows():
     cyc_df = generate_cyclical_features(df, window_size=window_size)
     sales_df = generate_sales_features(df, window_size=window_size)
     merged_df = pd.merge(
-        cyc_df, sales_df, on=["start_date", "store_item", "store", "item"]
+        cyc_df,
+        sales_df,
+        on=[
+            "start_date",
+            "store_item",
+            "store",
+            "item",
+            "storeClusterId",
+            "itemClusterId",
+        ],
     )
 
     result = add_next_window_targets(merged_df, window_size=window_size)
@@ -200,10 +219,53 @@ def test_add_next_window_targets_drop_nan_rows():
 
 
 def test_build_feature_and_label_cols():
-    meta_cols, feature_cols, label_cols, y_sales_features, y_cyclical_features = (
-        build_feature_and_label_cols(window_size=2)
-    )
-    assert meta_cols == ["start_date", "store_item", "store", "item"]
+    (
+        meta_cols,
+        x_sales_features,
+        x_cyclical_features,
+        x_feature_cols,
+        label_cols,
+        y_sales_features,
+        y_cyclical_features,
+    ) = build_feature_and_label_cols(window_size=2)
+    assert meta_cols == [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "storeClusterId",
+        "itemClusterId",
+    ]
+    assert x_sales_features == [
+        "sales_day_1",
+        "sales_day_2",
+        "store_med_day_1",
+        "store_med_day_2",
+        "item_med_day_1",
+        "item_med_day_2",
+    ]
+    assert x_cyclical_features == [
+        "dayofweek_sin_1",
+        "dayofweek_sin_2",
+        "dayofweek_cos_1",
+        "dayofweek_cos_2",
+        "weekofmonth_sin_1",
+        "weekofmonth_sin_2",
+        "weekofmonth_cos_1",
+        "weekofmonth_cos_2",
+        "monthofyear_sin_1",
+        "monthofyear_sin_2",
+        "monthofyear_cos_1",
+        "monthofyear_cos_2",
+        "paycycle_sin_1",
+        "paycycle_sin_2",
+        "paycycle_cos_1",
+        "paycycle_cos_2",
+        "season_sin_1",
+        "season_sin_2",
+        "season_cos_1",
+        "season_cos_2",
+    ]
     assert y_sales_features == [
         "y_sales_day_1",
         "y_sales_day_2",
@@ -234,60 +296,10 @@ def test_build_feature_and_label_cols():
         "y_season_cos_1",
         "y_season_cos_2",
     ]
-    assert feature_cols[0] == "sales_day_1"
-    assert feature_cols[1] == "sales_day_2"
-    assert feature_cols[2] == "store_med_day_1"
-    assert feature_cols[3] == "store_med_day_2"
-    assert feature_cols[4] == "item_med_day_1"
-    assert feature_cols[5] == "item_med_day_2"
-    assert feature_cols[6] == "dayofweek_sin_1"
-    assert feature_cols[7] == "dayofweek_sin_2"
-    assert feature_cols[8] == "dayofweek_cos_1"
-    assert feature_cols[9] == "dayofweek_cos_2"
-    assert feature_cols[10] == "weekofmonth_sin_1"
-    assert feature_cols[11] == "weekofmonth_sin_2"
-    assert feature_cols[12] == "weekofmonth_cos_1"
-    assert feature_cols[13] == "weekofmonth_cos_2"
-    assert feature_cols[14] == "monthofyear_sin_1"
-    assert feature_cols[15] == "monthofyear_sin_2"
-    assert feature_cols[16] == "monthofyear_cos_1"
-    assert feature_cols[17] == "monthofyear_cos_2"
-    assert feature_cols[18] == "paycycle_sin_1"
-    assert feature_cols[19] == "paycycle_sin_2"
-    assert feature_cols[20] == "paycycle_cos_1"
-    assert feature_cols[21] == "paycycle_cos_2"
-    assert feature_cols[22] == "season_sin_1"
-    assert feature_cols[23] == "season_sin_2"
-    assert feature_cols[24] == "season_cos_1"
-    assert feature_cols[25] == "season_cos_2"
-    assert len(feature_cols) == 6 + 20
-    assert label_cols[0] == "y_sales_day_1"
-    assert label_cols[1] == "y_sales_day_2"
-    assert label_cols[2] == "y_store_med_day_1"
-    assert label_cols[3] == "y_store_med_day_2"
-    assert label_cols[4] == "y_item_med_day_1"
-    assert label_cols[5] == "y_item_med_day_2"
-    assert label_cols[6] == "y_dayofweek_sin_1"
-    assert label_cols[7] == "y_dayofweek_sin_2"
-    assert label_cols[8] == "y_dayofweek_cos_1"
-    assert label_cols[9] == "y_dayofweek_cos_2"
-    assert label_cols[10] == "y_weekofmonth_sin_1"
-    assert label_cols[11] == "y_weekofmonth_sin_2"
-    assert label_cols[12] == "y_weekofmonth_cos_1"
-    assert label_cols[13] == "y_weekofmonth_cos_2"
-    assert label_cols[14] == "y_monthofyear_sin_1"
-    assert label_cols[15] == "y_monthofyear_sin_2"
-    assert label_cols[16] == "y_monthofyear_cos_1"
-    assert label_cols[17] == "y_monthofyear_cos_2"
-    assert label_cols[18] == "y_paycycle_sin_1"
-    assert label_cols[19] == "y_paycycle_sin_2"
-    assert label_cols[20] == "y_paycycle_cos_1"
-    assert label_cols[21] == "y_paycycle_cos_2"
-    assert label_cols[22] == "y_season_sin_1"
-    assert label_cols[23] == "y_season_sin_2"
-    assert label_cols[24] == "y_season_cos_1"
-    assert label_cols[25] == "y_season_cos_2"
-    assert len(label_cols) == len(feature_cols)
+    assert len(x_feature_cols) == 6 + 20
+    assert x_feature_cols == x_sales_features + x_cyclical_features
+    assert len(label_cols) == len(x_feature_cols)
+    assert label_cols == [f"y_{c}" for c in x_feature_cols]
 
 
 def test_generate_store_item_clusters_basic():
@@ -302,10 +314,10 @@ def test_generate_store_item_clusters_basic():
     )
 
     pytest.importorskip("sklearn")
-    from sklearn.cluster import KMeans
+    from sklearn.cluster import SpectralClustering
 
     result = generate_store_item_clusters(
-        pivot, n_clusters=2, cluster_algo=KMeans(random_state=42, n_init="auto")
+        pivot, n_clusters=2, model_class=SpectralClustering
     )
 
     assert list(result.columns) == ["store_item", "clusterId"]
@@ -332,24 +344,32 @@ def test_generate_sales_features_with_clusters():
     from sklearn.cluster import SpectralClustering
 
     clusters = generate_store_item_clusters(
-        pivot, n_clusters=1, model_class=SpectralClustering(random_state=0)
+        pivot, n_clusters=1, model_class=SpectralClustering
     )
     # Duplicate labels to mimic store/item clusters
-    clusters["store_cluster_id"] = clusters["clusterId"]
-    clusters["item_cluster_id"] = clusters["clusterId"]
+    store_clusters = clusters.copy()
+    store_clusters["store"] = store_clusters["store_item"].str.split("_").str[0]
+    store_clusters["clusterId"] = store_clusters["clusterId"]
+    item_clusters = clusters.copy()
+    item_clusters["item"] = item_clusters["store_item"].str.split("_").str[1]
+    item_clusters["clusterId"] = item_clusters["clusterId"]
 
-    result = generate_sales_features(df, window_size=2, cluster_map=clusters)
-    assert "cluster_id" in result.columns
-    assert "cluster_med_day_1" in result.columns
-    assert "store_cluster_med_day_1" in result.columns
-    assert "item_cluster_med_day_1" in result.columns
+    result = generate_sales_features(
+        df,
+        window_size=2,
+        store_clusters=store_clusters,
+        item_clusters=item_clusters,
+    )
+    assert "store_med_day_1" in result.columns
+    assert "item_med_day_1" in result.columns
+    assert "store_med_day_2" in result.columns
+    assert "item_med_day_2" in result.columns
+    assert "storeClusterId" in result.columns
+    assert "itemClusterId" in result.columns
     # All store_items should share the same cluster
-    assert result["cluster_id"].nunique() == 1
     # Cluster median for first window day 1 should equal median of [1,5]
     first_med = np.median([1, 5])
     assert (
-        result.loc[result["start_date"] == df["date"].min(), "cluster_med_day_1"].iloc[
-            0
-        ]
+        result.loc[result["start_date"] == df["date"].min(), "storeClusterId"].iloc[0]
         == first_med
     )

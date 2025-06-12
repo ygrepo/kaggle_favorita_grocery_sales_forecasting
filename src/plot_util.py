@@ -439,7 +439,7 @@ def plot_final_percent_mav_per_sid(
     ax.plot(x, df["final_test_percent_mav"], marker="o", label="Validation %MAV")
 
     ax.set_xlabel("store_item", fontsize=16, fontweight="bold")
-    ax.set_ylabel("Error as %MAV", fontsize=16, fontweight="bold")
+    ax.set_ylabel("Mean Absolute Error as %MAV", fontsize=16, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(df["store_item"], rotation=90, fontsize=8)
     ax.grid(True, linestyle="--", alpha=0.5)
