@@ -17,3 +17,13 @@ This repository contains code and data for the Favorita Grocery Sales Forecastin
 * numpy
 * matplotlib
 * scikit-learn
+
+## Using Poetry
+
+This project uses [Poetry](https://python-poetry.org/) for dependency management. To install the dependencies, run:
+
+```bash
+poetry install
+```
+
+This will create a virtual environment and install the packages listed in `pyproject.toml`.
