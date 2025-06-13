@@ -1,3 +1,8 @@
-pandas>=2.0.0
-numpy>=1.24.0
-pytest>=8.0.0
+matplotlib==3.10.3
+numpy==2.3.0
+pandas==2.3.0
+pytest==8.3.5
+scikit_learn==1.7.0
+scipy==1.15.3
+seaborn==0.13.2
+torch==2.2.2
