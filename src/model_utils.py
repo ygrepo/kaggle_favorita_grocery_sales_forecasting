@@ -1,18 +1,22 @@
 import os
 import torch
 from torch import nn
-from torch.utils.data import TensorDataset, Dataset, DataLoader, Subset
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import TensorDataset, Dataset, DataLoader
 import lightning.pytorch as pl
 from sklearn.preprocessing import MinMaxScaler
 import random
-
-from sklearn.model_selection import TimeSeriesSplit, KFold
+import logging
+from lightning.pytorch.callbacks import ModelCheckpoint
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
 from datetime import datetime
 import pickle
+from pathlib import Path
+
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 
 class StoreItemDataset(Dataset):
@@ -185,9 +189,9 @@ def compute_rmsle_manual(loader, model, device, eps=1e-6):
 
     rmsle = (total_num / (total_den + eps)) ** 0.5
     if np.isnan(rmsle):
-        print("Final RMSLE is NaN")
-        print("Numerator:", total_num)
-        print("Denominator:", total_den)
+        logger.info("Final RMSLE is NaN")
+        logger.info("Numerator:", total_num)
+        logger.info("Denominator:", total_den)
     return rmsle
 
 
@@ -212,11 +216,31 @@ def set_seed(seed: int = 42):
 class LightningWrapper(pl.LightningModule):
     """Minimal Lightning module wrapping the forecasting model."""
 
-    def __init__(self, model: nn.Module, lr: float = 3e-4):
+    def __init__(
+        self,
+        model: nn.Module,
+        y_sales_scaler: MinMaxScaler,
+        sales_idx: list[int],
+        train_mav: float,
+        val_mav: float,
+        lr: float = 3e-4,
+    ):
         super().__init__()
         self.model = model
         self.lr = lr
+        self.y_sales_scaler = y_sales_scaler
+        self.sales_idx = sales_idx
+        self.train_mav = train_mav
+        self.val_mav = val_mav
         self.loss_fn = NWRMSLELoss()
+
+        # Initialize metrics accumulators for each epoch
+        self.train_mae_accum = 0.0
+        self.train_percent_mav_accum = 0.0
+        self.val_mae_accum = 0.0
+        self.val_percent_mav_accum = 0.0
+        self.train_count = 0
+        self.val_count = 0
 
     def forward(self, x):
         return self.model(x)
@@ -225,14 +249,112 @@ class LightningWrapper(pl.LightningModule):
         xb, yb, wb = batch
         preds = torch.clamp(self.model(xb), min=1e-6)
         loss = self.loss_fn(preds, yb, wb)
+
+        # Compute training MAE for this batch
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        train_mae = compute_mae(
+            xb, yb, self.model, device, self.y_sales_scaler, self.sales_idx
+        )
+        train_percent_mav = (
+            (train_mae / self.train_mav) * 100 if self.train_mav else float("inf")
+        )
+
+        self.train_mae_accum += train_mae
+        self.train_percent_mav_accum += train_percent_mav
+        self.train_count += 1
+
+        # Log the batch loss and MAE
         self.log("train_loss", loss, prog_bar=True)
+        self.log("train_mae", train_mae, prog_bar=True)
+        self.log("train_percent_mav", train_percent_mav, prog_bar=True)
+
         return loss
 
+    # def training_step(self, batch, batch_idx):
+    #     xb, yb, wb = batch
+    #     preds = torch.clamp(self.model(xb), min=1e-6)
+    #     loss = self.loss_fn(preds, yb, wb)
+    #     self.log("train_loss", loss, prog_bar=True)
+    #     return loss
     def validation_step(self, batch, batch_idx):
         xb, yb, wb = batch
-        preds = torch.clamp(self.model(xb), min=1e-6)
+        if (
+            torch.any(torch.isnan(xb))
+            or torch.any(torch.isnan(yb))
+            or torch.any(torch.isnan(wb))
+        ):
+            print(f"NaN detected in data at batch {batch_idx}")
+        preds = self.model(xb)
+        if torch.any(torch.isnan(preds)):
+            print(f"NaN detected in predictions at batch {batch_idx}")
+        preds = torch.clamp(preds, min=1e-6)
+        yb = torch.clamp(yb, min=1e-6)
         loss = self.loss_fn(preds, yb, wb)
+
+        # Compute validation MAE for this batch
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        val_mae = compute_mae(
+            xb, yb, self.model, device, self.y_sales_scaler, self.sales_idx
+        )
+        val_percent_mav = (
+            (val_mae / self.val_mav) * 100 if self.val_mav else float("inf")
+        )
+        self.val_mae_accum += val_mae
+        self.val_percent_mav_accum += val_percent_mav
+        self.val_count += 1
+
+        # Log the batch loss and MAE
         self.log("val_loss", loss, prog_bar=True)
+        self.log("val_mae", val_mae, prog_bar=True)
+        self.log("val_percent_mav", val_percent_mav, prog_bar=True)
+
+        return loss
+
+    # def validation_step(self, batch, batch_idx):
+    #     xb, yb, wb = batch
+    #     if (
+    #         torch.any(torch.isnan(xb))
+    #         or torch.any(torch.isnan(yb))
+    #         or torch.any(torch.isnan(wb))
+    #     ):
+    #         print(f"NaN detected in data at batch {batch_idx}")
+    #     preds = self.model(xb)
+    #     if torch.any(torch.isnan(preds)):
+    #         print(f"NaN detected in predictions at batch {batch_idx}")
+    #     preds = torch.clamp(preds, min=1e-6)
+    #     yb = torch.clamp(yb, min=1e-6)
+    #     loss = self.loss_fn(preds, yb, wb)
+    #     self.log("val_loss", loss, prog_bar=True)
+
+    def on_epoch_end(self):
+        # Compute average metrics for the epoch
+        avg_train_mae = (
+            self.train_mae_accum / self.train_count if self.train_count > 0 else 0.0
+        )
+        avg_val_mae = self.val_mae_accum / self.val_count if self.val_count > 0 else 0.0
+
+        avg_train_percent_mav = (
+            self.train_percent_mav_accum / self.train_count
+            if self.train_count > 0
+            else 0.0
+        )
+        avg_val_percent_mav = (
+            self.val_percent_mav_accum / self.val_count if self.val_count > 0 else 0.0
+        )
+
+        # Log epoch-level metrics
+        self.log("avg_train_mae", avg_train_mae)
+        self.log("avg_val_mae", avg_val_mae)
+        self.log("avg_train_percent_mav", avg_train_percent_mav)
+        self.log("avg_val_percent_mav", avg_val_percent_mav)
+
+        # Reset accumulators for the next epoch
+        self.train_mae_accum = 0.0
+        self.val_mae_accum = 0.0
+        self.train_percent_mav_accum = 0.0
+        self.val_percent_mav_accum = 0.0
+        self.train_count = 0
+        self.val_count = 0
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -333,38 +455,72 @@ def compute_mav(
 
 
 def compute_mae(
-    loader: DataLoader,
-    model: torch.nn.Module,
-    device: torch.device,
-    sc_sales: MinMaxScaler,  # fitted on log‑sales columns only
-    sales_idx: list[int],  # positions of the sales targets in y
+    xb: torch.Tensor,  # Input batch of features
+    yb: torch.Tensor,  # Input batch of targets
+    model: torch.nn.Module,  # The model used for predictions
+    device: torch.device,  # The device (cpu or cuda)
+    sc_sales: MinMaxScaler,  # Scaler for the sales targets
+    sales_idx: list[int],  # Indices of the sales targets in the output
 ) -> float:
     """
     Mean Absolute Error on SALES ONLY, expressed in original units.
     Cyclical targets are excluded from the calculation.
     """
-    abs_sum, count = 0.0, 0
-    model.eval()
 
     with torch.no_grad():
-        for xb, yb, _ in loader:
-            # ----- predictions -----
-            preds_np = model(xb.to(device)).cpu().numpy()  # (batch, n_targets)
-            p_sales_scaled = preds_np[:, sales_idx]  # take sales block
-            p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
-            p_sales_units = np.expm1(p_sales_unscaled)  # back to unit sales
+        # ----- predictions -----
+        preds_np = model(xb.to(device)).cpu().numpy()  # (batch, n_targets)
+        p_sales_scaled = preds_np[:, sales_idx]  # Extract the sales block
+        p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
+        p_sales_units = np.expm1(p_sales_unscaled)  # Convert back to unit sales
 
-            # ----- ground truth ----
-            yb_np = yb.cpu().numpy()
-            y_sales_scaled = yb_np[:, sales_idx]
-            y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
-            y_sales_units = np.expm1(y_sales_unscaled)
+        # ----- ground truth ----
+        yb_np = yb.cpu().numpy()
+        y_sales_scaled = yb_np[:, sales_idx]
+        y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
+        y_sales_units = np.expm1(y_sales_unscaled)
 
-            # ----- accumulate -----
-            abs_sum += np.abs(p_sales_units - y_sales_units).sum()
-            count += y_sales_units.size
+        # ----- calculate batch-wise MAE -----
+        batch_mae = (
+            np.abs(p_sales_units - y_sales_units).sum() / y_sales_units.size
+        )  # MAE for this batch
 
-    return abs_sum / count
+    return batch_mae
+
+
+# def compute_mae(
+#     loader: DataLoader,
+#     model: torch.nn.Module,
+#     device: torch.device,
+#     sc_sales: MinMaxScaler,  # fitted on log‑sales columns only
+#     sales_idx: list[int],  # positions of the sales targets in y
+# ) -> float:
+#     """
+#     Mean Absolute Error on SALES ONLY, expressed in original units.
+#     Cyclical targets are excluded from the calculation.
+#     """
+#     abs_sum, count = 0.0, 0
+#     model.eval()
+
+#     with torch.no_grad():
+#         for xb, yb, _ in loader:
+#             # ----- predictions -----
+#             preds_np = model(xb.to(device)).cpu().numpy()  # (batch, n_targets)
+#             p_sales_scaled = preds_np[:, sales_idx]  # take sales block
+#             p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
+#             p_sales_units = np.expm1(p_sales_unscaled)  # back to unit sales
+
+#             # ----- ground truth ----
+#             yb_np = yb.cpu().numpy()
+#             y_sales_scaled = yb_np[:, sales_idx]
+#             y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
+#             y_sales_units = np.expm1(y_sales_unscaled)
+
+#             # ----- accumulate -----
+#             abs_sum += np.abs(p_sales_units - y_sales_units).sum()
+#             count += y_sales_units.size
+
+#     return abs_sum / count
 
 
 def train(
@@ -383,13 +539,20 @@ def train(
     epochs: int = 5,
     seed: int = 2025,
     model_cls: type = ShallowNN,
+    num_workers: int = 5,
+    enable_progress_bar: bool = True,
+    train_logger: bool = False,
     output_dir: str = "../output/data/",
     model_dir: str = "../output/models/",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, torch.nn.Module]]:
-
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    scalers_dir = Path(output_dir) / "scalers"
+    scalers_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints_dir = Path(output_dir) / "checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
 
     history = []
     models: Dict[str, torch.nn.Module] = {}
@@ -506,18 +669,26 @@ def train(
             torch.from_numpy(y_train_full).float(),  # targets
             torch.from_numpy(w_train).float(),  # weights
         )
-        ld_train = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
+        ld_train = DataLoader(
+            ds_train,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            persistent_workers=True,
+        )
 
         ds_test = TensorDataset(
             torch.from_numpy(X_test_full).float(),
             torch.from_numpy(y_test_full).float(),
             torch.from_numpy(w_test).float(),
         )
-        ld_test = DataLoader(ds_test, batch_size=batch_size, shuffle=False)
-
-        sales_idx = [label_cols.index(col) for col in y_sales_features]
-        train_mav = compute_mav(ld_train, y_sales_scaler, sales_idx)
-        test_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
+        ld_test = DataLoader(
+            ds_test,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            persistent_workers=True,
+        )
 
         if model_cls is ShallowNN:
             base_model = ShallowNN(input_dim=X_train_full.shape[1])
@@ -529,78 +700,104 @@ def train(
             raise ValueError(f"Unknown model: {model_cls}")
 
         base_model.apply(init_weights)
-        lightning_model = LightningWrapper(base_model, lr=lr)
+
+        sales_idx = [label_cols.index(col) for col in y_sales_features]
+        train_mav = compute_mav(ld_train, y_sales_scaler, sales_idx)
+        val_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
+
+        lightning_model = LightningWrapper(
+            base_model,
+            lr=lr,
+            y_sales_scaler=y_sales_scaler,
+            sales_idx=sales_idx,
+            train_mav=train_mav,
+            val_mav=val_mav,
+        )
+        checkpoint_callback = ModelCheckpoint(
+            monitor="val_loss",  # The metric you want to monitor
+            mode="min",  # 'min' means the model with the lowest val_loss will be saved
+            save_top_k=1,  # Save only the best model
+            dirpath=Path(model_dir) / "checkpoints",  # Directory to save checkpoints
+            filename=f"{today_str}_model_{sid}",  # Filename pattern for the saved checkpoint
+        )
+
         trainer = pl.Trainer(
             max_epochs=epochs,
-            logger=False,
-            enable_progress_bar=False,
+            logger=train_logger,
+            enable_progress_bar=enable_progress_bar,
+            callbacks=[checkpoint_callback],
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
         )
         trainer.fit(lightning_model, ld_train, ld_test)
 
         model = lightning_model.model.to(device)
 
-        train_loss = compute_rmsle_manual(ld_train, model, device)
-        test_loss = compute_rmsle_manual(ld_test, model, device)
+        # train_loss = compute_rmsle_manual(ld_train, model, device)
+        # test_loss = compute_rmsle_manual(ld_test, model, device)
 
-        train_mae = compute_mae(ld_train, model, device, y_sales_scaler, sales_idx)
-        train_percent_mav = (train_mae / train_mav) * 100 if train_mav else float("inf")
-        test_mae = compute_mae(ld_test, model, device, y_sales_scaler, sales_idx)
-        test_percent_mav = (test_mae / test_mav) * 100 if test_mav else float("inf")
+        train_loss = trainer.logged_metrics["train_loss"]  # From training step
+        val_loss = trainer.logged_metrics["val_loss"]  # From validation step
+        avg_train_mae = trainer.logged_metrics["avg_train_mae"]
+        avg_val_mae = trainer.logged_metrics["avg_val_mae"]
+        avg_train_percent_mav = trainer.logged_metrics["avg_train_percent_mav"]
+        avg_val_percent_mav = trainer.logged_metrics["avg_val_percent_mav"]
 
-        sales_idx = [label_cols.index(c) for c in y_sales_features]
-        cyc_idx = [label_cols.index(col) for col in y_cyclical_features]
-        train_mpe = compute_mpe(
-            ld_train,
-            model,
-            device,
-            sc_sales=y_sales_scaler,
-            sc_cyc=y_cyc_scaler,
-            sales_idx=sales_idx,
-            cyc_idx=cyc_idx,
-        )
+        # train_mae = compute_mae(ld_train, model, device, y_sales_scaler, sales_idx)
+        # train_percent_mav = (train_mae / train_mav) * 100 if train_mav else float("inf")
+        # val_mae = compute_mae(ld_test, model, device, y_sales_scaler, sales_idx)
+        # val_percent_mav = (val_mae / val_mav) * 100 if val_mav else float("inf")
 
-        test_mpe = compute_mpe(
-            ld_test,
-            model,
-            device,
-            sc_sales=y_sales_scaler,
-            sc_cyc=y_cyc_scaler,
-            sales_idx=sales_idx,
-            cyc_idx=cyc_idx,
-        )
+        # sales_idx = [label_cols.index(c) for c in y_sales_features]
+        # cyc_idx = [label_cols.index(col) for col in y_cyclical_features]
+        # train_mpe = compute_mpe(
+        #     ld_train,
+        #     model,
+        #     device,
+        #     sc_sales=y_sales_scaler,
+        #     sc_cyc=y_cyc_scaler,
+        #     sales_idx=sales_idx,
+        #     cyc_idx=cyc_idx,
+        # )
+
+        # val_mpe = compute_mpe(
+        #     ld_test,
+        #     model,
+        #     device,
+        #     sc_sales=y_sales_scaler,
+        #     sc_cyc=y_cyc_scaler,
+        #     sales_idx=sales_idx,
+        #     cyc_idx=cyc_idx,
+        # )
 
         history.append(
             {
                 "store_item": sid,
                 "epoch": epochs,
                 "train_loss": train_loss,
-                "train_mae": train_mae,
-                "train_percent_mav": train_percent_mav,
-                "test_loss": test_loss,
-                "test_mae": test_mae,
-                "test_percent_mav": test_percent_mav,
-                "train_mpe": train_mpe,
-                "test_mpe": test_mpe,
+                "avg_train_mae": avg_train_mae,
+                "avg_train_percent_mav": avg_train_percent_mav,
+                "val_loss": val_loss,
+                "avg_val_mae": avg_val_mae,
+                "avg_val_percent_mav": avg_val_percent_mav,
             }
         )
 
-        print(
-            f"[{sid}] Finished training "
-            f"train_loss {train_loss:.4f}, "
-            f"train_MAE {train_mae:.4f}, "
-            f"train_%MAV {train_percent_mav:.4f}, "
-            f"test_loss {test_loss:.4f}, "
-            f"test_MAE {test_mae:.4f}, "
-            f"test_%MAV {test_percent_mav:.4f}, "
-            f"train_MPE {train_mpe:.4f}, test_MPE {test_mpe:.4f}"
-        )
+        # logger.info(
+        #     f"[{sid}] Finished training "
+        #     f"train_loss {train_loss:.4f}, "
+        #     f"train_MAE {train_mae:.4f}, "
+        #     f"train_%MAV {train_percent_mav:.4f}, "
+        #     f"val_loss {val_loss:.4f}, "
+        #     f"val_MAE {val_mae:.4f}, "
+        #     f"val_%MAV {val_percent_mav:.4f}, "
+        #     f"train_MPE {train_mpe:.4f}, val_MPE {val_mpe:.4f}"
+        # )
 
         save_path = os.path.join(model_dir, f"{today_str}_model_{sid}.pth")
         torch.save(
             {
                 "sid": sid,
-                "model_state_dict": model.cpu().state_dict(),
+                "model_state_dict": lightning_model.model.state_dict(),
                 "x_feature_cols": x_feature_cols,
                 "y_feature_cols": label_cols,
                 "train_frac": train_frac,
@@ -608,7 +805,18 @@ def train(
             },
             save_path,
         )
-        print(f"Saved model for {sid} to {save_path}")
+        # torch.save(
+        #     {
+        #         "sid": sid,
+        #         "model_state_dict": model.cpu().state_dict(),
+        #         "x_feature_cols": x_feature_cols,
+        #         "y_feature_cols": label_cols,
+        #         "train_frac": train_frac,
+        #         "epochs": epochs,
+        #     },
+        #     save_path,
+        # )
+        logger.info(f"Saved model for {sid} to {save_path}")
 
         models[sid] = model.cpu()
         x_scalers[sid] = x_sales_scaler
@@ -619,273 +827,16 @@ def train(
         hist_df.groupby("store_item")
         .agg(
             final_train_loss=("train_loss", "last"),
-            final_test_loss=("test_loss", "last"),
-            final_train_mae=("train_mae", "last"),
-            final_test_mae=("test_mae", "last"),
-            final_train_percent_mav=("train_percent_mav", "last"),
-            final_test_percent_mav=("test_percent_mav", "last"),
-            final_train_mpe=("train_mpe", "last"),
-            final_test_mpe=("test_mpe", "last"),
+            final_val_loss=("val_loss", "last"),
+            final_avg_train_mae=("avg_train_mae", "last"),
+            final_avg_val_mae=("avg_val_mae", "last"),
+            final_avg_train_percent_mav=("avg_train_percent_mav", "last"),
+            final_avg_val_percent_mav=("avg_val_percent_mav", "last"),
         )
         .reset_index()
     )
 
     return hist_df, summary_df, models
-
-
-def train_one_model_per_sid_timeseries(
-    df: pd.DataFrame,
-    weights_df: pd.DataFrame,
-    feature_cols: list[str],
-    label_cols: list[str],
-    item_col: str,
-    k: int = 5,
-    batch_size: int = 32,
-    lr: float = 1e-3,
-    epochs: int = 5,
-    seed: int = 2025,
-    model_dir: str = "output/models/",
-):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    history = []
-    avg_history = []
-
-    for sid in df["store_item"].unique():
-        sub = df[df["store_item"] == sid].sort_values("date").reset_index(drop=True)
-        sub = sub.merge(weights_df, on=item_col, how="left")
-
-        X = sub[feature_cols].to_numpy(float)
-        y = sub[label_cols].to_numpy(float)
-        w = sub["weight"].to_numpy(float).reshape(-1, 1)
-
-        full_ds = TensorDataset(
-            torch.from_numpy(X).float(),
-            torch.from_numpy(y).float(),
-            torch.from_numpy(w).float(),
-        )
-
-        tscv = TimeSeriesSplit(n_splits=k)
-        fold_metrics = []
-
-        for fold_idx, (train_idx, val_idx) in enumerate(tscv.split(X), start=1):
-            train_ds = Subset(full_ds, train_idx)
-            val_ds = Subset(full_ds, val_idx)
-            train_ld = DataLoader(train_ds, batch_size=batch_size, shuffle=False)
-            val_ld = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-
-            model = ShallowNN(input_dim=len(feature_cols)).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-            loss_fn = NWRMSLELoss()
-
-            for _ in range(epochs):
-                model.train()
-                for xb, yb, wb in train_ld:
-                    xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                    preds = model(xb)
-                    loss = loss_fn(preds, yb, wb)
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-            model.eval()
-            num, den = 0.0, 0.0
-            with torch.no_grad():
-                for xb, yb, wb in val_ld:
-                    xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                    p = model(xb).clamp(min=1e-6)
-                    ld = torch.log(p + 1) - torch.log(yb + 1)
-                    num += torch.sum(wb * ld**2).item()
-                    den += torch.sum(wb).item()
-            val_loss = (num / den) ** 0.5
-            fold_metrics.append((val_loss, fold_idx))
-
-        best_fold = min(fold_metrics)[1]
-        train_idx, _ = list(tscv.split(X))[best_fold - 1]
-        train_ds = Subset(full_ds, train_idx)
-        train_ld = DataLoader(train_ds, batch_size=batch_size, shuffle=False)
-
-        model = ShallowNN(input_dim=len(feature_cols)).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        loss_fn = NWRMSLELoss()
-
-        epoch_train_losses = []
-        for epoch in range(1, epochs + 1):
-            model.train()
-            total_loss = 0
-            for xb, yb, wb in train_ld:
-                xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                preds = model(xb)
-                loss = loss_fn(preds, yb, wb)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item() * xb.size(0)
-
-            epoch_loss = total_loss / len(train_ds)
-            epoch_train_losses.append(epoch_loss)
-            history.append(
-                {
-                    "store_item": sid,
-                    "fold": best_fold,
-                    "epoch": epoch,
-                    "train_loss": epoch_loss,
-                    "val_loss": None,
-                }
-            )
-            print(f"Epoch {epoch}/{epochs} - Train Loss: {epoch_loss:.4f}")
-
-        for epoch, avg_loss in enumerate(epoch_train_losses, 1):
-            avg_history.append(
-                {"store_item": sid, "epoch": epoch, "avg_train_loss": avg_loss}
-            )
-
-        print(f"Training for store_item {sid} completed.")
-        os.makedirs(model_dir, exist_ok=True)
-        model = model.cpu()
-        model_path = os.path.join(model_dir, f"model_{sid}.pth")
-        torch.save(
-            {
-                "sid": sid,
-                "model_state_dict": model.state_dict(),
-                "fold": best_fold,
-                "epochs": epochs,
-                "feature_cols": feature_cols,
-                "label_cols": label_cols,
-            },
-            model_path,
-        )
-        print(f"Model for store_item {sid} saved at {model_path}")
-
-    history_df = pd.DataFrame(history)
-    avg_history_df = pd.DataFrame(avg_history)
-    return history_df, avg_history_df
-
-
-def train_one_model_per_sid_kfold(
-    df: pd.DataFrame,
-    weights_df: pd.DataFrame,
-    feature_cols: list[str],
-    label_cols: list[str],
-    item_col: str,
-    k: int = 5,
-    batch_size: int = 32,
-    lr: float = 1e-3,
-    epochs: int = 5,
-    shuffle: bool = True,
-    seed: int = 2025,
-    model_dir: str = "output/models/",
-):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    history = []
-    fold_metrics = {}
-    # all_results = {}
-
-    for sid in df["store_item"].unique():
-        print(f"Training for store_item {sid}...")
-        sub = df[df["store_item"] == sid].sort_values("date").reset_index(drop=True)
-        sub = sub.merge(weights_df, on=item_col, how="left")
-
-        X = sub[feature_cols].to_numpy(float)
-        y = sub[label_cols].to_numpy(float)
-        w = sub["weight"].to_numpy(float).reshape(-1, 1)
-
-        full_ds = TensorDataset(
-            torch.from_numpy(X).float(),
-            torch.from_numpy(y).float(),
-            torch.from_numpy(w).float(),
-        )
-
-        kf = KFold(n_splits=k, shuffle=shuffle, random_state=seed)
-        fold_metrics = []
-
-        for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X), start=1):
-            train_ds = Subset(full_ds, train_idx)
-            val_ds = Subset(full_ds, val_idx)
-            train_ld = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle)
-            val_ld = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-
-            model = ShallowNN(input_dim=len(feature_cols)).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-            loss_fn = NWRMSLELoss()
-
-            for _ in range(epochs):
-                model.train()
-                for xb, yb, wb in train_ld:
-                    xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                    preds = model(xb)
-                    loss = loss_fn(preds, yb, wb)
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-            model.eval()
-            num, den = 0.0, 0.0
-            with torch.no_grad():
-                for xb, yb, wb in val_ld:
-                    xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                    p = model(xb).clamp(min=1e-6)
-                    ld = torch.log(p + 1) - torch.log(yb + 1)
-                    num += torch.sum(wb * ld**2).item()
-                    den += torch.sum(wb).item()
-            val_loss = (num / den) ** 0.5
-            fold_metrics.append((val_loss, fold_idx))
-
-        best_fold = min(fold_metrics)[1]
-        train_idx, _ = list(kf.split(X))[best_fold - 1]
-        train_ds = Subset(full_ds, train_idx)
-        train_ld = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle)
-
-        model = ShallowNN(input_dim=len(feature_cols)).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        loss_fn = NWRMSLELoss()
-
-        for epoch in range(1, epochs + 1):
-            model.train()
-            total_loss = 0
-            for xb, yb, wb in train_ld:
-                xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                preds = model(xb)
-                loss = loss_fn(preds, yb, wb)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item() * xb.size(0)
-
-            history.append(
-                {
-                    "store_item": sid,
-                    "fold": best_fold,
-                    "epoch": epoch,
-                    "train_loss": total_loss / len(train_ds),
-                    "val_loss": None,
-                }
-            )
-            print(
-                f"Epoch {epoch}/{epochs} - Train Loss: {total_loss / len(train_ds):.4f}"
-            )
-        print(f"Training for store_item {sid} completed.")
-        # Save the model
-        # After training loop
-        model = model.cpu()  # Move to CPU for portability
-        model_path = os.path.join(model_dir, f"model_{sid}.pth")
-        torch.save(
-            {
-                "sid": sid,
-                "model_state_dict": model.state_dict(),
-                "fold": best_fold,
-                "epochs": epochs,
-                "feature_cols": feature_cols,
-                "label_cols": label_cols,
-            },
-            model_path,
-        )
-
-        print(f"Model for store_item {sid} saved at {model_path}")
-
-        # all_results[sid] = {'model': model.cpu(), 'best_fold': best_fold}
-
-    history_df = pd.DataFrame(history)
-    return history_df
 
 
 def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
@@ -1027,6 +978,6 @@ def predict_next_days_for_sids(
             )
             all_preds.append(pred_df)
         except Exception as e:
-            print(f"Skipping {sid} due to error: {e}")
+            logger.info(f"Skipping {sid} due to error: {e}")
 
     return pd.concat(all_preds, ignore_index=True)
