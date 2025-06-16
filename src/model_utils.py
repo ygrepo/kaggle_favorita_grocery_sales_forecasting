@@ -3,6 +3,7 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader, Subset
 from torch.utils.data import TensorDataset, DataLoader
+import lightning.pytorch as pl
 from sklearn.preprocessing import MinMaxScaler
 import random
 
@@ -206,6 +207,45 @@ def set_seed(seed: int = 42):
 
     # For full reproducibility in future versions
     os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+class LightningWrapper(pl.LightningModule):
+    """Minimal Lightning module wrapping the forecasting model."""
+
+    def __init__(self, model: nn.Module, lr: float = 3e-4):
+        super().__init__()
+        self.model = model
+        self.lr = lr
+        self.loss_fn = NWRMSLELoss()
+
+    def forward(self, x):
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        xb, yb, wb = batch
+        preds = torch.clamp(self.model(xb), min=1e-6)
+        loss = self.loss_fn(preds, yb, wb)
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        xb, yb, wb = batch
+        preds = torch.clamp(self.model(xb), min=1e-6)
+        loss = self.loss_fn(preds, yb, wb)
+        self.log("val_loss", loss, prog_bar=True)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=4, min_lr=1e-5
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss",
+            },
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -480,94 +520,81 @@ def train(
         test_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
 
         if model_cls is ShallowNN:
-            model = ShallowNN(input_dim=X_train_full.shape[1]).to(device)
+            base_model = ShallowNN(input_dim=X_train_full.shape[1])
         elif model_cls is TwoLayerNN:
-            model = TwoLayerNN(input_dim=X_train_full.shape[1]).to(device)
+            base_model = TwoLayerNN(input_dim=X_train_full.shape[1])
         elif model_cls is ResidualMLP:
-            model = ResidualMLP(input_dim=X_train_full.shape[1]).to(device)
+            base_model = ResidualMLP(input_dim=X_train_full.shape[1])
         else:
-            raise ValueError(f"Unknown model: {model}")
+            raise ValueError(f"Unknown model: {model_cls}")
 
-        model.apply(init_weights)
-        loss_fn = NWRMSLELoss()
-        optim = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optim, mode="min", factor=0.5, patience=4, min_lr=1e-5, verbose=False
+        base_model.apply(init_weights)
+        lightning_model = LightningWrapper(base_model, lr=lr)
+        trainer = pl.Trainer(
+            max_epochs=epochs,
+            logger=False,
+            enable_progress_bar=False,
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        )
+        trainer.fit(lightning_model, ld_train, ld_test)
+
+        model = lightning_model.model.to(device)
+
+        train_loss = compute_rmsle_manual(ld_train, model, device)
+        test_loss = compute_rmsle_manual(ld_test, model, device)
+
+        train_mae = compute_mae(ld_train, model, device, y_sales_scaler, sales_idx)
+        train_percent_mav = (train_mae / train_mav) * 100 if train_mav else float("inf")
+        test_mae = compute_mae(ld_test, model, device, y_sales_scaler, sales_idx)
+        test_percent_mav = (test_mae / test_mav) * 100 if test_mav else float("inf")
+
+        sales_idx = [label_cols.index(c) for c in y_sales_features]
+        cyc_idx = [label_cols.index(col) for col in y_cyclical_features]
+        train_mpe = compute_mpe(
+            ld_train,
+            model,
+            device,
+            sc_sales=y_sales_scaler,
+            sc_cyc=y_cyc_scaler,
+            sales_idx=sales_idx,
+            cyc_idx=cyc_idx,
         )
 
-        for epoch in range(1, epochs + 1):
-            model.train()
-            tr_loss_acc = 0.0
-            for xb, yb, wb in ld_train:
-                xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
-                preds = torch.clamp(model(xb), min=1e-6)
-                loss = loss_fn(preds, yb, wb)
-                optim.zero_grad()
-                loss.backward()
-                optim.step()
-                tr_loss_acc += loss.item() * xb.size(0)
-            train_loss = tr_loss_acc / len(ds_train)
+        test_mpe = compute_mpe(
+            ld_test,
+            model,
+            device,
+            sc_sales=y_sales_scaler,
+            sc_cyc=y_cyc_scaler,
+            sales_idx=sales_idx,
+            cyc_idx=cyc_idx,
+        )
 
-            model.eval()
-            test_loss = compute_rmsle_manual(ld_test, model, device)
+        history.append(
+            {
+                "store_item": sid,
+                "epoch": epochs,
+                "train_loss": train_loss,
+                "train_mae": train_mae,
+                "train_percent_mav": train_percent_mav,
+                "test_loss": test_loss,
+                "test_mae": test_mae,
+                "test_percent_mav": test_percent_mav,
+                "train_mpe": train_mpe,
+                "test_mpe": test_mpe,
+            }
+        )
 
-            train_mae = compute_mae(ld_train, model, device, y_sales_scaler, sales_idx)
-            train_percent_mav = (
-                (train_mae / train_mav) * 100 if train_mav else float("inf")
-            )
-            test_mae = compute_mae(ld_test, model, device, y_sales_scaler, sales_idx)
-            test_percent_mav = (test_mae / test_mav) * 100 if test_mav else float("inf")
-
-            scheduler.step(test_loss)
-
-            # --- MPE ---
-            sales_idx = [label_cols.index(c) for c in y_sales_features]
-            cyc_idx = [label_cols.index(col) for col in y_cyclical_features]
-            train_mpe = compute_mpe(
-                ld_train,
-                model,
-                device,
-                sc_sales=y_sales_scaler,
-                sc_cyc=y_cyc_scaler,
-                sales_idx=sales_idx,
-                cyc_idx=cyc_idx,
-            )
-
-            test_mpe = compute_mpe(
-                ld_test,
-                model,
-                device,
-                sc_sales=y_sales_scaler,
-                sc_cyc=y_cyc_scaler,
-                sales_idx=sales_idx,
-                cyc_idx=cyc_idx,
-            )
-
-            history.append(
-                {
-                    "store_item": sid,
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    "train_mae": train_mae,
-                    "train_percent_mav": train_percent_mav,
-                    "test_loss": test_loss,
-                    "test_mae": test_mae,
-                    "test_percent_mav": test_percent_mav,
-                    "train_mpe": train_mpe,
-                    "test_mpe": test_mpe,
-                }
-            )
-
-            print(
-                f"[{sid}] Epoch {epoch}/{epochs} "
-                f"train_loss {train_loss:.4f}, "
-                f"train_MAE {train_mae:.4f}, "
-                f"train_%MAV {train_percent_mav:.4f}, "
-                f"test_loss {test_loss:.4f}, "
-                f"test_MAE {test_mae:.4f}, "
-                f"test_%MAV {test_percent_mav:.4f}, "
-                f"train_MPE {train_mpe:.4f}, test_MPE {test_mpe:.4f}"
-            )
+        print(
+            f"[{sid}] Finished training "
+            f"train_loss {train_loss:.4f}, "
+            f"train_MAE {train_mae:.4f}, "
+            f"train_%MAV {train_percent_mav:.4f}, "
+            f"test_loss {test_loss:.4f}, "
+            f"test_MAE {test_mae:.4f}, "
+            f"test_%MAV {test_percent_mav:.4f}, "
+            f"train_MPE {train_mpe:.4f}, test_MPE {test_mpe:.4f}"
+        )
 
         save_path = os.path.join(model_dir, f"{today_str}_model_{sid}.pth")
         torch.save(
