@@ -28,6 +28,7 @@ sys.path.insert(0, str(project_root))
 from src.model_utils import (
     train,
     ResidualMLP,
+    ModelType,
 )
 from src.utils import build_feature_and_label_cols
 
@@ -112,6 +113,7 @@ def train_model(
     learning_rate: float = 1e-3,
     epochs: int = 100,
     seed: int = 42,
+    model_type: ModelType = ModelType.SHALLOW_NN,
 ) -> None:
     """Train the forecasting model.
 
@@ -165,7 +167,7 @@ def train_model(
         lr=learning_rate,
         epochs=epochs,
         seed=seed,
-        model_cls=ResidualMLP,
+        model_type=model_type,
         model_dir=str(model_dir),
     )
 
@@ -238,6 +240,13 @@ def parse_args():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level",
     )
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        default="TwoLayerNN",
+        choices=[e.value for e in ModelType],  # Use enum values directly
+        help="Model type",
+    )
 
     return parser.parse_args()
 
@@ -269,6 +278,7 @@ def main():
         logger.info(f"  Learning rate: {args.learning_rate}")
         logger.info(f"  Epochs: {args.epochs}")
         logger.info(f"  Random seed: {args.seed}")
+        logger.info(f"  Model type: {args.model_type}")
 
         # Load and preprocess data
         df = load_data(data_fn)
@@ -283,7 +293,7 @@ def main():
         # Train model
         train_model(
             df=df,
-            #            df=df[df["store_item"] == store_item],
+            # df=df[df["store_item"] == store_item],
             weights_df=weights_df,
             model_dir=model_dir,
             window_size=args.window_size,
@@ -291,6 +301,7 @@ def main():
             learning_rate=args.learning_rate,
             epochs=args.epochs,
             seed=args.seed,
+            model_type=ModelType(args.model_type),
         )
 
         logger.info("Training completed successfully!")

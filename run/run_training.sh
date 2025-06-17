@@ -21,6 +21,7 @@ LEARNING_RATE=0.001
 EPOCHS=100
 SEED=42
 LOG_LEVEL="INFO"
+MODEL_TYPE="TwoLayerNN"
 VENV_PATH="${PROJECT_ROOT}/.venv"
 
 # Parse command line arguments
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --seed) SEED="$2"; shift 2 ;;
     --log-level) LOG_LEVEL="$2"; shift 2 ;;
     --venv) VENV_PATH="$2"; shift 2 ;;
+    --model-type) MODEL_TYPE="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
 done
@@ -51,6 +53,7 @@ LOG_FILE="${LOG_DIR}/training_${TIMESTAMP}.log"
 echo "Starting training at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
+echo "Model type: $MODEL_TYPE" | tee -a "$LOG_FILE"
 
 # # Activate virtual environment if it exists
 # if [ -f "${VENV_PATH}/bin/activate" ]; then
@@ -79,6 +82,7 @@ echo "  Batch size: ${BATCH_SIZE}" | tee -a "$LOG_FILE"
 echo "  Learning rate: ${LEARNING_RATE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
 echo "  Random seed: ${SEED}" | tee -a "$LOG_FILE"
+echo "  Model type: ${MODEL_TYPE}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_training.py" \
   --data-fn "$DATA_FN" \
@@ -89,7 +93,8 @@ python "${SCRIPT_DIR}/run_training.py" \
   --learning-rate "$LEARNING_RATE" \
   --epochs "$EPOCHS" \
   --seed "$SEED" \
-  --log-level "$LOG_LEVEL" 2>&1 | tee -a "$LOG_FILE"
+  --log-level "$LOG_LEVEL" \
+  --model-type "$MODEL_TYPE" 2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script
 TRAINING_EXIT_CODE=${PIPESTATUS[0]}

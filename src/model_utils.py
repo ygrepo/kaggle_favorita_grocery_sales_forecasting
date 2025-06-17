@@ -13,7 +13,7 @@ from typing import List, Tuple, Dict, override
 from datetime import datetime
 import pickle
 from pathlib import Path
-
+from enum import Enum
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -126,6 +126,26 @@ class ResidualMLP(nn.Module):
         return torch.clamp(torch.sigmoid(out), 1e-6, 1.0)
 
 
+# Enum for model types
+class ModelType(Enum):
+    SHALLOW_NN = "ShallowNN"
+    TWO_LAYER_NN = "TwoLayerNN"
+    RESIDUAL_MLP = "ResidualMLP"
+
+
+# Model Factory Function
+def model_factory(model_type: ModelType, input_dim: int) -> nn.Module:
+    """Factory function to return the correct model based on the model_type."""
+    if model_type == ModelType.SHALLOW_NN:
+        return ShallowNN(input_dim)
+    elif model_type == ModelType.TWO_LAYER_NN:
+        return TwoLayerNN(input_dim)
+    elif model_type == ModelType.RESIDUAL_MLP:
+        return ResidualMLP(input_dim)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+
 # ----- initialise every nn.Linear in the network ----------
 def init_weights(m):
     if isinstance(m, nn.Linear):
@@ -159,40 +179,6 @@ class HybridLoss(nn.Module):
         nwrmsle = torch.sqrt(torch.sum(w * log_diff**2) / torch.sum(w))
         mae = torch.sum(w * torch.abs(y_pred - y_true)) / torch.sum(w)
         return self.alpha * nwrmsle + (1 - self.alpha) * mae
-
-
-def compute_rmsle_manual(loader, model, device, eps=1e-6):
-    model.eval()
-    total_num, total_den = 0.0, 0.0
-
-    with torch.no_grad():
-        for xb, yb, wb in loader:
-            xb = xb.to(device)
-            yb = torch.clamp(yb.to(device), min=eps)
-            wb = wb.to(device)
-
-            preds = torch.clamp(model(xb), min=eps)
-
-            log_diff = torch.log(preds + 1.0) - torch.log(yb + 1.0)
-            weighted_sq_diff = wb * log_diff**2
-
-            # Valid (finite) mask
-            mask = torch.isfinite(weighted_sq_diff)
-
-            # Only count valid loss terms
-            safe_values = weighted_sq_diff[mask]
-            total_num += safe_values.sum().item()
-
-            # Count valid weights using same mask, broadcast-safe
-            valid_weights = wb.expand_as(weighted_sq_diff)[mask]
-            total_den += valid_weights.sum().item()
-
-    rmsle = (total_num / (total_den + eps)) ** 0.5
-    if np.isnan(rmsle):
-        logger.info("Final RMSLE is NaN")
-        logger.info("Numerator:", total_num)
-        logger.info("Denominator:", total_den)
-    return rmsle
 
 
 def set_seed(seed: int = 42):
@@ -241,23 +227,17 @@ class LightningWrapper(pl.LightningModule):
         self.val_error_history = []
         self.train_mae_history = []
         self.val_mae_history = []
-        self.train_accuracy_history = []
-        self.val_accuracy_history = []
+        self.train_rmse_history = []
+        self.val_rmse_history = []
         self.best_train_avg_mae = float("inf")
         self.best_val_avg_mae = float("inf")
-        self.best_train_avg_accuracy = -1
-        self.best_val_avg_accuracy = -1
-        self.best_train_avg_percent_mav = -1
-        self.best_val_avg_percent_mav = -1
+        self.best_train_avg_rmse = float("inf")
+        self.best_val_avg_rmse = float("inf")
+        self.best_train_avg_percent_mav = float("inf")
+        self.best_val_avg_percent_mav = float("inf")
 
     def forward(self, x):
         return self.model(x)
-
-    def calculate_accuracy(self, preds, targets, threshold=0.1):
-        """Calculate accuracy as the percentage of exact matches (with a tolerance)."""
-        correct = (torch.abs(preds - targets) < threshold).float()
-        accuracy = correct.sum() / correct.size(0)
-        return accuracy
 
     def training_step(self, batch, batch_idx):
         xb, yb, wb = batch
@@ -269,16 +249,16 @@ class LightningWrapper(pl.LightningModule):
         train_mae = compute_mae(
             xb, yb, self.model, device, self.y_sales_scaler, self.sales_idx
         )
-        train_accuracy = self.calculate_accuracy(preds, yb)  # Calculate accuracy
+        train_rmse = compute_rmse(preds, yb, device)
 
         self.train_error_history.append(loss)
         self.train_mae_history.append(train_mae)
-        self.train_accuracy_history.append(train_accuracy)
+        self.train_rmse_history.append(train_rmse)
 
         # Log the batch loss, MAE, and accuracy
         self.log("train_loss", loss, prog_bar=True)
         self.log("train_mae", train_mae, prog_bar=True)
-        self.log("train_accuracy", train_accuracy, prog_bar=True)
+        self.log("train_rmse", train_rmse, prog_bar=True)
 
         return loss
 
@@ -304,16 +284,16 @@ class LightningWrapper(pl.LightningModule):
         val_mae = compute_mae(
             xb, yb, self.model, device, self.y_sales_scaler, self.sales_idx
         )
-        val_accuracy = self.calculate_accuracy(preds, yb)  # Calculate accuracy
+        val_rmse = compute_rmse(preds, yb, device)
 
         self.val_error_history.append(loss)
         self.val_mae_history.append(val_mae)
-        self.val_accuracy_history.append(val_accuracy)
+        self.val_rmse_history.append(val_rmse)
 
         # Log the batch loss, MAE, and accuracy
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_mae", val_mae, prog_bar=True)
-        self.log("val_accuracy", val_accuracy, prog_bar=True)
+        self.log("val_rmse", val_rmse, prog_bar=True)
 
         return loss
 
@@ -324,42 +304,36 @@ class LightningWrapper(pl.LightningModule):
         print(f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!")
         # Compute average metrics for the epoch
         avg_train_mae = np.mean(self.train_mae_history)
-        avg_train_accuracy = np.mean(self.train_accuracy_history)  # Average accuracy
+        avg_train_rmse = np.mean(self.train_rmse_history)
         avg_train_percent_mav = avg_train_mae / self.train_mav * 100
         avg_val_mae = np.mean(self.val_mae_history)
         avg_val_percent_mav = avg_val_mae / self.val_mav * 100
-        avg_val_accuracy = np.mean(
-            self.val_accuracy_history
-        )  # Average validation accuracy
+        avg_val_rmse = np.mean(self.val_rmse_history)
 
         # Log epoch-level metrics
         self.log("avg_train_mae", avg_train_mae, prog_bar=False)
         self.log("avg_train_percent_mav", avg_train_percent_mav, prog_bar=False)
-        self.log(
-            "avg_train_accuracy", avg_train_accuracy, prog_bar=False
-        )  # Log accuracy
+        self.log("avg_train_rmse", avg_train_rmse, prog_bar=False)
         self.log("avg_val_mae", avg_val_mae, prog_bar=False)
         self.log("avg_val_percent_mav", avg_val_percent_mav, prog_bar=False)
-        self.log("avg_val_accuracy", avg_val_accuracy, prog_bar=False)  # Log accuracy
+        self.log("avg_val_rmse", avg_val_rmse, prog_bar=False)
 
         # Reset accumulators for the next epoch
         self.train_mae_history = []
         self.val_mae_history = []
-        self.train_accuracy_history = []
-        self.val_accuracy_history = []
+        self.train_rmse_history = []
+        self.val_rmse_history = []
 
         if avg_train_mae < self.best_train_avg_mae:
             self.best_train_avg_mae = avg_train_mae
             self.best_train_avg_mae_percent_mav = avg_train_percent_mav
-        if avg_train_accuracy > self.best_train_avg_accuracy:
-            self.best_train_avg_accuracy = avg_train_accuracy
+        if avg_train_rmse < self.best_train_avg_rmse:
+            self.best_train_avg_rmse = avg_train_rmse
         if avg_val_mae < self.best_val_avg_mae:
             self.best_val_avg_mae = avg_val_mae
             self.best_val_avg_mae_percent_mav = avg_val_percent_mav
-        if avg_val_accuracy > self.best_val_avg_accuracy:
-            self.best_val_avg_accuracy = avg_val_accuracy
-        if avg_val_accuracy > self.best_val_avg_accuracy:
-            self.best_val_avg_accuracy = avg_val_accuracy
+        if avg_val_rmse < self.best_val_avg_rmse:
+            self.best_val_avg_rmse = avg_val_rmse
 
         self.log("best_train_avg_mae", self.best_train_avg_mae, prog_bar=False)
         self.log(
@@ -367,20 +341,14 @@ class LightningWrapper(pl.LightningModule):
             self.best_train_avg_mae_percent_mav,
             prog_bar=False,
         )
-        self.log(
-            "best_train_avg_accuracy",
-            self.best_train_avg_accuracy,
-            prog_bar=False,
-        )  # Log best accuracy
+        self.log("best_train_avg_rmse", self.best_train_avg_rmse, prog_bar=False)
         self.log("best_val_avg_mae", self.best_val_avg_mae, prog_bar=False)
         self.log(
             "best_val_avg_mae_percent_mav",
             self.best_val_avg_mae_percent_mav,
             prog_bar=False,
         )
-        self.log(
-            "best_val_avg_accuracy", self.best_val_avg_accuracy, prog_bar=False
-        )  # Log best accuracy
+        self.log("best_val_avg_rmse", self.best_val_avg_rmse, prog_bar=False)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -425,6 +393,31 @@ def compute_mav(
             count += sales_units.size
 
     return abs_sum / count
+
+
+def compute_rmse(
+    preds: torch.Tensor,
+    targets: torch.Tensor,
+    device: torch.device = torch.device("cpu"),
+) -> torch.Tensor:
+    """Compute Root Mean Squared Error (RMSE)."""
+    # Ensure both tensors are on the correct device
+    preds = preds.to(device)
+    targets = targets.to(device)
+
+    # Detach the tensors from the computation graph to avoid gradient tracking issues
+    preds = preds.detach()
+    targets = targets.detach()
+
+    # Calculate squared differences
+    squared_diff = torch.square(preds - targets)
+
+    # Compute the mean squared error (MSE)
+    mse = torch.mean(squared_diff)
+
+    # Return the square root of MSE (RMSE)
+    rmse = torch.sqrt(mse)
+    return rmse
 
 
 def compute_mae(
@@ -476,7 +469,7 @@ def train(
     lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
-    model_cls: type = ShallowNN,
+    model_type: ModelType = ModelType.SHALLOW_NN,
     num_workers: int = 5,
     enable_progress_bar: bool = True,
     train_logger: bool = False,
@@ -619,7 +612,7 @@ def train(
         )
 
         # Initialize model
-        base_model = model_cls(input_dim=X_train_full.shape[1])
+        base_model = model_factory(model_type, X_train_full.shape[1])
         base_model.apply(init_weights)
 
         # Compute MAV (Mean Absolute Value)
@@ -628,7 +621,7 @@ def train(
         val_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
 
         # Initialize Lightning model
-        model_name = f"{today_str}_model_{sid}"
+        model_name = f"{today_str}_model_{sid}_{model_type.value}"
         lightning_model = LightningWrapper(
             base_model,
             model_name=model_name,
@@ -666,8 +659,8 @@ def train(
                 "model_name": model_name,
                 "best_train_avg_mae": lightning_model.best_train_avg_mae,
                 "best_val_avg_mae": lightning_model.best_val_avg_mae,
-                "best_train_avg_accuracy": lightning_model.best_train_avg_accuracy,
-                "best_val_avg_accuracy": lightning_model.best_val_avg_accuracy,
+                "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+                "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
                 "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
                 "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
             }
