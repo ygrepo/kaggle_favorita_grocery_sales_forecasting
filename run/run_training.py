@@ -277,12 +277,12 @@ def main():
         weights_df = load_weights(weights_fn)
 
         # Select top 10 store_items
-        store_item = "44_364606"
-        logger.info(f"Selected store_item: {store_item}")
+        # store_item = "44_364606"
+        # logger.info(f"Selected store_item: {store_item}")
 
         # Train model
         train_model(
-            df=df.query("store_item == @store_item").reset_index(drop=True),
+            df=df,
             weights_df=weights_df,
             model_dir=model_dir,
             window_size=args.window_size,
