@@ -245,10 +245,10 @@ class LightningWrapper(pl.LightningModule):
         self.val_accuracy_history = []
         self.best_train_avg_mae = float("inf")
         self.best_val_avg_mae = float("inf")
-        self.best_train_avg_accuracy = float("inf")
-        self.best_val_avg_accuracy = float("inf")
-        self.best_train_avg_percent_mav = float("inf")
-        self.best_val_avg_percent_mav = float("inf")
+        self.best_train_avg_accuracy = -1
+        self.best_val_avg_accuracy = -1
+        self.best_train_avg_percent_mav = -1
+        self.best_val_avg_percent_mav = -1
 
     def forward(self, x):
         return self.model(x)
@@ -495,7 +495,7 @@ def train(
     history_dir = model_dir_path / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
 
-    history = {}
+    history = []
 
     today_str = datetime.today().strftime("%Y-%m-%d")
     for sid in df["store_item"].unique():
@@ -661,17 +661,20 @@ def train(
         trainer.fit(lightning_model, ld_train, ld_test)
 
         # Save training history for the model
-        history[model_name] = {
-            "best_train_avg_mae": lightning_model.best_train_avg_mae,
-            "best_val_avg_mae": lightning_model.best_val_avg_mae,
-            "best_train_avg_accuracy": lightning_model.best_train_avg_accuracy,
-            "best_val_avg_accuracy": lightning_model.best_val_avg_accuracy,
-            "best_train_avg_percent_mav": lightning_model.best_train_avg_percent_mav,
-            "best_val_avg_percent_mav": lightning_model.best_val_avg_percent_mav,
-        }
+        history.append(
+            {
+                "model_name": model_name,
+                "best_train_avg_mae": lightning_model.best_train_avg_mae,
+                "best_val_avg_mae": lightning_model.best_val_avg_mae,
+                "best_train_avg_accuracy": lightning_model.best_train_avg_accuracy,
+                "best_val_avg_accuracy": lightning_model.best_val_avg_accuracy,
+                "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+                "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+            }
+        )
 
     # Save history to file
-    history_save_path = history_dir / f"{today_str}_{model_name}_history.xlsx"
+    history_save_path = history_dir / f"{today_str}_history.xlsx"
     history = pd.DataFrame(history)
     history.to_excel(history_save_path, index=False)
     return history

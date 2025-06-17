@@ -283,6 +283,7 @@ def main():
         # Train model
         train_model(
             df=df,
+            #            df=df[df["store_item"] == store_item],
             weights_df=weights_df,
             model_dir=model_dir,
             window_size=args.window_size,
