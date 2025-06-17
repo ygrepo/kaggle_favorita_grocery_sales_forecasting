@@ -13,13 +13,12 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${DATA_DIR}/20250611_train_top_10_store_10_item_sales_cyclical_features_16_days_X_y.xlsx"
 WEIGHTS_FN="${DATA_DIR}/top_10_item_weights.xlsx"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 MODEL_DIR="${PROJECT_ROOT}/output/models"
 WINDOW_SIZE=16
 BATCH_SIZE=32
 LEARNING_RATE=0.001
-EPOCHS=100
+EPOCHS=2
 SEED=42
 LOG_LEVEL="INFO"
 VENV_PATH="${PROJECT_ROOT}/.venv"
@@ -29,7 +28,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-fn) DATA_FN="$2"; shift 2 ;;
     --weights-fn) WEIGHTS_FN="$2"; shift 2 ;;
-    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --model-dir) MODEL_DIR="$2"; shift 2 ;;
     --window-size) WINDOW_SIZE="$2"; shift 2 ;;
     --batch-size) BATCH_SIZE="$2"; shift 2 ;;
@@ -43,7 +41,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Create output directories if they don't exist
-mkdir -p "$OUTPUT_DIR"
 mkdir -p "$MODEL_DIR"
 mkdir -p "$LOG_DIR"
 
@@ -76,7 +73,6 @@ set +e  # Disable exit on error to handle the error message
 echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
 echo "  Weights fn: ${WEIGHTS_FN}" | tee -a "$LOG_FILE"
-echo "  Output directory: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
 echo "  Model directory: ${MODEL_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Batch size: ${BATCH_SIZE}" | tee -a "$LOG_FILE"
@@ -87,7 +83,6 @@ echo "  Random seed: ${SEED}" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/run_training.py" \
   --data-fn "$DATA_FN" \
   --weights-fn "$WEIGHTS_FN" \
-  --output-dir "$OUTPUT_DIR" \
   --model-dir "$MODEL_DIR" \
   --window-size "$WINDOW_SIZE" \
   --batch-size "$BATCH_SIZE" \

@@ -9,7 +9,7 @@ import logging
 from lightning.pytorch.callbacks import ModelCheckpoint
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, override
 from datetime import datetime
 import pickle
 from pathlib import Path
@@ -219,6 +219,7 @@ class LightningWrapper(pl.LightningModule):
     def __init__(
         self,
         model: nn.Module,
+        model_name: str,
         y_sales_scaler: MinMaxScaler,
         sales_idx: list[int],
         train_mav: float,
@@ -227,6 +228,7 @@ class LightningWrapper(pl.LightningModule):
     ):
         super().__init__()
         self.model = model
+        self.model_name = model_name
         self.lr = lr
         self.y_sales_scaler = y_sales_scaler
         self.sales_idx = sales_idx
@@ -235,15 +237,27 @@ class LightningWrapper(pl.LightningModule):
         self.loss_fn = NWRMSLELoss()
 
         # Initialize metrics accumulators for each epoch
-        self.train_mae_accum = 0.0
-        self.train_percent_mav_accum = 0.0
-        self.val_mae_accum = 0.0
-        self.val_percent_mav_accum = 0.0
-        self.train_count = 0
-        self.val_count = 0
+        self.train_error_history = []
+        self.val_error_history = []
+        self.train_mae_history = []
+        self.val_mae_history = []
+        self.train_accuracy_history = []
+        self.val_accuracy_history = []
+        self.best_train_avg_mae = float("inf")
+        self.best_val_avg_mae = float("inf")
+        self.best_train_avg_accuracy = float("inf")
+        self.best_val_avg_accuracy = float("inf")
+        self.best_train_avg_percent_mav = float("inf")
+        self.best_val_avg_percent_mav = float("inf")
 
     def forward(self, x):
         return self.model(x)
+
+    def calculate_accuracy(self, preds, targets, threshold=0.1):
+        """Calculate accuracy as the percentage of exact matches (with a tolerance)."""
+        correct = (torch.abs(preds - targets) < threshold).float()
+        accuracy = correct.sum() / correct.size(0)
+        return accuracy
 
     def training_step(self, batch, batch_idx):
         xb, yb, wb = batch
@@ -255,27 +269,19 @@ class LightningWrapper(pl.LightningModule):
         train_mae = compute_mae(
             xb, yb, self.model, device, self.y_sales_scaler, self.sales_idx
         )
-        train_percent_mav = (
-            (train_mae / self.train_mav) * 100 if self.train_mav else float("inf")
-        )
+        train_accuracy = self.calculate_accuracy(preds, yb)  # Calculate accuracy
 
-        self.train_mae_accum += train_mae
-        self.train_percent_mav_accum += train_percent_mav
-        self.train_count += 1
+        self.train_error_history.append(loss)
+        self.train_mae_history.append(train_mae)
+        self.train_accuracy_history.append(train_accuracy)
 
-        # Log the batch loss and MAE
+        # Log the batch loss, MAE, and accuracy
         self.log("train_loss", loss, prog_bar=True)
         self.log("train_mae", train_mae, prog_bar=True)
-        self.log("train_percent_mav", train_percent_mav, prog_bar=True)
+        self.log("train_accuracy", train_accuracy, prog_bar=True)
 
         return loss
 
-    # def training_step(self, batch, batch_idx):
-    #     xb, yb, wb = batch
-    #     preds = torch.clamp(self.model(xb), min=1e-6)
-    #     loss = self.loss_fn(preds, yb, wb)
-    #     self.log("train_loss", loss, prog_bar=True)
-    #     return loss
     def validation_step(self, batch, batch_idx):
         xb, yb, wb = batch
         if (
@@ -288,6 +294,8 @@ class LightningWrapper(pl.LightningModule):
         if torch.any(torch.isnan(preds)):
             print(f"NaN detected in predictions at batch {batch_idx}")
         preds = torch.clamp(preds, min=1e-6)
+        if torch.all(torch.eq(yb, 0)):
+            print(f"Zero detected in targets at batch {batch_idx}")
         yb = torch.clamp(yb, min=1e-6)
         loss = self.loss_fn(preds, yb, wb)
 
@@ -296,65 +304,83 @@ class LightningWrapper(pl.LightningModule):
         val_mae = compute_mae(
             xb, yb, self.model, device, self.y_sales_scaler, self.sales_idx
         )
-        val_percent_mav = (
-            (val_mae / self.val_mav) * 100 if self.val_mav else float("inf")
-        )
-        self.val_mae_accum += val_mae
-        self.val_percent_mav_accum += val_percent_mav
-        self.val_count += 1
+        val_accuracy = self.calculate_accuracy(preds, yb)  # Calculate accuracy
 
-        # Log the batch loss and MAE
+        self.val_error_history.append(loss)
+        self.val_mae_history.append(val_mae)
+        self.val_accuracy_history.append(val_accuracy)
+
+        # Log the batch loss, MAE, and accuracy
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_mae", val_mae, prog_bar=True)
-        self.log("val_percent_mav", val_percent_mav, prog_bar=True)
+        self.log("val_accuracy", val_accuracy, prog_bar=True)
 
         return loss
 
-    # def validation_step(self, batch, batch_idx):
-    #     xb, yb, wb = batch
-    #     if (
-    #         torch.any(torch.isnan(xb))
-    #         or torch.any(torch.isnan(yb))
-    #         or torch.any(torch.isnan(wb))
-    #     ):
-    #         print(f"NaN detected in data at batch {batch_idx}")
-    #     preds = self.model(xb)
-    #     if torch.any(torch.isnan(preds)):
-    #         print(f"NaN detected in predictions at batch {batch_idx}")
-    #     preds = torch.clamp(preds, min=1e-6)
-    #     yb = torch.clamp(yb, min=1e-6)
-    #     loss = self.loss_fn(preds, yb, wb)
-    #     self.log("val_loss", loss, prog_bar=True)
+    def on_epoch_start(self) -> None:
+        print(f"Model: {self.model_name}-Epoch {self.current_epoch} started!")
 
-    def on_epoch_end(self):
+    def on_train_epoch_end(self) -> None:
+        print(f"Model: {self.model_name}-Epoch {self.current_epoch} ended!")
         # Compute average metrics for the epoch
-        avg_train_mae = (
-            self.train_mae_accum / self.train_count if self.train_count > 0 else 0.0
-        )
-        avg_val_mae = self.val_mae_accum / self.val_count if self.val_count > 0 else 0.0
-
-        avg_train_percent_mav = (
-            self.train_percent_mav_accum / self.train_count
-            if self.train_count > 0
-            else 0.0
-        )
-        avg_val_percent_mav = (
-            self.val_percent_mav_accum / self.val_count if self.val_count > 0 else 0.0
-        )
+        avg_train_mae = np.mean(self.train_mae_history)
+        avg_train_accuracy = np.mean(self.train_accuracy_history)  # Average accuracy
+        avg_train_percent_mav = avg_train_mae / self.train_mav * 100
+        avg_val_mae = np.mean(self.val_mae_history)
+        avg_val_percent_mav = avg_val_mae / self.val_mav * 100
+        avg_val_accuracy = np.mean(
+            self.val_accuracy_history
+        )  # Average validation accuracy
 
         # Log epoch-level metrics
-        self.log("avg_train_mae", avg_train_mae)
-        self.log("avg_val_mae", avg_val_mae)
-        self.log("avg_train_percent_mav", avg_train_percent_mav)
-        self.log("avg_val_percent_mav", avg_val_percent_mav)
+        self.log("avg_train_mae", avg_train_mae, prog_bar=False)
+        self.log("avg_train_percent_mav", avg_train_percent_mav, prog_bar=False)
+        self.log(
+            "avg_train_accuracy", avg_train_accuracy, prog_bar=False
+        )  # Log accuracy
+        self.log("avg_val_mae", avg_val_mae, prog_bar=False)
+        self.log("avg_val_percent_mav", avg_val_percent_mav, prog_bar=False)
+        self.log("avg_val_accuracy", avg_val_accuracy, prog_bar=False)  # Log accuracy
 
         # Reset accumulators for the next epoch
-        self.train_mae_accum = 0.0
-        self.val_mae_accum = 0.0
-        self.train_percent_mav_accum = 0.0
-        self.val_percent_mav_accum = 0.0
-        self.train_count = 0
-        self.val_count = 0
+        self.train_mae_history = []
+        self.val_mae_history = []
+        self.train_accuracy_history = []
+        self.val_accuracy_history = []
+
+        if avg_train_mae < self.best_train_avg_mae:
+            self.best_train_avg_mae = avg_train_mae
+            self.best_train_avg_mae_percent_mav = avg_train_percent_mav
+        if avg_train_accuracy > self.best_train_avg_accuracy:
+            self.best_train_avg_accuracy = avg_train_accuracy
+        if avg_val_mae < self.best_val_avg_mae:
+            self.best_val_avg_mae = avg_val_mae
+            self.best_val_avg_mae_percent_mav = avg_val_percent_mav
+        if avg_val_accuracy > self.best_val_avg_accuracy:
+            self.best_val_avg_accuracy = avg_val_accuracy
+        if avg_val_accuracy > self.best_val_avg_accuracy:
+            self.best_val_avg_accuracy = avg_val_accuracy
+
+        self.log("best_train_avg_mae", self.best_train_avg_mae, prog_bar=False)
+        self.log(
+            "best_train_avg_mae_percent_mav",
+            self.best_train_avg_mae_percent_mav,
+            prog_bar=False,
+        )
+        self.log(
+            "best_train_avg_accuracy",
+            self.best_train_avg_accuracy,
+            prog_bar=False,
+        )  # Log best accuracy
+        self.log("best_val_avg_mae", self.best_val_avg_mae, prog_bar=False)
+        self.log(
+            "best_val_avg_mae_percent_mav",
+            self.best_val_avg_mae_percent_mav,
+            prog_bar=False,
+        )
+        self.log(
+            "best_val_avg_accuracy", self.best_val_avg_accuracy, prog_bar=False
+        )  # Log best accuracy
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -373,59 +399,6 @@ class LightningWrapper(pl.LightningModule):
 # ─────────────────────────────────────────────────────────────────────
 # Helper metrics
 # ─────────────────────────────────────────────────────────────────────
-def compute_mpe(
-    loader: DataLoader,
-    model: torch.nn.Module,
-    device: torch.device,
-    sc_sales: MinMaxScaler,  # log‑sales scaler
-    sc_cyc: MinMaxScaler,  # sin/cos scaler  (‑1…1 ↔ 0…1)
-    sales_idx: list[int],
-    cyc_idx: list[int],
-    eps: float = 1e-9,
-) -> float:
-    """
-    Mean Percentage Error on the *full* target vector (sales + cyclical):
-
-        MPE = mean( (ŷ – y) / (y + eps) ).
-
-    • Sales cols are inverse‑scaled → expm1 to get unit sales.
-    • Cyclical cols are inverse‑scaled to get values back in [‑1, 1].
-    """
-    err_sum, count = 0.0, 0
-    model.eval()
-
-    with torch.no_grad():
-        for xb, yb, _ in loader:
-            # ---------- predictions ----------
-            preds_np = model(xb.to(device)).cpu().numpy()
-            preds_inv = preds_np.copy()
-
-            # sales block
-            p_sales_scaled = preds_np[:, sales_idx]
-            p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
-            preds_inv[:, sales_idx] = np.expm1(p_sales_unscaled)
-
-            # cyclical block
-            p_cyc_scaled = preds_np[:, cyc_idx]
-            preds_inv[:, cyc_idx] = sc_cyc.inverse_transform(p_cyc_scaled)
-
-            # ---------- ground truth ----------
-            yb_np = yb.cpu().numpy()
-            yb_inv = yb_np.copy()
-
-            y_sales_scaled = yb_np[:, sales_idx]
-            y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
-            yb_inv[:, sales_idx] = np.expm1(y_sales_unscaled)
-
-            y_cyc_scaled = yb_np[:, cyc_idx]
-            yb_inv[:, cyc_idx] = sc_cyc.inverse_transform(y_cyc_scaled)
-
-            # ---------- percentage error ----------
-            pct_err = (preds_inv - yb_inv) / (yb_inv + eps)  # element‑wise
-            err_sum += pct_err.sum()
-            count += pct_err.size
-
-    return np.abs(err_sum / count)
 
 
 def compute_mav(
@@ -488,41 +461,6 @@ def compute_mae(
     return batch_mae
 
 
-# def compute_mae(
-#     loader: DataLoader,
-#     model: torch.nn.Module,
-#     device: torch.device,
-#     sc_sales: MinMaxScaler,  # fitted on log‑sales columns only
-#     sales_idx: list[int],  # positions of the sales targets in y
-# ) -> float:
-#     """
-#     Mean Absolute Error on SALES ONLY, expressed in original units.
-#     Cyclical targets are excluded from the calculation.
-#     """
-#     abs_sum, count = 0.0, 0
-#     model.eval()
-
-#     with torch.no_grad():
-#         for xb, yb, _ in loader:
-#             # ----- predictions -----
-#             preds_np = model(xb.to(device)).cpu().numpy()  # (batch, n_targets)
-#             p_sales_scaled = preds_np[:, sales_idx]  # take sales block
-#             p_sales_unscaled = sc_sales.inverse_transform(p_sales_scaled)
-#             p_sales_units = np.expm1(p_sales_unscaled)  # back to unit sales
-
-#             # ----- ground truth ----
-#             yb_np = yb.cpu().numpy()
-#             y_sales_scaled = yb_np[:, sales_idx]
-#             y_sales_unscaled = sc_sales.inverse_transform(y_sales_scaled)
-#             y_sales_units = np.expm1(y_sales_unscaled)
-
-#             # ----- accumulate -----
-#             abs_sum += np.abs(p_sales_units - y_sales_units).sum()
-#             count += y_sales_units.size
-
-#     return abs_sum / count
-
-
 def train(
     df: pd.DataFrame,
     weights_df: pd.DataFrame,
@@ -542,137 +480,127 @@ def train(
     num_workers: int = 5,
     enable_progress_bar: bool = True,
     train_logger: bool = False,
-    output_dir: str = "../output/data/",
     model_dir: str = "../output/models/",
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, torch.nn.Module]]:
-    set_seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True)
-    scalers_dir = Path(output_dir) / "scalers"
-    scalers_dir.mkdir(parents=True, exist_ok=True)
-    checkpoints_dir = Path(output_dir) / "checkpoints"
-    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+) -> pd.DataFrame:
 
-    history = []
-    models: Dict[str, torch.nn.Module] = {}
-    x_scalers: Dict[str, MinMaxScaler] = {}
-    y_scalers: Dict[str, MinMaxScaler] = {}
+    pl.seed_everything(seed)
+
+    # Ensure directories exist
+    model_dir_path = Path(model_dir)
+    model_dir_path.mkdir(parents=True, exist_ok=True)
+    scalers_dir = model_dir_path / "scalers"
+    scalers_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints_dir = model_dir_path / "checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    history_dir = model_dir_path / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    history = {}
 
     today_str = datetime.today().strftime("%Y-%m-%d")
     for sid in df["store_item"].unique():
         sub = (
-            df[df["store_item"] == sid]
-            .sort_values("start_date")
-            .reset_index(drop=True)
-            .merge(weights_df, on=item_col, how="left")
+            df[df["store_item"] == sid].sort_values("start_date").reset_index(drop=True)
         )
+        sub = sub.merge(weights_df, on=item_col, how="left")
 
         train_size = int(len(sub) * train_frac)
 
-        # -----------------------------------
         # SPLIT
-        # -----------------------------------
         X_train_df = sub.loc[: train_size - 1, x_feature_cols]
         X_test_df = sub.loc[train_size:, x_feature_cols]
 
-        # ---------------------------------
-        #  X  SIDE  (cyc sin/cos untouched)
-        # ---------------------------------
+        # Prepare input features (cyclical, sales)
         x_sales_idx = [x_feature_cols.index(c) for c in x_sales_features]
         x_cyc_idx = [x_feature_cols.index(c) for c in x_cyclical_features]
+
+        # Prepare sales data
         x_sales_train = np.clip(X_train_df.iloc[:, x_sales_idx].to_numpy(), 0, None)
         x_sales_test = np.clip(X_test_df.iloc[:, x_sales_idx].to_numpy(), 0, None)
         x_sales_train_log = np.log1p(x_sales_train)
         x_sales_test_log = np.log1p(x_sales_test)
 
         x_sales_scaler = MinMaxScaler().fit(x_sales_train_log)
-
-        x_cyc_train = X_train_df.iloc[:, x_cyc_idx].to_numpy()  # still -1…1
+        x_cyc_train = X_train_df.iloc[:, x_cyc_idx].to_numpy()  # cyclical features
         x_cyc_scaler = MinMaxScaler(feature_range=(0, 1)).fit(x_cyc_train)
+
+        # Stack sales and cyclical features for training
         X_train_full = np.hstack(
             [
-                x_sales_scaler.transform(x_sales_train_log),  # scaled log‑sales 0…1
-                x_cyc_scaler.transform(x_cyc_train),  # NEW: cyc 0…1
+                x_sales_scaler.transform(x_sales_train_log),
+                x_cyc_scaler.transform(x_cyc_train),
             ]
         )
-
-        x_cyc_test = X_test_df.iloc[:, x_cyc_idx].to_numpy()
         X_test_full = np.hstack(
             [
                 x_sales_scaler.transform(x_sales_test_log),
-                x_cyc_scaler.transform(x_cyc_test),
+                x_cyc_scaler.transform(X_test_df.iloc[:, x_cyc_idx].to_numpy()),
             ]
         )
 
+        # Save scalers
         pickle.dump(
             x_sales_scaler,
-            open(f"{output_dir}/scalers/{today_str}_x_sales_scaler_{sid}.pkl", "wb"),
+            open(scalers_dir / f"{today_str}_x_sales_scaler_{sid}.pkl", "wb"),
         )
-
         pickle.dump(
             x_cyc_scaler,
-            open(f"{output_dir}/scalers/{today_str}_x_cyc_scaler_{sid}.pkl", "wb"),
+            open(scalers_dir / f"{today_str}_x_cyc_scaler_{sid}.pkl", "wb"),
         )
 
-        # ---------------------------------
-        #  Y  SIDE  (same idea)
-        # ---------------------------------
+        # Prepare output features
         y_sales_train = np.clip(
             sub.loc[: train_size - 1, y_sales_features].to_numpy(), 0, None
         )
         y_sales_test = np.clip(
             sub.loc[train_size:, y_sales_features].to_numpy(), 0, None
         )
-
         y_sales_train_log = np.log1p(y_sales_train)
         y_sales_test_log = np.log1p(y_sales_test)
+
         y_sales_scaler = MinMaxScaler().fit(y_sales_train_log)
-
         y_cyc_train = sub.loc[: train_size - 1, y_cyclical_features].to_numpy()
-
         y_cyc_scaler = MinMaxScaler(feature_range=(0, 1)).fit(y_cyc_train)
 
+        # Stack output features for training
         y_train_full = np.hstack(
             [
                 y_sales_scaler.transform(y_sales_train_log),
-                y_cyc_scaler.transform(y_cyc_train),  # NEW
+                y_cyc_scaler.transform(y_cyc_train),
             ]
         )
-
-        y_cyc_test = sub.loc[train_size:, y_cyclical_features].to_numpy()
         y_test_full = np.hstack(
             [
                 y_sales_scaler.transform(y_sales_test_log),
-                y_cyc_scaler.transform(y_cyc_test),
+                y_cyc_scaler.transform(
+                    sub.loc[train_size:, y_cyclical_features].to_numpy()
+                ),
             ]
         )
 
+        # Save scalers for output
         pickle.dump(
             y_sales_scaler,
-            open(f"{output_dir}/scalers/{today_str}_y_sales_scaler_{sid}.pkl", "wb"),
+            open(scalers_dir / f"{today_str}_y_sales_scaler_{sid}.pkl", "wb"),
         )
         pickle.dump(
             y_cyc_scaler,
-            open(f"{output_dir}/scalers/{today_str}_y_cyc_scaler_{sid}.pkl", "wb"),
+            open(scalers_dir / f"{today_str}_y_cyc_scaler_{sid}.pkl", "wb"),
         )
 
-        # ---------------------------------
-        #  DATASETS & MODEL
-        # ---------------------------------
-
+        # Prepare dataset and dataloaders
         w = sub["weight"].to_numpy(float).reshape(-1, 1)
         w_train, w_test = w[:train_size], w[train_size:]
 
         ds_train = TensorDataset(
-            torch.from_numpy(X_train_full).float(),  # features
-            torch.from_numpy(y_train_full).float(),  # targets
-            torch.from_numpy(w_train).float(),  # weights
+            torch.from_numpy(X_train_full).float(),
+            torch.from_numpy(y_train_full).float(),
+            torch.from_numpy(w_train).float(),
         )
         ld_train = DataLoader(
             ds_train,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=num_workers,
             persistent_workers=True,
         )
@@ -690,153 +618,63 @@ def train(
             persistent_workers=True,
         )
 
-        if model_cls is ShallowNN:
-            base_model = ShallowNN(input_dim=X_train_full.shape[1])
-        elif model_cls is TwoLayerNN:
-            base_model = TwoLayerNN(input_dim=X_train_full.shape[1])
-        elif model_cls is ResidualMLP:
-            base_model = ResidualMLP(input_dim=X_train_full.shape[1])
-        else:
-            raise ValueError(f"Unknown model: {model_cls}")
-
+        # Initialize model
+        base_model = model_cls(input_dim=X_train_full.shape[1])
         base_model.apply(init_weights)
 
-        sales_idx = [label_cols.index(col) for col in y_sales_features]
+        # Compute MAV (Mean Absolute Value)
+        sales_idx = [label_cols.index(c) for c in y_sales_features]
         train_mav = compute_mav(ld_train, y_sales_scaler, sales_idx)
         val_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
 
+        # Initialize Lightning model
+        model_name = f"{today_str}_model_{sid}"
         lightning_model = LightningWrapper(
             base_model,
+            model_name=model_name,
             lr=lr,
             y_sales_scaler=y_sales_scaler,
             sales_idx=sales_idx,
             train_mav=train_mav,
             val_mav=val_mav,
         )
+
+        # ModelCheckpoint to monitor best_train_avg_mae
         checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",  # The metric you want to monitor
-            mode="min",  # 'min' means the model with the lowest val_loss will be saved
-            save_top_k=1,  # Save only the best model
-            dirpath=Path(model_dir) / "checkpoints",  # Directory to save checkpoints
-            filename=f"{today_str}_model_{sid}",  # Filename pattern for the saved checkpoint
+            monitor="best_train_avg_mae",  # Monitor the best training MAE
+            mode="min",  # Save the model with the lowest train MAE
+            save_top_k=1,
+            dirpath=checkpoints_dir,
+            filename=f"{today_str}_model_{model_name}",  # Model file naming pattern
         )
 
         trainer = pl.Trainer(
+            deterministic=True,
             max_epochs=epochs,
             logger=train_logger,
             enable_progress_bar=enable_progress_bar,
             callbacks=[checkpoint_callback],
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
         )
+
+        # Train the model
         trainer.fit(lightning_model, ld_train, ld_test)
 
-        model = lightning_model.model.to(device)
+        # Save training history for the model
+        history[model_name] = {
+            "best_train_avg_mae": lightning_model.best_train_avg_mae,
+            "best_val_avg_mae": lightning_model.best_val_avg_mae,
+            "best_train_avg_accuracy": lightning_model.best_train_avg_accuracy,
+            "best_val_avg_accuracy": lightning_model.best_val_avg_accuracy,
+            "best_train_avg_percent_mav": lightning_model.best_train_avg_percent_mav,
+            "best_val_avg_percent_mav": lightning_model.best_val_avg_percent_mav,
+        }
 
-        # train_loss = compute_rmsle_manual(ld_train, model, device)
-        # test_loss = compute_rmsle_manual(ld_test, model, device)
-
-        train_loss = trainer.logged_metrics["train_loss"]  # From training step
-        val_loss = trainer.logged_metrics["val_loss"]  # From validation step
-        avg_train_mae = trainer.logged_metrics["avg_train_mae"]
-        avg_val_mae = trainer.logged_metrics["avg_val_mae"]
-        avg_train_percent_mav = trainer.logged_metrics["avg_train_percent_mav"]
-        avg_val_percent_mav = trainer.logged_metrics["avg_val_percent_mav"]
-
-        # train_mae = compute_mae(ld_train, model, device, y_sales_scaler, sales_idx)
-        # train_percent_mav = (train_mae / train_mav) * 100 if train_mav else float("inf")
-        # val_mae = compute_mae(ld_test, model, device, y_sales_scaler, sales_idx)
-        # val_percent_mav = (val_mae / val_mav) * 100 if val_mav else float("inf")
-
-        # sales_idx = [label_cols.index(c) for c in y_sales_features]
-        # cyc_idx = [label_cols.index(col) for col in y_cyclical_features]
-        # train_mpe = compute_mpe(
-        #     ld_train,
-        #     model,
-        #     device,
-        #     sc_sales=y_sales_scaler,
-        #     sc_cyc=y_cyc_scaler,
-        #     sales_idx=sales_idx,
-        #     cyc_idx=cyc_idx,
-        # )
-
-        # val_mpe = compute_mpe(
-        #     ld_test,
-        #     model,
-        #     device,
-        #     sc_sales=y_sales_scaler,
-        #     sc_cyc=y_cyc_scaler,
-        #     sales_idx=sales_idx,
-        #     cyc_idx=cyc_idx,
-        # )
-
-        history.append(
-            {
-                "store_item": sid,
-                "epoch": epochs,
-                "train_loss": train_loss,
-                "avg_train_mae": avg_train_mae,
-                "avg_train_percent_mav": avg_train_percent_mav,
-                "val_loss": val_loss,
-                "avg_val_mae": avg_val_mae,
-                "avg_val_percent_mav": avg_val_percent_mav,
-            }
-        )
-
-        # logger.info(
-        #     f"[{sid}] Finished training "
-        #     f"train_loss {train_loss:.4f}, "
-        #     f"train_MAE {train_mae:.4f}, "
-        #     f"train_%MAV {train_percent_mav:.4f}, "
-        #     f"val_loss {val_loss:.4f}, "
-        #     f"val_MAE {val_mae:.4f}, "
-        #     f"val_%MAV {val_percent_mav:.4f}, "
-        #     f"train_MPE {train_mpe:.4f}, val_MPE {val_mpe:.4f}"
-        # )
-
-        save_path = os.path.join(model_dir, f"{today_str}_model_{sid}.pth")
-        torch.save(
-            {
-                "sid": sid,
-                "model_state_dict": lightning_model.model.state_dict(),
-                "x_feature_cols": x_feature_cols,
-                "y_feature_cols": label_cols,
-                "train_frac": train_frac,
-                "epochs": epochs,
-            },
-            save_path,
-        )
-        # torch.save(
-        #     {
-        #         "sid": sid,
-        #         "model_state_dict": model.cpu().state_dict(),
-        #         "x_feature_cols": x_feature_cols,
-        #         "y_feature_cols": label_cols,
-        #         "train_frac": train_frac,
-        #         "epochs": epochs,
-        #     },
-        #     save_path,
-        # )
-        logger.info(f"Saved model for {sid} to {save_path}")
-
-        models[sid] = model.cpu()
-        x_scalers[sid] = x_sales_scaler
-        y_scalers[sid] = y_sales_scaler
-
-    hist_df = pd.DataFrame(history)
-    summary_df = (
-        hist_df.groupby("store_item")
-        .agg(
-            final_train_loss=("train_loss", "last"),
-            final_val_loss=("val_loss", "last"),
-            final_avg_train_mae=("avg_train_mae", "last"),
-            final_avg_val_mae=("avg_val_mae", "last"),
-            final_avg_train_percent_mav=("avg_train_percent_mav", "last"),
-            final_avg_val_percent_mav=("avg_val_percent_mav", "last"),
-        )
-        .reset_index()
-    )
-
-    return hist_df, summary_df, models
+    # Save history to file
+    history_save_path = history_dir / f"{today_str}_{model_name}_history.xlsx"
+    history = pd.DataFrame(history)
+    history.to_excel(history_save_path, index=False)
+    return history
 
 
 def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
@@ -863,16 +701,16 @@ def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
 
 
 def load_scalers(
-    output_dir: str = "../output/data/", date_str: str = ""
+    model_dir: str = "../output/data/", date_str: str = ""
 ) -> Tuple[Dict[str, MinMaxScaler], Dict[str, MinMaxScaler]]:
     x_scalers = {}
     y_scalers = {}
 
-    for filename in os.listdir(output_dir):
+    for filename in os.listdir(model_dir):
         if date_str and not filename.startswith(f"{date_str}"):
             continue
 
-        full_path = os.path.join(output_dir, filename)
+        full_path = os.path.join(model_dir, filename)
         parts = filename.replace(".pkl", "").split("_")
 
         if filename.startswith(f"{date_str}_x_scaler_"):

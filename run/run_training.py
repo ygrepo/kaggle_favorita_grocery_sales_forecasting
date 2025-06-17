@@ -28,30 +28,26 @@ sys.path.insert(0, str(project_root))
 from src.model_utils import (
     train,
     ResidualMLP,
-    load_scalers,
-    compute_mae,
-    compute_mav,
-    compute_mpe,
 )
 from src.utils import build_feature_and_label_cols
 
 
-def setup_logging(output_dir: Path, log_level: str = "INFO") -> logging.Logger:
+def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
     """Set up logging configuration.
 
     Args:
-        output_dir: Directory to save log files
+        log_dir: Directory to save log files
         log_level: Logging level (e.g., 'INFO', 'DEBUG')
 
     Returns:
         Configured logger instance
     """
     # Create output directory if it doesn't exist
-    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     # Set up log file path with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = output_dir / f"training_{timestamp}.log"
+    log_file = log_dir / f"training_{timestamp}.log"
 
     # Configure logging
     logging.basicConfig(
@@ -110,7 +106,6 @@ def load_weights(weights_fn: Path) -> pd.DataFrame:
 def train_model(
     df: pd.DataFrame,
     weights_df: pd.DataFrame,
-    output_dir: Path,
     model_dir: Path,
     window_size: int = 16,
     batch_size: int = 32,
@@ -152,7 +147,6 @@ def train_model(
         f"Training with {len(x_feature_cols)} features and {len(label_cols)} labels"
     )
     # Ensure output directories exist
-    output_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # Train the model
@@ -172,7 +166,6 @@ def train_model(
         epochs=epochs,
         seed=seed,
         model_cls=ResidualMLP,
-        output_dir=str(output_dir),
         model_dir=str(model_dir),
     )
 
@@ -187,25 +180,25 @@ def parse_args():
     parser.add_argument(
         "--data-fn",
         type=str,
-        default="../output/data/train_top_10_store_10_item_sales_cyclical_features_16_days_X_y.xlsx",
+        default="./output/data/20250611_train_top_10_store_10_item_sales_cyclical_features_16_days_X_y.xlsx",
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
         "--weights-fn",
         type=str,
-        default="../output/data/top_10_item_weights.xlsx",
+        default="./output/data/top_10_item_weights.xlsx",
         help="Path to weights file (relative to project root)",
     )
     parser.add_argument(
-        "--output-dir",
+        "--log-dir",
         type=str,
-        default="../output/training",
+        default="./output/logs",
         help="Directory to save training outputs (relative to project root)",
     )
     parser.add_argument(
         "--model-dir",
         type=str,
-        default="../output/models",
+        default="./output/models",
         help="Directory to save trained models (relative to project root)",
     )
     parser.add_argument(
@@ -258,11 +251,11 @@ def main():
     project_root = Path(__file__).parent.parent
     data_fn = (project_root / args.data_fn).resolve()
     weights_fn = (project_root / args.weights_fn).resolve()
-    output_dir = (project_root / args.output_dir).resolve()
     model_dir = (project_root / args.model_dir).resolve()
+    log_dir = (project_root / args.log_dir).resolve()
 
     # Set up logging
-    logger = setup_logging(output_dir, args.log_level)
+    logger = setup_logging(log_dir, args.log_level)
 
     try:
         # Log configuration
@@ -270,7 +263,6 @@ def main():
         logger.info(f"  Project root: {project_root}")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Weights fn: {weights_fn}")
-        logger.info(f"  Output directory: {output_dir}")
         logger.info(f"  Model directory: {model_dir}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Batch size: {args.batch_size}")
@@ -284,11 +276,14 @@ def main():
         # Load weights
         weights_df = load_weights(weights_fn)
 
+        # Select top 10 store_items
+        store_item = "44_364606"
+        logger.info(f"Selected store_item: {store_item}")
+
         # Train model
         train_model(
-            df=df,
+            df=df.query("store_item == @store_item").reset_index(drop=True),
             weights_df=weights_df,
-            output_dir=output_dir,
             model_dir=model_dir,
             window_size=args.window_size,
             batch_size=args.batch_size,
