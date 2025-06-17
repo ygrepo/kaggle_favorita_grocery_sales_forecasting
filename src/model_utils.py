@@ -318,10 +318,10 @@ class LightningWrapper(pl.LightningModule):
         return loss
 
     def on_epoch_start(self) -> None:
-        print(f"Model: {self.model_name}-Epoch {self.current_epoch} started!")
+        print(f"\nModel: {self.model_name}-Epoch {self.current_epoch} started!")
 
     def on_train_epoch_end(self) -> None:
-        print(f"Model: {self.model_name}-Epoch {self.current_epoch} ended!")
+        print(f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!")
         # Compute average metrics for the epoch
         avg_train_mae = np.mean(self.train_mae_history)
         avg_train_accuracy = np.mean(self.train_accuracy_history)  # Average accuracy
