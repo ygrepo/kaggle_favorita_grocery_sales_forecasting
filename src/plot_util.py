@@ -5,6 +5,13 @@ import numpy as np
 import pandas as pd
 from scipy.stats import sem, t
 
+from matplotlib.ticker import MaxNLocator
+from typing import Sequence, Union, Mapping
+
+Number = Union[int, float]
+
+from src.utils import reorder_data
+
 
 def plot_loss_with_comparison(
     hist_df_current,
@@ -635,12 +642,6 @@ def plot_spectral_biclustering_heatmap(results_df, fn: str = None):
     plt.close()
 
 
-from matplotlib.ticker import MaxNLocator
-from typing import Sequence, Union, Mapping
-
-Number = Union[int, float]
-
-
 def plot_spectral_clustering_elbows(
     result_dfs: Sequence[pd.DataFrame],
     *,
@@ -796,3 +797,116 @@ def plot_spectral_clustering_elbows(
         fig.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close(fig)
+
+
+def plot_heatmap_with_cluster_boundaries(
+    matrix_ordered, row_labels, col_labels, label_in_cell=False
+):
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    row_labels = np.asarray(row_labels)
+    col_labels = np.asarray(col_labels)
+
+    # Construct (row_id, col_id) cluster identifier matrix
+    cluster_ids = np.array(
+        [
+            [(row_labels[i], col_labels[j]) for j in range(len(col_labels))]
+            for i in range(len(row_labels))
+        ]
+    )
+
+    if label_in_cell:
+        annot = np.array([[f"R{r}-C{c}" for r, c in row] for row in cluster_ids])
+        fmt = ""
+    else:
+        annot = matrix_ordered
+        fmt = ".1f"
+
+    sns.heatmap(
+        matrix_ordered,
+        cmap="viridis",
+        linewidths=0.5,
+        linecolor="white",
+        cbar_kws={"label": "unit sales"},
+        annot=annot,
+        fmt=fmt,
+        annot_kws={"fontsize": 7, "color": "white", "fontweight": "bold"},
+        ax=ax,
+    )
+
+    # Find boundaries between bicluster blocks
+    for i in range(1, matrix_ordered.shape[0]):
+        if not np.all(cluster_ids[i, :] == cluster_ids[i - 1, :]):
+            ax.axhline(i, color="red", linewidth=1.5)
+
+    for j in range(1, matrix_ordered.shape[1]):
+        if not np.all(cluster_ids[:, j] == cluster_ids[:, j - 1]):
+            ax.axvline(j, color="red", linewidth=1.5)
+
+    ax.set_xlabel("Store", fontsize=13, fontweight="bold")
+    ax.set_ylabel("Item", fontsize=13, fontweight="bold")
+    plt.title("Unit Sales with Cluster Boundaries")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_with_cluster_boundaries_from_model(
+    data, model, title="Reordered Bicluster Matrix", max_ticks=20
+):
+    """
+    Plot a reordered data matrix with red lines indicating bicluster boundaries.
+    Shows original row and column indices on the reordered matrix.
+
+    Parameters:
+    - data: original 2D numpy array
+    - model: must have .row_labels_ and .column_labels_ attributes
+    - title: plot title
+    - max_ticks: maximum number of ticks to show on each axis
+    """
+    if hasattr(model, "row_labels_") and hasattr(model, "column_labels_"):
+        row_labels = model.row_labels_
+        col_labels = model.column_labels_
+    else:
+        raise ValueError("Model must have row_labels_ and column_labels_ attributes.")
+
+    # Reorder data
+    # row_order = np.argsort(row_labels)
+    # col_order = np.argsort(col_labels)
+    # reordered_data = data[np.ix_(row_order, col_order)]
+    reordered_data, row_order, col_order = reorder_data(data, row_labels, col_labels)
+
+    # Boundary cuts
+    row_cuts = np.where(np.diff(row_labels[row_order]) != 0)[0] + 1
+    col_cuts = np.where(np.diff(col_labels[col_order]) != 0)[0] + 1
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 8))
+    im = ax.imshow(reordered_data, aspect="auto", cmap=plt.cm.Blues)
+    ax.set_title(title)
+
+    for r in row_cuts:
+        ax.axhline(r - 0.5, color="red", linewidth=1)
+    for c in col_cuts:
+        ax.axvline(c - 0.5, color="red", linewidth=1)
+
+    # Annotate ticks with original indices
+    row_ticks = np.linspace(
+        0, len(row_order) - 1, min(len(row_order), max_ticks), dtype=int
+    )
+    col_ticks = np.linspace(
+        0, len(col_order) - 1, min(len(col_order), max_ticks), dtype=int
+    )
+
+    ax.set_yticks(row_ticks)
+    ax.set_yticklabels(row_order[row_ticks], fontsize=8)
+
+    ax.set_xticks(col_ticks)
+    ax.set_xticklabels(col_order[col_ticks], fontsize=8, rotation=90)
+
+    ax.set_xlabel("Original Column Index")
+    ax.set_ylabel("Original Row Index")
+
+    fig.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
+    plt.tight_layout()
+    plt.show()

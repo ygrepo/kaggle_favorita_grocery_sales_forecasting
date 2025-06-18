@@ -827,3 +827,9 @@ def compute_spectral_clustering_cv_scores(
             )
 
     return pd.DataFrame(results)
+
+
+def reorder_data(data, row_labels, col_labels):
+    row_order = np.argsort(row_labels)
+    col_order = np.argsort(col_labels)
+    return data[np.ix_(row_order, col_order)], row_order, col_order
