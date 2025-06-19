@@ -639,7 +639,7 @@ def plot_spectral_biclustering_heatmap(results_df, fn: str = None):
     if fn:
         plt.savefig(fn, dpi=300)
     plt.show()
-    plt.close()
+    plt.close(fig)
 
 
 def plot_spectral_clustering_elbows(
@@ -800,10 +800,15 @@ def plot_spectral_clustering_elbows(
 
 
 def plot_heatmap_with_cluster_boundaries(
-    matrix_ordered, row_labels, col_labels, label_in_cell=False
+    title: str,
+    matrix_ordered,
+    row_labels,
+    col_labels,
+    label_in_cell=False,
+    fn: str | None = None,
 ):
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(6, 6))
 
     row_labels = np.asarray(row_labels)
     col_labels = np.asarray(col_labels)
@@ -846,13 +851,16 @@ def plot_heatmap_with_cluster_boundaries(
 
     ax.set_xlabel("Store", fontsize=13, fontweight="bold")
     ax.set_ylabel("Item", fontsize=13, fontweight="bold")
-    plt.title("Unit Sales with Cluster Boundaries")
+    plt.title(title)
     plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()
+    plt.close(fig)
 
 
 def plot_with_cluster_boundaries_from_model(
-    data, model, title="Reordered Bicluster Matrix", max_ticks=20
+    data, model, title="Reordered Bicluster Matrix", max_ticks=20, fn: str = None
 ):
     """
     Plot a reordered data matrix with red lines indicating bicluster boundaries.
@@ -871,9 +879,6 @@ def plot_with_cluster_boundaries_from_model(
         raise ValueError("Model must have row_labels_ and column_labels_ attributes.")
 
     # Reorder data
-    # row_order = np.argsort(row_labels)
-    # col_order = np.argsort(col_labels)
-    # reordered_data = data[np.ix_(row_order, col_order)]
     reordered_data, row_order, col_order = reorder_data(data, row_labels, col_labels)
 
     # Boundary cuts
@@ -881,7 +886,7 @@ def plot_with_cluster_boundaries_from_model(
     col_cuts = np.where(np.diff(col_labels[col_order]) != 0)[0] + 1
 
     # Plot
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(reordered_data, aspect="auto", cmap=plt.cm.Blues)
     ax.set_title(title)
 
@@ -909,4 +914,7 @@ def plot_with_cluster_boundaries_from_model(
 
     fig.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
     plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300)
     plt.show()
+    plt.close(fig)

@@ -15,12 +15,14 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         max_iter=100,
         tol=1e-4,
         random_state=None,
+        norm="l2",
     ):
         self.n_row_clusters = n_row_clusters
         self.n_col_clusters_list = n_col_clusters_list
         self.max_iter = max_iter
         self.tol = tol
         self.random_state = random_state
+        self.norm = norm
 
     def fit(self, X):
         self.U_, self.V_list_, self.C_blocks_, self.loss_ = generalized_double_kmeans(
@@ -30,6 +32,7 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
             max_iter=self.max_iter,
             tol=self.tol,
             random_state=self.random_state,
+            norm=self.norm,
         )
 
         self.row_labels_ = np.argmax(self.U_, axis=1)
@@ -73,8 +76,9 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
 
             for q in range(Qp):
                 col_mask = Vp[:, q] == 1  # (n_cols,)
-                rows.append(row_mask)
-                cols.append(col_mask)
+                if np.any(row_mask) and np.any(col_mask):  # optional safeguard
+                    rows.append(row_mask)
+                    cols.append(col_mask)
 
         return np.array(rows), np.array(cols)
 
@@ -87,20 +91,54 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         return self.get_biclusters()
 
 
+def huber_loss(diff, delta=1.0):
+    """
+    Compute Huber loss for a difference array.
+
+    Parameters:
+    - diff: np.ndarray, difference between prediction and actual
+    - delta: threshold between L2 and L1 behavior
+
+    Returns:
+    - np.ndarray of same shape as diff
+    """
+    abs_diff = np.abs(diff)
+    quadratic = np.minimum(abs_diff, delta)
+    linear = abs_diff - quadratic
+    return 0.5 * quadratic**2 + delta * linear
+
+
 def initialize_partitions(I, J, P, Q_list, random_state=None):
+    """
+    Randomly initialize row and column cluster assignments.
+
+    Parameters:
+    - I: number of rows in the data matrix
+    - J: number of columns in the data matrix
+    - P: number of row clusters
+    - Q_list: list of number of column clusters per row cluster (length P)
+    - random_state: optional seed for reproducibility
+
+    Returns:
+    - U: binary matrix of shape (I, P), row-cluster assignments
+    - V_list: list of binary matrices (J, Qp), one for each row cluster p
+    """
     rng = np.random.default_rng(random_state)
-    # U: (I, P)
+
+    # Initialize U: assign each row to a random row cluster
     U = np.zeros((I, P), dtype=int)
     for i in range(I):
         U[i, rng.integers(P)] = 1
+
+    # Initialize V_list: for each row cluster p, assign each column to one of Qp column clusters
     V_list = []
     for p in range(P):
         Qp = Q_list[p]
-        # Vp: (J, Qp)
         Vp = np.zeros((J, Qp), dtype=int)
         for j in range(J):
             Vp[j, rng.integers(Qp)] = 1
         V_list.append(Vp)
+
     return U, V_list
 
 
@@ -142,30 +180,52 @@ def update_C(X, U, V_list):
 
 
 # Eq. 14
-def update_U(X, C_blocks, V_list):
+def update_U(X, C_blocks, V_list, norm="l2"):
+    """
+    Update row-cluster assignment matrix U based on reconstruction error.
+
+    Parameters:
+    - X: data matrix of shape (I, J)
+    - C_blocks: list of centroids, each of shape (1, Qp)
+    - V_list: list of column cluster assignment matrices, each of shape (J, Qp)
+
+    Returns:
+    - new_U: binary matrix of shape (I, P), indicating row-cluster assignment
+    """
     I, J = X.shape
-    P = len(C_blocks)
-    errors = np.zeros((I, P))
+    P = len(C_blocks)  # number of row clusters
+    errors = np.zeros((I, P))  # error of assigning each row to each cluster
 
     for p in range(P):
-        cp = C_blocks[p]  # (1, Qp)
-        Vp = V_list[p]  # (J, Qp)
-        reconstruction = cp @ Vp.T  # (1, J)
-        reconstruction = np.tile(reconstruction, (I, 1))  # (I, J)
-        diff = X - reconstruction
-        errors[:, p] = np.sum(diff**2, axis=1)
+        cp = C_blocks[p]  # centroid for cluster p (1, Qp)
+        Vp = V_list[p]  # column assignment for cluster p (J, Qp)
 
-    # Assign each row to cluster with min error
+        # Reconstruct entire data matrix using cluster p's centroid and column assignments
+        reconstructed = cp @ Vp.T  # shape: (1, J)
+        reconstructed = np.tile(reconstructed, (I, 1))  # broadcast to (I, J)
+
+        # Compute squared reconstruction error for each row
+        diff = X - reconstructed  # shape: (I, J)
+        if norm == "l2":
+            errors[:, p] = np.sum(diff**2, axis=1)  # shape: (I,)
+        elif norm == "l1":
+            errors[:, p] = np.sum(np.abs(diff), axis=1)  # shape: (I,)
+        elif norm == "huber":
+            errors[:, p] = np.sum(huber_loss(diff), axis=1)  # shape: (I,)
+        else:
+            raise ValueError("Unsupported norm type: use 'l1' or 'l2'")
+
+    # Assign each row to the cluster with minimum reconstruction error
     new_U = np.zeros((I, P), dtype=int)
-    assignments = np.argmin(errors, axis=1)
-    new_U[np.arange(I), assignments] = 1
+    assignments = np.argmin(errors, axis=1)  # best cluster index for each row
+    new_U[np.arange(I), assignments] = 1  # binary encoding of cluster assignment
 
-    # Ensure all row clusters are non-empty
-    counts = new_U.sum(axis=0)
-    missing = np.where(counts == 0)[0]
+    # Ensure no cluster is left empty
+    cluster_counts = new_U.sum(axis=0)
+    empty_clusters = np.where(cluster_counts == 0)[0]
 
-    for p in missing:
-        # Reassign row with highest current error to this empty cluster
+    for p in empty_clusters:
+        # Find the row with the highest error for this cluster and assign it there
         worst_row = np.argmax(errors[:, p])
         new_U[worst_row] = 0
         new_U[worst_row, p] = 1
@@ -173,37 +233,67 @@ def update_U(X, C_blocks, V_list):
     return new_U
 
 
-def update_V(X, U, C_blocks, Q_list):
-    J = X.shape[1]
-    P = U.shape[1]
-    V_list = []
+def update_V(X, U, C_blocks, Q_list, norm="l2"):
+    """
+    Update column-cluster assignment matrices V_list based on current row-cluster assignments and centroids.
+
+    Parameters:
+    - X: data matrix of shape (I, J)
+    - U: binary row-cluster assignment matrix of shape (I, P)
+    - C_blocks: list of centroids for each row cluster, each of shape (1, Qp)
+    - Q_list: list of number of column clusters for each row cluster (length P)
+
+    Returns:
+    - V_list: list of updated binary column-cluster assignment matrices (each of shape (J, Qp))
+    """
+    J = X.shape[1]  # number of columns in data
+    P = U.shape[1]  # number of row clusters
+    V_list = []  # output: list of (J, Qp) matrices
 
     for p in range(P):
-        Qp = Q_list[p]
-        Vp = np.zeros((J, Qp), dtype=int)
+        Qp = Q_list[p]  # number of column clusters for row cluster p
+        Vp = np.zeros(
+            (J, Qp), dtype=int
+        )  # initialize column assignment matrix for cluster p
+
+        # Get rows assigned to this row cluster
         cluster_rows = np.where(U[:, p] == 1)[0]
 
+        # Skip if no rows assigned or no column clusters requested
         if len(cluster_rows) == 0 or Qp == 0:
             V_list.append(Vp)
             continue
 
-        Xp = X[cluster_rows]  # (n_rows_p, J)
-        cp = C_blocks[p]  # (1, Qp)
+        # Subset of X restricted to rows in row-cluster p
+        Xp = X[cluster_rows]  # shape: (n_rows_p, J)
+        cp = C_blocks[p]  # centroid block for cluster p, shape: (1, Qp)
 
+        # Compute error for assigning each column to each of the Qp column clusters
         errors = np.empty((J, Qp))
         for j in range(J):
-            # Correct shape: (n_rows_p, 1) - (1, Qp) → (n_rows_p, Qp)
-            errors[j] = np.sum((Xp[:, j][:, None] - cp) ** 2, axis=0)
+            if norm == "l2":
+                # For column j, compute squared error with respect to each centroid in cp
+                # Xp[:, j] is (n_rows_p,), cp is (1, Qp), broadcasting gives (n_rows_p, Qp)
+                errors[j] = np.sum((Xp[:, j][:, None] - cp) ** 2, axis=0)
+            elif norm == "l1":
+                errors[j] = np.sum(np.abs(Xp[:, j][:, None] - cp), axis=0)
+            elif norm == "huber":
+                errors[j] = np.sum(huber_loss(Xp[:, j][:, None] - cp), axis=0)
+            else:
+                raise ValueError("Unsupported norm type: use 'l1' or 'l2'")
 
+        # Assign each column j to the column cluster q with minimum reconstruction error
         assignments = np.argmin(errors, axis=1)
         for j, q in enumerate(assignments):
             Vp[j, q] = 1
 
-        # Ensure all Qp clusters are represented
+        # Ensure all Qp column clusters are assigned at least one column
         counts = Vp.sum(axis=0)
         missing = np.where(counts == 0)[0]
+
         for q in missing:
-            j = np.argmax(errors[:, q])  # column with max error for q
+            # Assign to cluster q the column with the highest error for q
+            j = np.argmax(errors[:, q])
             Vp[j] = 0
             Vp[j, q] = 1
 
@@ -212,28 +302,49 @@ def update_V(X, U, C_blocks, Q_list):
     return V_list
 
 
-def compute_loss(X, U, C_blocks, V_list):
+def compute_loss(X, U, C_blocks, V_list, norm="l2"):
+    """
+    Compute the reconstruction loss for the current clustering configuration.
+
+    Parameters:
+    - X: data matrix of shape (I, J)
+    - U: binary matrix of shape (I, P), row-cluster assignments
+    - C_blocks: list of centroid blocks, each of shape (1, Qp)
+    - V_list: list of binary column-cluster matrices (J, Qp)
+
+    Returns:
+    - loss: total squared reconstruction error
+    """
     P = U.shape[1]  # number of row clusters
     loss = 0
 
     for p in range(P):
-        up = U[:, p][:, None]  # (I, 1)
-        Vp = V_list[p]  # (J, Qp)
-        cp = C_blocks[p]  # (1, Qp)
+        up = U[:, p][:, None]  # (I, 1): mask for rows in cluster p
+        Vp = V_list[p]  # (J, Qp): column-cluster assignment matrix
+        cp = C_blocks[p]  # (1, Qp): cluster p’s column centroids
 
-        # Compute reconstruction for assigned rows
-        reconstruction = up @ (cp @ Vp.T)  # (I, J)
+        # Reconstruct the block for cluster p: up @ (cp @ Vp.T) → shape (I, J)
+        reconstruction = up @ (cp @ Vp.T)
 
-        # Only keep rows assigned to this cluster (up == 1), else zero out
+        # Only compute error for rows assigned to cluster p
         mask = up == 1
-        diff = (X - reconstruction) * mask  # (I, J)
+        diff = (X - reconstruction) * mask  # zero out rows not in cluster p
 
-        loss += np.sum(diff**2)
+        if norm == "l2":
+            loss += np.sum(diff**2)
+        elif norm == "l1":
+            loss += np.sum(np.abs(diff))
+        elif norm == "huber":
+            loss += np.sum(huber_loss(diff))
+        else:
+            raise ValueError("Unsupported norm type: use 'l1' or 'l2'")
 
     return loss
 
 
-def generalized_double_kmeans(X, P, Q_list, max_iter=100, tol=1e-4, random_state=None):
+def generalized_double_kmeans(
+    X, P, Q_list, max_iter=100, tol=1e-4, random_state=None, norm="l2"
+):
     I, J = X.shape
     U, V_list = initialize_partitions(I, J, P, Q_list, random_state=random_state)
     prev_loss = np.inf
@@ -242,9 +353,9 @@ def generalized_double_kmeans(X, P, Q_list, max_iter=100, tol=1e-4, random_state
         for idx, cp in enumerate(C_blocks):
             if np.any(np.isnan(cp)):
                 print(f"NaNs in C_blocks[{idx}]")
-        U = update_U(X, C_blocks, V_list)
-        V_list = update_V(X, U, C_blocks, Q_list)
-        loss = compute_loss(X, U, C_blocks, V_list)
+        U = update_U(X, C_blocks, V_list, norm=norm)
+        V_list = update_V(X, U, C_blocks, Q_list, norm=norm)
+        loss = compute_loss(X, U, C_blocks, V_list, norm=norm)
         print(
             f"Iteration {i}: Loss={loss:.2e}, max X={X.max()}, max cp={max(np.max(c) for c in C_blocks)}"
         )
