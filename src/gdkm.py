@@ -491,3 +491,61 @@ def suggest_optimal_pq(results_df, criterion="silhouette", penalty_lambda=0.0):
     best_p = df.loc[idx, "P"]
     best_q = df.loc[idx, "Q"]
     return (int(best_p), int(best_q)), best_score
+
+
+import umap
+import hdbscan
+from sklearn.preprocessing import StandardScaler
+
+
+def estimate_pq_with_umap_hdbscan(
+    X, min_cluster_size=5, n_neighbors=15, min_dist=0.1, random_state=42, scale=True
+):
+    """
+    Estimate the number of row (P) and column (Q) clusters using UMAP + HDBSCAN.
+
+    Parameters:
+        X : ndarray of shape (I, J)
+            Input data matrix.
+        min_cluster_size : int
+            Minimum cluster size for HDBSCAN.
+        n_neighbors : int
+            UMAP neighborhood size.
+        min_dist : float
+            Minimum UMAP distance parameter.
+        random_state : int
+            Seed for reproducibility.
+
+    Returns:
+        P_est : int
+            Estimated number of row clusters.
+        Q_est : int
+            Estimated number of column clusters.
+    """
+    I, J = X.shape
+
+    # Normalize rows and columns
+    if scale:
+        row_scaled = StandardScaler().fit_transform(X)
+        col_scaled = StandardScaler().fit_transform(X.T)
+    else:
+        row_scaled = X
+        col_scaled = X.T
+
+    # UMAP embedding
+    row_embed = umap.UMAP(
+        n_neighbors=n_neighbors, min_dist=min_dist, random_state=random_state
+    ).fit_transform(row_scaled)
+    col_embed = umap.UMAP(
+        n_neighbors=n_neighbors, min_dist=min_dist, random_state=random_state
+    ).fit_transform(col_scaled)
+
+    # HDBSCAN clustering
+    row_clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size).fit(row_embed)
+    col_clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size).fit(col_embed)
+
+    # Count valid (non-noise) clusters
+    P_est = len(set(row_clusterer.labels_)) - (1 if -1 in row_clusterer.labels_ else 0)
+    Q_est = len(set(col_clusterer.labels_)) - (1 if -1 in col_clusterer.labels_ else 0)
+
+    return P_est, Q_est
