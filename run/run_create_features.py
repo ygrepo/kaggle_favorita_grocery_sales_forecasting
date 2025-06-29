@@ -231,11 +231,12 @@ def main():
         # Load and preprocess data
         df = load_data(data_fn)
         cluster_df = load_cluster(cluster_fn)
-        store_item = "44_364606"
-        logger.info(f"Selected store_item: {store_item}")
+        # store_item = "44_364606"
+        # logger.info(f"Selected store_item: {store_item}")
 
         final_df = create_features(
-            df=df[df["store_item"] == store_item],
+            df,
+            # df=df[df["store_item"] == store_item],
             cluster_df=cluster_df,
             window_size=window_size,
             debug=args.debug,
