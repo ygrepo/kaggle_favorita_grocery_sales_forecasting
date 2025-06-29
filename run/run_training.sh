@@ -55,22 +55,6 @@ echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Model type: $MODEL_TYPE" | tee -a "$LOG_FILE"
 
-# # Activate virtual environment if it exists
-# if [ -f "${VENV_PATH}/bin/activate" ]; then
-#     echo "Activating virtual environment at ${VENV_PATH}" | tee -a "$LOG_FILE"
-#     source "${VENV_PATH}/bin/activate"
-# else
-#     echo "No virtual environment found at ${VENV_PATH}, using system Python" | tee -a "$LOG_FILE"
-# fi
-
-# # Check Python version
-# PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-# echo "Using Python ${PYTHON_VERSION}" | tee -a "$LOG_FILE"
-
-# # Install project in development mode
-# echo "Installing project in development mode..." | tee -a "$LOG_FILE"
-# pip install -e . 2>&1 | tee -a "$LOG_FILE"
-
 # Run the training script
 set +e  # Disable exit on error to handle the error message
 echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"

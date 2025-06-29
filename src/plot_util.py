@@ -8,6 +8,8 @@ from scipy.stats import sem, t
 from matplotlib.ticker import MaxNLocator
 from typing import Sequence, Union, Mapping
 
+import scipy.cluster.hierarchy as sch
+
 Number = Union[int, float]
 
 from src.utils import reorder_data
@@ -916,5 +918,83 @@ def plot_with_cluster_boundaries_from_model(
     plt.tight_layout()
     if fn:
         plt.savefig(fn, dpi=300)
+    plt.show()
+    plt.close(fig)
+
+
+def plot_bicluster_grid(
+    matrix,
+    row_masks,
+    col_masks,
+    figsize=(20, 15),
+    show_labels=False,
+    single_cbar=True,
+    cmap="viridis",
+    fn: str = None,
+):
+    """
+    Display biclusters from (row_masks, col_masks) as subplots.
+
+    Parameters
+    ----------
+    matrix : pd.DataFrame
+        Original data matrix (do not reorder globally).
+    row_masks : np.ndarray
+        Boolean array (n_biclusters, n_rows).
+    col_masks : np.ndarray
+        Boolean array (n_biclusters, n_cols).
+    figsize : tuple
+        Size of the full figure.
+    show_labels : bool
+        Whether to display row/column tick labels.
+    single_cbar : bool
+        Whether to show a single shared colorbar.
+    cmap : str
+        Colormap for the heatmaps.
+    """
+
+    n_biclusters = len(row_masks)
+    n_cols_grid = int(np.ceil(np.sqrt(n_biclusters)))
+    n_rows_grid = int(np.ceil(n_biclusters / n_cols_grid))
+
+    fig, axes = plt.subplots(n_rows_grid, n_cols_grid, figsize=figsize)
+    axes = np.array(axes).flatten()
+
+    # Track heatmaps for shared colorbar
+    vmin = np.min(matrix.values)
+    vmax = np.max(matrix.values)
+    heatmaps = []
+
+    for k, (row_mask, col_mask) in enumerate(zip(row_masks, col_masks)):
+        ax = axes[k]
+        submatrix = matrix.loc[row_mask, col_mask]
+
+        hm = sns.heatmap(
+            submatrix,
+            ax=ax,
+            cmap=cmap,
+            cbar=False if single_cbar else True,
+            xticklabels=show_labels,
+            yticklabels=show_labels,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        ax.set_title(f"Bicluster {k}", fontsize=10)
+        heatmaps.append(hm)
+
+    # Hide unused axes
+    for ax in axes[n_biclusters:]:
+        ax.axis("off")
+
+    # Add single shared colorbar
+    if single_cbar:
+        cbar_ax = fig.add_axes([0.92, 0.3, 0.015, 0.4])  # [left, bottom, width, height]
+        sm = plt.cm.ScalarMappable(cmap=cmap)
+        sm.set_array([vmin, vmax])
+        fig.colorbar(sm, cax=cbar_ax)
+
+    plt.tight_layout(rect=[0, 0, 0.9, 1])  # leave space for colorbar
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close(fig)

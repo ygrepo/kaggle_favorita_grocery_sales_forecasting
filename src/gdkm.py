@@ -42,16 +42,16 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         if len(V_nonempty) == 0:
             raise ValueError("All column cluster blocks are empty or malformed.")
 
-        V_concat = np.concatenate(V_nonempty, axis=1)
-        self.column_labels_ = np.argmax(V_concat, axis=1)
+        # V_concat = np.concatenate(V_nonempty, axis=1)
+        # self.column_labels_ = np.argmax(V_concat, axis=1)
 
         return self
 
     def get_row_clusters(self):
         return self.row_labels_
 
-    def get_column_clusters(self):
-        return self.column_labels_
+    # def get_column_clusters(self):
+    #     return self.column_labels_
 
     def get_biclusters(self):
         """
@@ -89,6 +89,42 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         Matches SpectralBiclustering.biclusters_ structure.
         """
         return self.get_biclusters()
+
+    def get_cluster_assignments(self, df):
+        """
+        Return a long-form DataFrame with store, item, store_cluster, and item_cluster.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The original input data (rows = stores, columns = items).
+
+        Returns
+        -------
+        pd.DataFrame with columns: store, item, store_cluster, item_cluster
+        """
+        store_indices = df.index
+        item_columns = df.columns
+
+        result = []
+
+        for p, Vp in enumerate(self.V_list_):
+            # Row indices for cluster p
+            row_mask = self.U_[:, p] == 1
+            store_ids = store_indices[row_mask]
+
+            # For each item assigned to a cluster q in Vp
+            for q in range(Vp.shape[1]):
+                col_mask = Vp[:, q] == 1
+                item_ids = item_columns[col_mask]
+
+                for store in store_ids:
+                    for item in item_ids:
+                        result.append((store, item, p, q))
+
+        return pd.DataFrame(
+            result, columns=["store", "item", "store_cluster", "item_cluster"]
+        )
 
 
 def huber_loss(diff, delta=1.0):
@@ -252,6 +288,7 @@ def update_V(X, U, C_blocks, Q_list, norm="l2"):
 
     for p in range(P):
         Qp = Q_list[p]  # number of column clusters for row cluster p
+        #  print(f"Updating V for row cluster {p} with {Qp} column clusters")
         Vp = np.zeros(
             (J, Qp), dtype=int
         )  # initialize column assignment matrix for cluster p

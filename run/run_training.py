@@ -10,7 +10,6 @@ This script handles the complete training pipeline including:
 - Logging
 """
 
-import os
 import sys
 import logging
 import argparse
