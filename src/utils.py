@@ -263,6 +263,8 @@ def generate_cyclical_features(
     results: List[dict] = []
 
     for store_item, group in df.groupby("store_item"):
+        if debug:
+            print(f"Cyclical features: Processing {store_item}")
         group = group.sort_values("date").reset_index(drop=True)
         windows = generate_aligned_windows(
             group, window_size, calendar_aligned=calendar_aligned
@@ -575,7 +577,7 @@ def generate_sales_features(
 
         for (store, item), sales_vals in sales.iterrows():
             if debug:
-                print(f"Processing {store}_{item}")
+                print(f"Sales features: Processing {store}_{item}")
             s_cl = store_to_cluster.get(store, "ALL_STORES")
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
 
