@@ -21,7 +21,7 @@ DEBUG_CYC_FN="${DATA_DIR}/20250630_cyc_debug.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="INFO"
 WINDOW_SIZE=16
-DEBUG=false
+DEBUG=true
 
 
 # Parse command line arguments
