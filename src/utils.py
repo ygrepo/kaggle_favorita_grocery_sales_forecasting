@@ -601,6 +601,7 @@ def prepare_training_data_from_raw_df(
             logger.info(f"Loading sales features from {sales_fn}")
             sales_df = pd.read_csv(sales_fn)
         else:
+            logger.info(f"Generating sales features to {sales_fn}")
             sales_df = generate_sales_features(
                 df,
                 window_size,
@@ -620,6 +621,7 @@ def prepare_training_data_from_raw_df(
             logger.info(f"Loading cyclical features from {cyc_fn}")
             cyc_df = pd.read_csv(cyc_fn)
         else:
+            logger.info(f"Generating cyclical features to {cyc_fn}")
             cyc_df = generate_cyclical_features(
                 df,
                 window_size,
@@ -636,6 +638,7 @@ def prepare_training_data_from_raw_df(
     sales_df["start_date"] = pd.to_datetime(sales_df["start_date"])
     cyc_df["start_date"] = pd.to_datetime(cyc_df["start_date"])
 
+    logger.info(f"Merging sales and cyclical features")
     merged_df = pd.merge(
         sales_df,
         cyc_df,
