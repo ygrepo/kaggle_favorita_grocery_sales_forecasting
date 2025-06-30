@@ -88,6 +88,8 @@ def create_features(
     df: pd.DataFrame,
     cluster_df: pd.DataFrame,
     window_size: int,
+    sales_fn: Path,
+    cyc_fn: Path,
     debug: bool,
     debug_cyc_fn: Path,
     debug_sales_fn: Path,
@@ -101,6 +103,8 @@ def create_features(
         cluster_df=cluster_df,
         calendar_aligned=True,
         debug=debug,
+        sales_fn=sales_fn,
+        cyc_fn=cyc_fn,
         debug_cyc_fn=debug_cyc_fn,
         debug_sales_fn=debug_sales_fn,
     )
@@ -136,6 +140,17 @@ def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
     return logger
 
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Expected a boolean value (true/false)")
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -155,9 +170,21 @@ def parse_args():
     )
     parser.add_argument(
         "--debug",
-        type=bool,
+        type=str2bool,
         default=False,
-        help="Enable debug mode",
+        help="Enable debug mode (true/false)",
+    )
+    parser.add_argument(
+        "--sales-fn",
+        type=str,
+        default="../output/data/20250629_sales.csv",
+        help="Path to sales file (relative to project root)",
+    )
+    parser.add_argument(
+        "--cyc-fn",
+        type=str,
+        default="../output/data/20250629_cyc.csv",
+        help="Path to cyc file (relative to project root)",
     )
     parser.add_argument(
         "--debug-cyc-fn",
@@ -206,6 +233,8 @@ def main():
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
     cluster_fn = Path(args.cluster_fn).resolve()
+    sales_fn = Path(args.sales_fn).resolve()
+    cyc_fn = Path(args.cyc_fn).resolve()
     debug_cyc_fn = Path(args.debug_cyc_fn).resolve()
     debug_sales_fn = Path(args.debug_sales_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
@@ -221,6 +250,8 @@ def main():
         logger.info("Starting creating training features with configuration:")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Cluster fn: {cluster_fn}")
+        logger.info(f"  Sales fn: {sales_fn}")
+        logger.info(f"  Cyc fn: {cyc_fn}")
         logger.info(f"  Debug: {args.debug}")
         logger.info(f"  Debug cyc fn: {debug_cyc_fn}")
         logger.info(f"  Debug sales fn: {debug_sales_fn}")
@@ -240,6 +271,8 @@ def main():
             cluster_df=cluster_df,
             window_size=window_size,
             debug=args.debug,
+            sales_fn=sales_fn,
+            cyc_fn=cyc_fn,
             debug_cyc_fn=debug_cyc_fn,
             debug_sales_fn=debug_sales_fn,
         )
@@ -254,6 +287,7 @@ def main():
             _,
         ) = build_feature_and_label_cols(window_size=16)
         # Save final_df to csv
+        logger.info(f"Saving final_df to {output_fn}")
         final_df[meta_cols + x_feature_cols + label_cols].to_csv(output_fn)
 
     except Exception as e:
