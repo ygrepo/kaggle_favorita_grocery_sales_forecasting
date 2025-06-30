@@ -16,6 +16,7 @@ from scipy.stats import zscore
 import umap
 from typing import List, Optional
 import logging
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO,  # or DEBUG
@@ -275,8 +276,10 @@ def generate_cyclical_features(
 
     # ───────────────── build window rows ─────────────────
     results: List[dict] = []
+    iterator = df.groupby("store_item")
+    iterator = tqdm(iterator, desc="Generating cyclical features")
 
-    for store_item, group in df.groupby("store_item"):
+    for store_item, group in iterator:
         logger.debug(f"Cyclical features: Processing {store_item}")
         group = group.sort_values("date").reset_index(drop=True)
         windows = generate_aligned_windows(
@@ -433,7 +436,14 @@ def generate_sales_features(
             index=["store", "item"], columns="date", values="unit_sales"
         ).fillna(0)
 
-        for (store, item), sales_vals in sales.iterrows():
+        iterator = sales.iterrows()
+        iterator = tqdm(
+            iterator,
+            total=sales.shape[0],
+            desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
+        )
+
+        for (store, item), sales_vals in iterator:
             logger.debug(f"Sales features: Processing {store}_{item}")
             s_cl = store_to_cluster.get(store, "ALL_STORES")
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
