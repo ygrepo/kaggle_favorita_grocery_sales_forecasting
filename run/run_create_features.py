@@ -231,7 +231,7 @@ def main():
         # Load and preprocess data
         df = load_data(data_fn)
         cluster_df = load_cluster(cluster_fn)
-        # store_item = "44_364606"
+        # store_item = "54_1254013"
         # logger.info(f"Selected store_item: {store_item}")
 
         final_df = create_features(

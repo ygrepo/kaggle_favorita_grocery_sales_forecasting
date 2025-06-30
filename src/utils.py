@@ -15,6 +15,13 @@ from sklearn.cluster import (
 from scipy.stats import zscore
 import umap
 from typing import List, Optional
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,  # or DEBUG
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 CYCLICAL_FEATURES = [
     "dayofweek",
@@ -137,6 +144,7 @@ def generate_cyclical_features(
     calendar_aligned: bool = True,
     debug: bool = False,
     debug_fn: Optional[str] = None,
+    log_level: str = "INFO",
 ) -> pd.DataFrame:
     """
     Generate day‑/week‑/month/season/pay‑cycle sine & cosine features
@@ -145,6 +153,12 @@ def generate_cyclical_features(
     If `cluster_df` is None, every store (or item)
     is assigned to the single cluster label 'ALL_STORES' / 'ALL_ITEMS'.
     """
+
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
@@ -164,8 +178,8 @@ def generate_cyclical_features(
                 missing.drop_duplicates().to_csv(
                     debug_fn or "missing_cluster_pairs.csv", index=False
                 )
-                print(
-                    f"[DEBUG] {len(missing)} (store, item) pairs missing cluster mapping. "
+                logger.warning(
+                    f"{len(missing)} (store, item) pairs missing cluster mapping. "
                     f"Saved to 'missing_cluster_pairs.csv'."
                 )
             else:
@@ -263,8 +277,7 @@ def generate_cyclical_features(
     results: List[dict] = []
 
     for store_item, group in df.groupby("store_item"):
-        if debug:
-            print(f"Cyclical features: Processing {store_item}")
+        logger.debug(f"Cyclical features: Processing {store_item}")
         group = group.sort_values("date").reset_index(drop=True)
         windows = generate_aligned_windows(
             group, window_size, calendar_aligned=calendar_aligned
@@ -276,8 +289,11 @@ def generate_cyclical_features(
             (group["store"].iloc[0], group["item"].iloc[0]), "ALL_ITEMS"
         )
 
-        for window_dates in windows:
+        for i, window_dates in enumerate(windows):
             window_df = group[group["date"].isin(window_dates)]
+            if window_df.empty:
+                logger.warning(f"Empty window for {store_item} at {window_dates[0]}")
+                continue  # skip this window
 
             row = {
                 "start_date": window_df["date"].min(),
@@ -303,171 +319,6 @@ def generate_cyclical_features(
     return pd.DataFrame(results, columns=cols)
 
 
-# def generate_cyclical_features2(
-#     df: pd.DataFrame,
-#     window_size: int = 7,
-#     *,
-#     store_clusters: Optional[pd.DataFrame] = None,  # ['store', 'clusterId']
-#     item_clusters: Optional[pd.DataFrame] = None,  # ['item',  'clusterId']
-#     calendar_aligned: bool = True,
-# ) -> pd.DataFrame:
-#     """
-#     Generate day‑/week‑/month/season/pay‑cycle sine & cosine features
-#     for non‑overlapping windows and *include* store/item cluster IDs.
-
-#     If `store_clusters` or `item_clusters` is None, every store (or item)
-#     is assigned to the single cluster label 'ALL_STORES' / 'ALL_ITEMS'.
-#     """
-#     df = df.copy()
-#     df["date"] = pd.to_datetime(df["date"])
-
-#     # ────────────────────────────────────────────────────────────────
-#     # Attach cluster IDs (mirrors generate_sales_features)
-#     # ────────────────────────────────────────────────────────────────
-#     if store_clusters is not None:
-#         mapping = store_clusters[["store", "clusterId"]].drop_duplicates()
-#         df = df.merge(mapping, on="store", how="left")
-#         df["storeClusterId"] = df["clusterId"]
-#         df.drop(columns=["clusterId"], inplace=True)
-#     else:
-#         df["storeClusterId"] = "ALL_STORES"
-#     df["storeClusterId"] = df["storeClusterId"].fillna("ALL_STORES")
-
-#     if item_clusters is not None:
-#         mapping = item_clusters[["item", "clusterId"]].drop_duplicates()
-#         df = df.merge(mapping, on="item", how="left")
-#         df["itemClusterId"] = df["clusterId"]
-#         df.drop(columns=["clusterId"], inplace=True)
-#     else:
-#         df["itemClusterId"] = "ALL_ITEMS"
-#     df["itemClusterId"] = df["itemClusterId"].fillna("ALL_ITEMS")
-
-#     # Handy lookup dicts (optional—used later for speed)
-#     store_to_cluster = (
-#         df.drop_duplicates("store")[["store", "storeClusterId"]]
-#         .set_index("store")["storeClusterId"]
-#         .to_dict()
-#     )
-#     item_to_cluster = (
-#         df.drop_duplicates("item")[["item", "itemClusterId"]]
-#         .set_index("item")["itemClusterId"]
-#         .to_dict()
-#     )
-
-#     # Ensure store_item column
-#     if "store_item" not in df.columns:
-#         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
-#     # ───────────────── column template ─────────────────
-#     cols = [
-#         "start_date",
-#         "store_item",
-#         "store",
-#         "item",
-#         "storeClusterId",
-#         "itemClusterId",
-#     ]
-#     for i in range(1, window_size + 1):
-#         for feature in CYCLICAL_FEATURES:
-#             for trig in TRIGS:
-#                 cols.append(f"{feature}_{trig}_{i}")
-
-#     if df.empty:
-#         return pd.DataFrame(columns=cols)
-
-#     # ───────────────── raw cyclical columns ─────────────────
-#     df["dayofweek"] = df["date"].dt.dayofweek
-#     df["dayofweek_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7)
-#     df["dayofweek_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7)
-
-#     df["weekofmonth"] = df["date"].apply(lambda d: (d.day - 1) // 7 + 1)
-#     df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5)
-#     df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5)
-
-#     df["monthofyear"] = df["date"].dt.month
-#     df["monthofyear_sin"] = np.sin(2 * np.pi * df["monthofyear"] / 12)
-#     df["monthofyear_cos"] = np.cos(2 * np.pi * df["monthofyear"] / 12)
-
-#     # Pay‑cycle helpers
-#     def _pay_cycle_ratio(d: pd.Timestamp) -> float:
-#         month_end_day = (d + pd.offsets.MonthEnd(0)).day
-#         if d.day >= 15:
-#             last_pay = d.replace(day=15)
-#             next_pay = d.replace(day=month_end_day)
-#         else:
-#             prev_month_end = d - pd.offsets.MonthEnd(1)
-#             last_pay = prev_month_end
-#             next_pay = d.replace(day=15)
-#         cycle_len = (next_pay - last_pay).days
-#         return ((d - last_pay).days / cycle_len) if cycle_len else 0.0
-
-#     df["paycycle_ratio"] = df["date"].apply(_pay_cycle_ratio)
-#     df["paycycle_sin"] = np.sin(2 * np.pi * df["paycycle_ratio"])
-#     df["paycycle_cos"] = np.cos(2 * np.pi * df["paycycle_ratio"])
-
-#     # Season helpers
-#     def _season_ratio(d: pd.Timestamp) -> float:
-#         base = pd.Timestamp(year=d.year, month=3, day=20)
-#         if d < base:
-#             base = pd.Timestamp(year=d.year - 1, month=3, day=20)
-#         return ((d - base).days % 365) / 365
-
-#     df["season_ratio"] = df["date"].apply(_season_ratio)
-#     df["season_sin"] = np.sin(2 * np.pi * df["season_ratio"])
-#     df["season_cos"] = np.cos(2 * np.pi * df["season_ratio"])
-
-#     # ───────────────── build window rows ─────────────────
-#     results: List[dict] = []
-
-#     for store_item, group in df.groupby("store_item"):
-#         group = group.sort_values("date").reset_index(drop=True)
-#         windows = generate_aligned_windows(
-#             group, window_size, calendar_aligned=calendar_aligned
-#         )
-
-#         # cluster ids for this store‑item
-#         s_cl = store_to_cluster.get(group["store"].iloc[0], "ALL_STORES")
-#         i_cl = item_to_cluster.get(group["item"].iloc[0], "ALL_ITEMS")
-
-#         for window_dates in windows:
-#             window_df = group[group["date"].isin(window_dates)]
-
-#             row = {
-#                 "start_date": window_df["date"].min(),
-#                 "store_item": store_item,
-#                 "store": window_df["store"].iloc[0],
-#                 "item": window_df["item"].iloc[0],
-#                 "storeClusterId": s_cl,
-#                 "itemClusterId": i_cl,
-#             }
-
-#             for i in range(window_size):
-#                 if i < len(window_df):
-#                     r = window_df.iloc[i]
-#                     for f in [
-#                         "dayofweek",
-#                         "weekofmonth",
-#                         "monthofyear",
-#                         "paycycle",
-#                         "season",
-#                     ]:
-#                         for t in ["sin", "cos"]:
-#                             row[f"{f}_{t}_{i+1}"] = r[f"{f}_{t}"]
-#                 else:
-#                     for f in [
-#                         "dayofweek",
-#                         "weekofmonth",
-#                         "monthofyear",
-#                         "paycycle",
-#                         "season",
-#                     ]:
-#                         for t in ["sin", "cos"]:
-#                             row[f"{f}_{t}_{i+1}"] = 0.0
-#             results.append(row)
-
-#     return pd.DataFrame(results, columns=cols)
-
-
 def generate_sales_features(
     df: pd.DataFrame,
     window_size: int = 5,
@@ -476,6 +327,7 @@ def generate_sales_features(
     calendar_aligned: bool = True,
     debug: bool = False,
     debug_fn: Optional[str] = None,
+    log_level: str = "INFO",
 ) -> pd.DataFrame:
     """
     Generate rolling window sales features for pre-aggregated store-item-date sales rows.
@@ -499,6 +351,12 @@ def generate_sales_features(
     pd.DataFrame
         Long-form table with features for each (store, item) across windows.
     """
+
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
@@ -518,7 +376,7 @@ def generate_sales_features(
                 missing.drop_duplicates().to_csv(
                     debug_fn or "missing_cluster_pairs.csv", index=False
                 )
-                print(
+                logger.warning(
                     f"[DEBUG] {len(missing)} (store, item) pairs missing cluster mapping. "
                     f"Saved to 'missing_cluster_pairs.csv'."
                 )
@@ -576,8 +434,7 @@ def generate_sales_features(
         ).fillna(0)
 
         for (store, item), sales_vals in sales.iterrows():
-            if debug:
-                print(f"Sales features: Processing {store}_{item}")
+            logger.debug(f"Sales features: Processing {store}_{item}")
             s_cl = store_to_cluster.get(store, "ALL_STORES")
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
 
@@ -627,143 +484,6 @@ def generate_sales_features(
     return (
         pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     )
-
-
-# def generate_sales_features(
-#     df: pd.DataFrame,
-#     window_size: int = 5,
-#     *,
-#     cluster_df: Optional[pd.DataFrame] = None,
-#     calendar_aligned: bool = True,
-# ) -> pd.DataFrame:
-#     """
-#     If `store_clusters` / `item_clusters` is None, all stores (or items)
-#     are assigned to a single shared cluster labelled 'ALL_STORES' / 'ALL_ITEMS'.
-#     """
-
-#     df = df.copy()
-#     df["date"] = pd.to_datetime(df["date"])
-
-#     # ------------------------------------------------------------------
-#     # 1) 𝙎𝙩𝙤𝙧𝙚‑𝙘𝙡𝙪𝙨𝙩𝙚𝙧 attachment
-#     # ------------------------------------------------------------------
-#     if cluster_df is not None:
-#         mapping = cluster_df[["store", "store_cluster"]].drop_duplicates()
-#         df = df.merge(mapping, on="store", how="left")
-#         df["storeClusterId"] = df["store_cluster"]  # may still contain NaN
-#         df.drop(columns=["store_cluster"], inplace=True)
-#     else:
-#         # every store goes into the same cluster
-#         df["storeClusterId"] = "ALL_STORES"
-
-#     # any store without a mapping (NaN) also joins the catch‑all cluster
-#     df["storeClusterId"] = df["storeClusterId"].fillna("ALL_STORES")
-
-#     # ------------------------------------------------------------------
-#     # 2) 𝙄𝙩𝙚𝙢‑𝙘𝙡𝙪𝙨𝙩𝙚𝙧 attachment
-#     # ------------------------------------------------------------------
-#     if cluster_df is not None:
-#         mapping = cluster_df[["item", "item_cluster"]].drop_duplicates()
-#         df = df.merge(mapping, on="item", how="left")
-#         df["itemClusterId"] = df["item_cluster"]
-#         df.drop(columns=["item_cluster"], inplace=True)
-#     else:
-#         df["itemClusterId"] = "ALL_ITEMS"
-
-#     df["itemClusterId"] = df["itemClusterId"].fillna("ALL_ITEMS")
-
-#     # fast look‑ups: store → cluster, item → cluster
-#     store_to_cluster = (
-#         df.drop_duplicates("store")[["store", "storeClusterId"]]
-#         .set_index("store")["storeClusterId"]
-#         .to_dict()
-#     )
-#     item_to_cluster = (
-#         df.drop_duplicates("item")[["item", "itemClusterId"]]
-#         .set_index("item")["itemClusterId"]
-#         .to_dict()
-#     )
-
-#     windows = generate_aligned_windows(
-#         df, window_size, calendar_aligned=calendar_aligned
-#     )
-#     records: List[dict] = []
-
-#     for window_dates in windows:
-#         w_df = df[df["date"].isin(window_dates)]
-
-#         # cluster‑level medians
-#         store_med = (
-#             w_df.groupby(["storeClusterId", "date"])["unit_sales"]
-#             .median()
-#             .unstack(fill_value=0)
-#         )
-#         item_med = (
-#             w_df.groupby(["itemClusterId", "date"])["unit_sales"]
-#             .median()
-#             .unstack(fill_value=0)
-#         )
-
-#         # raw sales at store‑item level
-#         sales = (
-#             w_df.groupby(["store", "item", "date"])["unit_sales"]
-#             .sum()
-#             .unstack(fill_value=0)
-#         )
-
-#         for (store, item), sales_vals in sales.iterrows():
-#             s_cl = store_to_cluster.get(store, "ALL_STORES")
-#             i_cl = item_to_cluster.get(item, "ALL_ITEMS")
-
-#             row = {
-#                 "store_item": f"{store}_{item}",
-#                 "store": store,
-#                 "item": item,
-#                 "storeClusterId": s_cl,
-#                 "itemClusterId": i_cl,
-#                 "start_date": window_dates[0],
-#             }
-
-#             s_cl = store_to_cluster.get(store, "ALL_STORES")
-#             i_cl = item_to_cluster.get(item, "ALL_ITEMS")
-
-#             for i in range(1, window_size + 1):
-#                 d = window_dates[i - 1] if i - 1 < len(window_dates) else None
-
-#                 if d is not None:
-#                     row[f"sales_day_{i}"] = sales_vals.get(d, 0)
-#                     row[f"store_med_day_{i}"] = (
-#                         store_med.loc[s_cl].get(d, 0) if s_cl in store_med.index else 0
-#                     )
-#                     row[f"item_med_day_{i}"] = (
-#                         item_med.loc[i_cl].get(d, 0) if i_cl in item_med.index else 0
-#                     )
-#                 else:
-#                     row[f"sales_day_{i}"] = 0
-#                     row[f"store_med_day_{i}"] = 0
-#                     row[f"item_med_day_{i}"] = 0
-
-#             records.append(row)
-
-#     # ------------------------------------------------------------------
-#     # final column order
-#     # ------------------------------------------------------------------
-#     cols = [
-#         "start_date",
-#         "store_item",
-#         "store",
-#         "item",
-#         "storeClusterId",
-#         "itemClusterId",
-#     ]
-#     cols += [
-#         f"{prefix}{i}"
-#         for prefix in ("sales_day_", "store_med_day_", "item_med_day_")
-#         for i in range(1, window_size + 1)
-#     ]
-#     return (
-#         pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
-#     )
 
 
 def add_y_targets_from_shift(df, window_size=16):
@@ -836,7 +556,13 @@ def prepare_training_data_from_raw_df(
     debug: bool = False,
     debug_cyc_fn: Optional[str] = None,
     debug_sales_fn: Optional[str] = None,
+    log_level: str = "INFO",
 ) -> pd.DataFrame:
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
     if "store_item" not in df.columns:
@@ -850,7 +576,7 @@ def prepare_training_data_from_raw_df(
         debug=debug,
         debug_fn=debug_sales_fn,
     )
-    print(f"sales_df.shape: {sales_df.shape}")
+    logger.info(f"sales_df.shape: {sales_df.shape}")
     # print(sales_df.columns)
     # print(sales_df.head())
 
@@ -863,7 +589,7 @@ def prepare_training_data_from_raw_df(
         debug=debug,
         debug_fn=debug_cyc_fn,
     )
-    print(f"cyc_df.shape: {cyc_df.shape}")
+    logger.info(f"cyc_df.shape: {cyc_df.shape}")
     # print(cyc_df.columns)
     # print(cyc_df.head())
 
@@ -880,11 +606,11 @@ def prepare_training_data_from_raw_df(
         ],
         how="inner",
     )
-    print(f"merged_df.shape: {merged_df.shape}")
+    logger.info(f"merged_df.shape: {merged_df.shape}")
     # print(merged_df.columns)
     # print(merged_df.head())
     merged_df = add_y_targets_from_shift(merged_df, window_size)
-    print(f"merged_df.shape: {merged_df.shape}")
+    logger.info(f"merged_df.shape: {merged_df.shape}")
     # print(merged_df.columns)
     # print(merged_df.head())
 
