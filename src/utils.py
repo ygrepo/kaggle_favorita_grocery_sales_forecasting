@@ -280,7 +280,7 @@ def generate_cyclical_features(
     iterator = tqdm(iterator, desc="Generating cyclical features")
 
     for store_item, group in iterator:
-        logger.debug(f"Cyclical features: Processing {store_item}")
+        # logger.debug(f"Cyclical features: Processing {store_item}")
         group = group.sort_values("date").reset_index(drop=True)
         windows = generate_aligned_windows(
             group, window_size, calendar_aligned=calendar_aligned
@@ -444,7 +444,7 @@ def generate_sales_features(
         )
 
         for (store, item), sales_vals in iterator:
-            logger.debug(f"Sales features: Processing {store}_{item}")
+            # logger.debug(f"Sales features: Processing {store}_{item}")
             s_cl = store_to_cluster.get(store, "ALL_STORES")
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
 
