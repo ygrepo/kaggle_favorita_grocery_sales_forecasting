@@ -288,7 +288,7 @@ def main():
         ) = build_feature_and_label_cols(window_size=16)
         # Save final_df to csv
         logger.info(f"Saving final_df to {output_fn}")
-        final_df[meta_cols + x_feature_cols + label_cols].to_csv(output_fn)
+        # final_df[meta_cols + x_feature_cols + label_cols].to_csv(output_fn)
 
     except Exception as e:
         logger.error(f"Error creating training features: {e}")
