@@ -3,6 +3,7 @@ from __future__ import annotations
 import heapq
 import numpy as np
 import pandas as pd
+from scipy.linalg import dft
 from sklearn.preprocessing import MinMaxScaler
 from scipy.stats import zscore
 import umap
@@ -930,6 +931,27 @@ def preprocess_sales_matrix(
     return X, df
 
 
+def zscore_with_axis(
+    df: pd.DataFrame, axis: int = 0, nan_policy: str = "omit"
+) -> pd.DataFrame:
+    """
+    Compute z-score along rows (axis=1) or columns (axis=0), optionally ignoring NaNs.
+    """
+    values = df.values.astype(float)
+
+    if nan_policy == "omit":
+        mean = np.nanmean(values, axis=axis, keepdims=True)
+        std = np.nanstd(values, axis=axis, ddof=0, keepdims=True)
+    elif nan_policy == "propagate":
+        mean = np.mean(values, axis=axis, keepdims=True)
+        std = np.std(values, axis=axis, ddof=0, keepdims=True)
+    else:
+        raise ValueError("nan_policy must be 'omit' or 'propagate'")
+
+    z = (values - mean) / std
+    return pd.DataFrame(z, index=df.index, columns=df.columns)
+
+
 def normalize_store_item_matrix(
     df: pd.DataFrame,
     freq="W",
@@ -937,33 +959,32 @@ def normalize_store_item_matrix(
     mean_transform=False,
     log_transform=True,
     zscore_rows=True,
-    zscore_cols=False,
+    zscore_cols=False,  # safer default to avoid double scaling
 ):
     """
-    Builds a store × item matrix with mean or median weekly unit sales averaged over time,
-    optionally log-transformed and z-scored.
+    Builds a store × item matrix with weekly sales, optionally normalized.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Input data with columns ['date', 'store', 'item', 'unit_sales']
+        Must include ['date', 'store', 'item', 'unit_sales']
     freq : str
-        Resampling frequency (e.g., 'W' for weekly)
+        Resample frequency (e.g., 'W' for weekly)
     median_transform : bool
-        Whether to apply median to unit_sales
+        Use median aggregation
     mean_transform : bool
-        Whether to apply mean to unit_sales
+        Use mean aggregation
     log_transform : bool
-        Whether to apply log1p to unit_sales
+        Apply log1p to unit_sales
     zscore_rows : bool
-        Whether to z-score across items for each store
+        Z-score each row (store)
     zscore_cols : bool
-        Whether to z-score across stores for each item
+        Z-score each column (item)
 
     Returns
     -------
     pd.DataFrame
-        Store × item matrix
+        A normalized store × item matrix
     """
     if median_transform:
         df = (
@@ -973,11 +994,7 @@ def normalize_store_item_matrix(
             .median()
             .reset_index()
         )
-        df = (
-            df.groupby(["store", "item"])["unit_sales"]
-            .median()
-            .unstack(fill_value=0)  # rows = stores, columns = items
-        )
+        df = df.groupby(["store", "item"])["unit_sales"].median().unstack(fill_value=0)
     elif mean_transform:
         df = (
             df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
@@ -986,24 +1003,18 @@ def normalize_store_item_matrix(
             .mean()
             .reset_index()
         )
-        df = (
-            df.groupby(["store", "item"])["unit_sales"]
-            .mean()
-            .unstack(fill_value=0)  # rows = stores, columns = items
-        )
+        df = df.groupby(["store", "item"])["unit_sales"].mean().unstack(fill_value=0)
     else:
-        raise ValueError(
-            "At least one of median_transform or mean_transform must be True."
-        )
+        raise ValueError("Set either median_transform or mean_transform to True.")
 
     if log_transform:
         df = np.log1p(df)
 
-    # 4. Optional z-score
     if zscore_rows:
-        df = df.apply(zscore, axis=1)
+        df = zscore_with_axis(df, axis=1)
+
     if zscore_cols:
-        df = df.apply(zscore, axis=0)
+        df = zscore_with_axis(df, axis=0)
 
     return df
 
@@ -1040,7 +1051,6 @@ def generate_store_item_clusters(
             "clusterId": labels,
         }
     )
-
 
 
 def reorder_data(data, row_labels, col_labels):

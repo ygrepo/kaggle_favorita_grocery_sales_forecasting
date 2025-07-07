@@ -98,50 +98,46 @@ def prepare_data(
         df, n_col=value_column, group_column=group_column, top_n=top_stores_n
     )
     valid_stores = df_top_stores.reset_index()[group_column].tolist()
-    df_top_stores = df[df[group_column].isin(valid_stores)].reset_index(drop=True)
+    df = df[df["store"].isin(valid_stores)]
 
-    # Step 2: Select top-M items from filtered stores
+    # Step 2: Select top-M items among top stores only
     df_top_items = top_n_by_m(
-        df_top_stores, n_col=value_column, group_column="item", top_n=top_items_n
+        df, n_col=value_column, group_column="item", top_n=top_items_n
     )
     valid_items = df_top_items.reset_index()["item"].tolist()
-    df_top_items = df_top_stores[df_top_stores["item"].isin(valid_items)].reset_index(
-        drop=True
-    )
-
-    logger.info(df_top_items.head())
+    df = df[df["item"].isin(valid_items)]
 
     # Step 3: Create full (store, item, date) grid
-    unique_dates = df_top_items["date"].dropna().unique()
+    unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
         [valid_stores, valid_items, sorted(unique_dates)],
         names=["store", "item", "date"],
     ).to_frame(index=False)
 
-    # Step 4: Merge full grid with original daily data
-    df_merged = pd.merge(grid, df_top_items, on=["store", "item", "date"], how="left")
+    # Step 4: Merge full grid with filtered daily data
+    df = pd.merge(grid, df, on=["store", "item", "date"], how="left")
 
     # Step 5: Fill missing unit_sales with -1
-    missing_mask = df_merged[value_column].isna()
+    missing_mask = df[value_column].isna()
     num_missing = missing_mask.sum()
-    df_merged.loc[missing_mask, value_column] = -1
-    df_merged["store_item"] = (
-        df_merged["store"].astype(str) + "_" + df_merged["item"].astype(str)
-    )
+    df.loc[missing_mask, value_column] = -1
+
+    # Optional: Add store_item composite key
+    # df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
     logger.info(
         f"Filled {num_missing} missing (store, item, date) rows with unit_sales = -1"
     )
-    logger.info(f"Final dataset shape: {df_merged.shape}")
-    logger.info(f"Unique stores: {df_merged['store'].nunique()}")
-    logger.info(f"Unique items: {df_merged['item'].nunique()}")
-    logger.info(f"Date range: {df_merged['date'].min()} to {df_merged['date'].max()}")
+    logger.info(f"Final dataset shape: {df.shape}")
+    logger.info(f"Unique stores: {df['store'].nunique()}")
+    logger.info(f"Unique items: {df['item'].nunique()}")
+    logger.info(f"Date range: {df['date'].min()} to {df['date'].max()}")
 
     if fn:
         logger.info(f"Saving final_df to {fn}")
-        df_merged.to_csv(fn, index=False)
+        df.to_csv(fn, index=False)
 
-    return df_merged
+    return df
 
 
 # def prepare_data(
