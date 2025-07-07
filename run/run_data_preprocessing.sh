@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# Set strict error handling
+set -euo pipefail
+
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+echo "Project root: $PROJECT_ROOT"
+cd "$PROJECT_ROOT"
+
+# Default configuration
+DATA_DIR="${PROJECT_ROOT}/data"
+DATA_FN="${DATA_DIR}/20250707_train.csv"
+OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_9000_train.csv"
+LOG_DIR="${PROJECT_ROOT}/output/logs"
+LOG_LEVEL="DEBUG"
+TOP_STORES_N=51
+TOP_ITEMS_N=9000
+GROUP_COLUMN="store"
+VALUE_COLUMN="unit_sales"
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --data-dir) DATA_DIR="$2"; shift 2 ;;
+    --data-fn) DATA_FN="$2"; shift 2 ;;
+    --output-data-dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
+    --output-fn) OUTPUT_FN="$2"; shift 2 ;;
+    --log-dir) LOG_DIR="$2"; shift 2 ;;
+    --log-level) LOG_LEVEL="$2"; shift 2 ;;
+    --top-stores-n) TOP_STORES_N="$2"; shift 2 ;;
+    --top-items-n) TOP_ITEMS_N="$2"; shift 2 ;;
+    --group-column) GROUP_COLUMN="$2"; shift 2 ;;
+    --value-column) VALUE_COLUMN="$2"; shift 2 ;;
+    *) echo "Unknown parameter: $1"; exit 1 ;;
+  esac
+done
+
+# Create output directories if they don't exist
+mkdir -p "$LOG_DIR"
+
+
+# Set up log file with timestamp
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="${LOG_DIR}/data_preprocessing_${TIMESTAMP}.log"
+echo "Starting script at $(date)" | tee -a "$LOG_FILE"
+echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
+echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
+echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
+echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
+echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
+echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
+echo "Top stores n: $TOP_STORES_N" | tee -a "$LOG_FILE"
+echo "Top items n: $TOP_ITEMS_N" | tee -a "$LOG_FILE"
+echo "Group column: $GROUP_COLUMN" | tee -a "$LOG_FILE"
+echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
+
+python "${SCRIPT_DIR}/run_data_preprocessing.py" \
+  --data-fn "$DATA_FN" \
+  --output-fn "$OUTPUT_FN" \
+  --log-dir "$LOG_DIR" \
+  --log-level "$LOG_LEVEL" \
+  --top-stores-n "$TOP_STORES_N" \
+  --top-items-n "$TOP_ITEMS_N" \
+  --group-column "$GROUP_COLUMN" \
+  --value-column "$VALUE_COLUMN" \
+   2>&1 | tee -a "$LOG_FILE"
+
+# Check the exit status of the Python script
+DATA_PREPROCESSING_EXIT_CODE=${PIPESTATUS[0]}
+
+if [ $DATA_PREPROCESSING_EXIT_CODE -eq 0 ]; then
+    echo "Script completed successfully at $(date)" | tee -a "$LOG_FILE"
+    exit 0
+else
+    echo "Error: Script failed with exit code $DATA_PREPROCESSING_EXIT_CODE" | tee -a "$LOG_FILE"
+    echo "Check the log file for details: $LOG_FILE"
+    exit $DATA_PREPROCESSING_EXIT_CODE
+fi

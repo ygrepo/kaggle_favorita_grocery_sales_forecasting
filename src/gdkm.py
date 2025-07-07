@@ -530,11 +530,6 @@ def suggest_optimal_pq(results_df, criterion="silhouette", penalty_lambda=0.0):
     return (int(best_p), int(best_q)), best_score
 
 
-import umap
-import hdbscan
-from sklearn.preprocessing import StandardScaler
-
-
 def estimate_pq_with_umap_hdbscan(
     X, min_cluster_size=5, n_neighbors=15, min_dist=0.1, random_state=42, scale=True
 ):
