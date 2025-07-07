@@ -88,43 +88,65 @@ def prepare_data(
     fn: str = None,
 ):
     """
-    Prepares a complete daily-level (store, item, date) grid for the top-N stores and top-M items.
-    Fills missing (store, item, date) rows with unit_sales = -1, keeping other columns (e.g., onpromotion) as NaN.
+    Prepares a complete daily-level (store, item, date) grid for the top-N stores and globally top-M items.
+    Fills missing (store, item, date) rows with unit_sales = -1, keeping all other columns (e.g., onpromotion, id) as NaN.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw sales data with at least: 'date', 'store', 'item', 'unit_sales'
+    group_column : str
+        Column used to select top-N groups (typically "store")
+    value_column : str
+        The sales value to aggregate (typically "unit_sales")
+    top_stores_n : int
+        Number of top stores to retain
+    top_items_n : int
+        Number of globally top items to retain
+    fn : str or None
+        If given, saves the resulting DataFrame to this path
+
+    Returns
+    -------
+    pd.DataFrame
+        Full (store, item, date) matrix with unit_sales filled as needed
     """
     df = df.copy()
 
-    # Step 1: Select top-N stores
-    df_top_stores = top_n_by_m(
-        df, n_col=value_column, group_column=group_column, top_n=top_stores_n
-    )
-    valid_stores = df_top_stores.reset_index()[group_column].tolist()
-    df = df[df["store"].isin(valid_stores)]
-
-    # Step 2: Select top-M items among top stores only
+    # Step 1: Select top-M items globally
     df_top_items = top_n_by_m(
         df, n_col=value_column, group_column="item", top_n=top_items_n
     )
     valid_items = df_top_items.reset_index()["item"].tolist()
-    df = df[df["item"].isin(valid_items)]
 
-    # Step 3: Create full (store, item, date) grid
+    # Step 2: Select top-N stores globally
+    df_top_stores = top_n_by_m(
+        df, n_col=value_column, group_column=group_column, top_n=top_stores_n
+    )
+    valid_stores = df_top_stores.reset_index()[group_column].tolist()
+
+    # Step 3: Filter to relevant rows only
+    df = df[df["store"].isin(valid_stores) & df["item"].isin(valid_items)]
+
+    # Step 4: Create full grid of (store, item, date)
     unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
         [valid_stores, valid_items, sorted(unique_dates)],
         names=["store", "item", "date"],
     ).to_frame(index=False)
 
-    # Step 4: Merge full grid with filtered daily data
+    # Step 5: Merge with filtered data
     df = pd.merge(grid, df, on=["store", "item", "date"], how="left")
 
-    # Step 5: Fill missing unit_sales with -1
+    # Step 6: Fill missing unit_sales with -1
     missing_mask = df[value_column].isna()
     num_missing = missing_mask.sum()
     df.loc[missing_mask, value_column] = -1
 
-    # Optional: Add store_item composite key
+    # Optional: Add composite key
     # df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
+    # Logging
     logger.info(
         f"Filled {num_missing} missing (store, item, date) rows with unit_sales = -1"
     )
