@@ -139,9 +139,6 @@ def prepare_data(
     num_missing = missing_mask.sum()
     df.loc[missing_mask, value_column] = np.nan
 
-    # Optional: Add composite key
-    # df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
     # Logging
     logger.info(
         f"Filled {num_missing} missing (store, item, date) rows with unit_sales = -1"
@@ -156,52 +153,3 @@ def prepare_data(
         df.to_csv(fn, index=False)
 
     return df
-
-
-# def prepare_data(
-#     df,
-#     group_column="store",
-#     value_column="unit_sales",
-#     top_stores_n=10,
-#     top_items_n=500,
-#     fn: str = None,
-# ):
-#     """
-#     Prepares the data by computing value counts and percentages for each group.
-
-#     Parameters:
-#         df (pd.DataFrame): Input DataFrame.
-#         group_column (str): Column to group by.
-#         value_column (str): Column to calculate percentages from.
-#         top_stores_n (int): Number of top stores to return.
-#         top_items_n (int): Number of top items to return.
-
-#     Returns:
-#         pd.DataFrame: DataFrame with counts and percentages for each group.
-#     """
-#     df = df.copy()
-#     df_top_stores = top_n_by_m(
-#         df, n_col=value_column, group_column=group_column, top_n=top_stores_n
-#     )
-#     valid_stores = df_top_stores.reset_index()[group_column].tolist()
-#     df_top_stores = df[df[group_column].isin(valid_stores)]
-#     df_top_stores = df_top_stores.reset_index()
-#     df_top_stores.drop(["index"], axis=1, inplace=True)
-#     logger.info(df_top_stores.head())
-#     df_top_items = top_n_by_m(
-#         df_top_stores, n_col=value_column, group_column="item", top_n=top_items_n
-#     )
-#     valid_items = df_top_items.reset_index()["item"].tolist()
-#     df_top_items = df_top_stores[df_top_stores["item"].isin(valid_items)]
-#     df_top_items = df_top_items.reset_index()
-#     df_top_items.drop(["index"], axis=1, inplace=True)
-#     logger.info(df_top_items.head())
-
-#     logger.info(f"Number of rows: {len(df_top_items)}")
-#     logger.info(f"Number of unique stores: {df_top_items['store'].nunique()}")
-#     logger.info(f"Number of unique items: {df_top_items['item'].nunique()}")
-#     logger.info(f"Shape of the dataset: {df.shape}")
-#     if fn:
-#         logger.info(f"Saving final_df to {fn}")
-#         df.to_csv(fn, index=False)
-#     return df
