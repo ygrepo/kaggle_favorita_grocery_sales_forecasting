@@ -13,7 +13,7 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/data"
 DATA_FN="${DATA_DIR}/20250707_train.csv"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_9000_item_sales.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_100_item.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 TOP_STORES_N=51
