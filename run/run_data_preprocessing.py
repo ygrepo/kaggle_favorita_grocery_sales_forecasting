@@ -161,6 +161,10 @@ def main():
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Top stores n: {args.top_stores_n}")
+        logger.info(f"  Top items n: {args.top_items_n}")
+        logger.info(f"  Group column: {args.group_column}")
+        logger.info(f"  Value column: {args.value_column}")
 
         # Load and preprocess data
         df = load_data(data_fn)
