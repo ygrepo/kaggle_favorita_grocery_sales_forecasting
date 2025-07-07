@@ -94,9 +94,15 @@ def parse_args():
         help="Number of top items to return",
     )
     parser.add_argument(
-        "--group-column",
+        "--group-store-column",
         type=str,
         default="store",
+        help="Column to group by",
+    )
+    parser.add_argument(
+        "--group-item-column",
+        type=str,
+        default="item",
         help="Column to group by",
     )
     parser.add_argument(
@@ -163,7 +169,8 @@ def main():
         logger.info(f"  Output fn: {output_fn}")
         logger.info(f"  Top stores n: {args.top_stores_n}")
         logger.info(f"  Top items n: {args.top_items_n}")
-        logger.info(f"  Group column: {args.group_column}")
+        logger.info(f"  Group store column: {args.group_store_column}")
+        logger.info(f"  Group item column: {args.group_item_column}")
         logger.info(f"  Value column: {args.value_column}")
 
         # Load and preprocess data
@@ -172,7 +179,8 @@ def main():
         # Create features
         df = prepare_data(
             df,
-            group_column=args.group_column,
+            group_store_column=args.group_store_column,
+            group_item_column=args.group_item_column,
             value_column=args.value_column,
             top_stores_n=args.top_stores_n,
             top_items_n=args.top_items_n,

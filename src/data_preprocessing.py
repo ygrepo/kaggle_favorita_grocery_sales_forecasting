@@ -81,7 +81,8 @@ def count_percent(series, n=3):
 
 def prepare_data(
     df,
-    group_column="store",
+    group_store_column="store",
+    group_item_column="item",
     value_column="unit_sales",
     top_stores_n=10,
     top_items_n=500,
@@ -115,15 +116,15 @@ def prepare_data(
 
     # Select top-M items globally
     df_top_items = top_n_by_m(
-        df, n_col=value_column, group_column="item", top_n=top_items_n
+        df, n_col=value_column, group_column=group_item_column, top_n=top_items_n
     )
-    valid_items = df_top_items.reset_index()["item"].tolist()
+    valid_items = df_top_items.reset_index()[group_item_column].tolist()
 
     # Select top-N stores globally
     df_top_stores = top_n_by_m(
-        df, n_col=value_column, group_column=group_column, top_n=top_stores_n
+        df, n_col=value_column, group_column=group_store_column, top_n=top_stores_n
     )
-    valid_stores = df_top_stores.reset_index()[group_column].tolist()
+    valid_stores = df_top_stores.reset_index()[group_store_column].tolist()
     unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
         [valid_stores, valid_items, sorted(unique_dates)],

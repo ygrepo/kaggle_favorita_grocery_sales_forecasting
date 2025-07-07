@@ -18,7 +18,8 @@ LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 TOP_STORES_N=51
 TOP_ITEMS_N=9000
-GROUP_COLUMN="store"
+GROUP_STORE_COLUMN="store"
+GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
 
 # Parse command line arguments
@@ -32,7 +33,8 @@ while [[ $# -gt 0 ]]; do
     --log-level) LOG_LEVEL="$2"; shift 2 ;;
     --top-stores-n) TOP_STORES_N="$2"; shift 2 ;;
     --top-items-n) TOP_ITEMS_N="$2"; shift 2 ;;
-    --group-column) GROUP_COLUMN="$2"; shift 2 ;;
+    --group-store-column) GROUP_STORE_COLUMN="$2"; shift 2 ;;
+    --group-item-column) GROUP_ITEM_COLUMN="$2"; shift 2 ;;
     --value-column) VALUE_COLUMN="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -54,7 +56,8 @@ echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
 echo "Top stores n: $TOP_STORES_N" | tee -a "$LOG_FILE"
 echo "Top items n: $TOP_ITEMS_N" | tee -a "$LOG_FILE"
-echo "Group column: $GROUP_COLUMN" | tee -a "$LOG_FILE"
+echo "Group Store column: $GROUP_STORE_COLUMN" | tee -a "$LOG_FILE"
+echo "Group Item column: $GROUP_ITEM_COLUMN" | tee -a "$LOG_FILE"
 echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_data_preprocessing.py" \
@@ -64,7 +67,8 @@ python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --log-level "$LOG_LEVEL" \
   --top-stores-n "$TOP_STORES_N" \
   --top-items-n "$TOP_ITEMS_N" \
-  --group-column "$GROUP_COLUMN" \
+  --group-store-column "$GROUP_STORE_COLUMN" \
+  --group-item-column "$GROUP_ITEM_COLUMN" \
   --value-column "$VALUE_COLUMN" \
    2>&1 | tee -a "$LOG_FILE"
 
