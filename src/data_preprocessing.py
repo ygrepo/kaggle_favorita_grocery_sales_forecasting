@@ -101,13 +101,15 @@ def prepare_data(
         pd.DataFrame: DataFrame with counts and percentages for each group.
     """
     df = df.copy()
-    df = top_n_by_m(
+    df_top_stores = top_n_by_m(
         df, n_col=value_column, group_column=group_column, top_n=top_stores_n
     )
-    valid_stores = df.reset_index()[group_column].tolist()
+    logger.info(df_top_stores.head())
+    valid_stores = df_top_stores.reset_index()[group_column].tolist()
     df = df[df[group_column].isin(valid_stores)]
     df = df.reset_index()
     df.drop(["index"], axis=1, inplace=True)
+    logger.info(df.head())
     valid_item = count_percent(df["item"], n=top_items_n).reset_index()["item"].tolist()
     df = df[df["item"].isin(valid_item)]
     logger.info(f"Number of rows: {len(df)}")

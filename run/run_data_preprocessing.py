@@ -177,7 +177,7 @@ def main():
 
         logger.info("Data preprocessing completed successfully")
     except Exception as e:
-        logger.error(f"Error creating training features: {e}")
+        logger.error(f"Error creating data preprocessing features: {e}")
         raise
 
 
