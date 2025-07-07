@@ -111,11 +111,13 @@ def prepare_data(
     df.drop(["index"], axis=1, inplace=True)
     logger.info(df.head())
     valid_item = count_percent(df["item"], n=top_items_n).reset_index()["item"].tolist()
+    logger.info(valid_item)
     df = df[df["item"].isin(valid_item)]
     logger.info(f"Number of rows: {len(df)}")
     logger.info(f"Number of unique stores: {df['store'].nunique()}")
     logger.info(f"Number of unique items: {df['item'].nunique()}")
     logger.info(f"Shape of the dataset: {df.shape}")
     if fn:
+        logger.info(f"Saving final_df to {fn}")
         df.to_csv(fn, index=False)
     return df
