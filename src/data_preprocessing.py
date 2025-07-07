@@ -113,35 +113,30 @@ def prepare_data(
     """
     df = df.copy()
 
-    # Step 1: Select top-M items globally
+    # Select top-M items globally
     df_top_items = top_n_by_m(
         df, n_col=value_column, group_column="item", top_n=top_items_n
     )
     valid_items = df_top_items.reset_index()["item"].tolist()
 
-    # Step 2: Select top-N stores globally
+    # Select top-N stores globally
     df_top_stores = top_n_by_m(
         df, n_col=value_column, group_column=group_column, top_n=top_stores_n
     )
     valid_stores = df_top_stores.reset_index()[group_column].tolist()
-
-    # Step 3: Filter to relevant rows only
-    df = df[df["store"].isin(valid_stores) & df["item"].isin(valid_items)]
-
-    # Step 4: Create full grid of (store, item, date)
     unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
         [valid_stores, valid_items, sorted(unique_dates)],
         names=["store", "item", "date"],
     ).to_frame(index=False)
 
-    # Step 5: Merge with filtered data
+    # Merge with filtered data
     df = pd.merge(grid, df, on=["store", "item", "date"], how="left")
 
-    # Step 6: Fill missing unit_sales with -1
+    # Fill missing unit_sales with -1
     missing_mask = df[value_column].isna()
     num_missing = missing_mask.sum()
-    df.loc[missing_mask, value_column] = -1
+    df.loc[missing_mask, value_column] = np.nan
 
     # Optional: Add composite key
     # df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
