@@ -88,36 +88,106 @@ def prepare_data(
     fn: str = None,
 ):
     """
-    Prepares the data by computing value counts and percentages for each group.
-
-    Parameters:
-        df (pd.DataFrame): Input DataFrame.
-        group_column (str): Column to group by.
-        value_column (str): Column to calculate percentages from.
-        top_stores_n (int): Number of top stores to return.
-        top_items_n (int): Number of top items to return.
-
-    Returns:
-        pd.DataFrame: DataFrame with counts and percentages for each group.
+    Prepares a complete daily-level (store, item, date) grid for the top-N stores and top-M items.
+    Fills missing (store, item, date) rows with unit_sales = -1, keeping other columns (e.g., onpromotion) as NaN.
     """
     df = df.copy()
+
+    # Step 1: Select top-N stores
     df_top_stores = top_n_by_m(
         df, n_col=value_column, group_column=group_column, top_n=top_stores_n
     )
-    logger.info(df_top_stores.head())
     valid_stores = df_top_stores.reset_index()[group_column].tolist()
-    df = df[df[group_column].isin(valid_stores)]
-    df = df.reset_index()
-    df.drop(["index"], axis=1, inplace=True)
-    logger.info(df.head())
-    valid_item = count_percent(df["item"], n=top_items_n).reset_index()["item"].tolist()
-    logger.info(valid_item)
-    df = df[df["item"].isin(valid_item)]
-    logger.info(f"Number of rows: {len(df)}")
-    logger.info(f"Number of unique stores: {df['store'].nunique()}")
-    logger.info(f"Number of unique items: {df['item'].nunique()}")
-    logger.info(f"Shape of the dataset: {df.shape}")
+    df_top_stores = df[df[group_column].isin(valid_stores)].reset_index(drop=True)
+
+    # Step 2: Select top-M items from filtered stores
+    df_top_items = top_n_by_m(
+        df_top_stores, n_col=value_column, group_column="item", top_n=top_items_n
+    )
+    valid_items = df_top_items.reset_index()["item"].tolist()
+    df_top_items = df_top_stores[df_top_stores["item"].isin(valid_items)].reset_index(
+        drop=True
+    )
+
+    logger.info(df_top_items.head())
+
+    # Step 3: Create full (store, item, date) grid
+    unique_dates = df_top_items["date"].dropna().unique()
+    grid = pd.MultiIndex.from_product(
+        [valid_stores, valid_items, sorted(unique_dates)],
+        names=["store", "item", "date"],
+    ).to_frame(index=False)
+
+    # Step 4: Merge full grid with original daily data
+    df_merged = pd.merge(grid, df_top_items, on=["store", "item", "date"], how="left")
+
+    # Step 5: Fill missing unit_sales with -1
+    missing_mask = df_merged[value_column].isna()
+    num_missing = missing_mask.sum()
+    df_merged.loc[missing_mask, value_column] = -1
+    df_merged["store_item"] = (
+        df_merged["store"].astype(str) + "_" + df_merged["item"].astype(str)
+    )
+
+    logger.info(
+        f"Filled {num_missing} missing (store, item, date) rows with unit_sales = -1"
+    )
+    logger.info(f"Final dataset shape: {df_merged.shape}")
+    logger.info(f"Unique stores: {df_merged['store'].nunique()}")
+    logger.info(f"Unique items: {df_merged['item'].nunique()}")
+    logger.info(f"Date range: {df_merged['date'].min()} to {df_merged['date'].max()}")
+
     if fn:
         logger.info(f"Saving final_df to {fn}")
-        df.to_csv(fn, index=False)
-    return df
+        df_merged.to_csv(fn, index=False)
+
+    return df_merged
+
+
+# def prepare_data(
+#     df,
+#     group_column="store",
+#     value_column="unit_sales",
+#     top_stores_n=10,
+#     top_items_n=500,
+#     fn: str = None,
+# ):
+#     """
+#     Prepares the data by computing value counts and percentages for each group.
+
+#     Parameters:
+#         df (pd.DataFrame): Input DataFrame.
+#         group_column (str): Column to group by.
+#         value_column (str): Column to calculate percentages from.
+#         top_stores_n (int): Number of top stores to return.
+#         top_items_n (int): Number of top items to return.
+
+#     Returns:
+#         pd.DataFrame: DataFrame with counts and percentages for each group.
+#     """
+#     df = df.copy()
+#     df_top_stores = top_n_by_m(
+#         df, n_col=value_column, group_column=group_column, top_n=top_stores_n
+#     )
+#     valid_stores = df_top_stores.reset_index()[group_column].tolist()
+#     df_top_stores = df[df[group_column].isin(valid_stores)]
+#     df_top_stores = df_top_stores.reset_index()
+#     df_top_stores.drop(["index"], axis=1, inplace=True)
+#     logger.info(df_top_stores.head())
+#     df_top_items = top_n_by_m(
+#         df_top_stores, n_col=value_column, group_column="item", top_n=top_items_n
+#     )
+#     valid_items = df_top_items.reset_index()["item"].tolist()
+#     df_top_items = df_top_stores[df_top_stores["item"].isin(valid_items)]
+#     df_top_items = df_top_items.reset_index()
+#     df_top_items.drop(["index"], axis=1, inplace=True)
+#     logger.info(df_top_items.head())
+
+#     logger.info(f"Number of rows: {len(df_top_items)}")
+#     logger.info(f"Number of unique stores: {df_top_items['store'].nunique()}")
+#     logger.info(f"Number of unique items: {df_top_items['item'].nunique()}")
+#     logger.info(f"Shape of the dataset: {df.shape}")
+#     if fn:
+#         logger.info(f"Saving final_df to {fn}")
+#         df.to_csv(fn, index=False)
+#     return df
