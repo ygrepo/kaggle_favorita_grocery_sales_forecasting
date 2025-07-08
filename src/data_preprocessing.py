@@ -134,14 +134,14 @@ def prepare_data(
     # Merge with filtered data
     df = pd.merge(grid, df, on=["store", "item", "date"], how="left")
 
-    # Fill missing unit_sales with -1
+    # Fill missing unit_sales with NaN
     missing_mask = df[value_column].isna()
     num_missing = missing_mask.sum()
     df.loc[missing_mask, value_column] = np.nan
 
     # Logging
     logger.info(
-        f"Filled {num_missing} missing (store, item, date) rows with unit_sales = -1"
+        f"Filled {num_missing} missing (store, item, date) rows with unit_sales = NaN"
     )
     logger.info(f"Final dataset shape: {df.shape}")
     logger.info(f"Unique stores: {df['store'].nunique()}")

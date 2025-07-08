@@ -8,6 +8,16 @@ from sklearn.cluster import (
     SpectralCoclustering,
     HDBSCAN,
 )
+from pathlib import Path
+from src.utils import normalize_store_item_matrix
+
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def compute_spectral_clustering_cv_scores(
@@ -57,17 +67,18 @@ def compute_spectral_clustering_cv_scores(
     # 1.  Grid search
     # ───────────────────────────────────────────────────────────────────
     for n_row in n_clusters_row_range:
+        logger.info(f"Evaluating n_row={n_row}")
         for n_col in col_range:
             msg = f"Evaluating n_row={n_row}"
             if loop_over_col:
                 msg += f", n_col={n_col}"
-            print(msg)
+            logger.info(msg)
 
             pve_list, sil_list, ari_list = [], [], []
 
             for train_idx, test_idx in kf.split(X):
 
-                print(f"\tFold {kf.get_n_splits()}")
+                logger.info(f"\tFold {kf.get_n_splits()}")
                 # *NEW* — skip this fold if it has too few samples
                 if n_row > len(train_idx):
                     pve_list.append(np.nan)
@@ -152,7 +163,7 @@ def compute_spectral_clustering_cv_scores(
                     fail_msg = f"[FAIL] n_row={n_row}"
                     if loop_over_col:
                         fail_msg += f", n_col={n_col}"
-                    print(f"{fail_msg} → {e}")
+                    logger.error(f"{fail_msg} → {e}")
                     pve_list.append(np.nan)
                     sil_list.append(np.nan)
                     ari_list.append(np.nan)
@@ -168,3 +179,204 @@ def compute_spectral_clustering_cv_scores(
             )
 
     return pd.DataFrame(results)
+
+
+def compute_biclustering_scores(
+    data,
+    *,
+    model_class,
+    row_range=range(2, 6),
+    col_range=range(2, 6),
+    true_row_labels=None,
+    model_kwargs=None,
+    return_models=False,
+):
+    """
+    Evaluate clustering performance using both row and column cluster settings.
+    Optionally returns model and cluster assignments for plotting.
+    """
+
+    if model_kwargs is None:
+        model_kwargs = {}
+    model_kwargs = dict(model_kwargs)
+    model_kwargs.setdefault("random_state", 42)
+
+    X = np.asarray(data)
+    n_rows, n_cols = X.shape
+    results = []
+
+    for n_row in row_range:
+        if n_row > n_rows:
+            continue
+        for n_col in col_range:
+            if n_col is not None and n_col > n_cols:
+                continue
+
+            logger.info(f"Evaluating n_row={n_row}, n_col={n_col}")
+
+            try:
+                # Instantiate model
+                if model_class.__name__ == "SpectralBiclustering":
+                    model = model_class(n_clusters=(n_row, n_col), **model_kwargs)
+                elif model_class.__name__ == "SpectralCoclustering":
+                    model = model_class(n_clusters=n_row, **model_kwargs)
+                    n_col = np.nan
+                else:
+                    model = model_class(n_clusters=n_row, **model_kwargs)
+                    n_col = np.nan
+
+                model.fit(X)
+
+                # Get row/col labels
+                row_labels = (
+                    model.row_labels_
+                    if hasattr(model, "row_labels_")
+                    else (
+                        model.labels_
+                        if hasattr(model, "labels_")
+                        else np.argmax(model.rows_, axis=0)
+                    )
+                )
+                col_labels = (
+                    model.column_labels_
+                    if hasattr(model, "column_labels_")
+                    else (
+                        np.argmax(model.columns_, axis=0)
+                        if hasattr(model, "columns_")
+                        else np.arange(n_cols)
+                    )
+                )
+
+                # Compute % variance explained
+                global_mean = X.mean(axis=0)
+                total_ss = np.sum((X - global_mean) ** 2)
+
+                recon_error = sum(
+                    min(
+                        np.linalg.norm(xi - X[row_labels == cid].mean(axis=0)) ** 2
+                        for cid in range(n_row)
+                        if np.any(row_labels == cid)
+                    )
+                    for xi in X
+                )
+                pve = 100 * (1 - recon_error / total_ss)
+
+                predicted_labels = np.array(
+                    [
+                        np.argmin(
+                            [
+                                (
+                                    np.linalg.norm(
+                                        xi - X[row_labels == cid].mean(axis=0)
+                                    )
+                                    if np.any(row_labels == cid)
+                                    else np.inf
+                                )
+                                for cid in range(n_row)
+                            ]
+                        )
+                        for xi in X
+                    ]
+                )
+
+                ari = (
+                    adjusted_rand_score(true_row_labels, predicted_labels)
+                    if true_row_labels is not None
+                    else np.nan
+                )
+                try:
+                    sil = silhouette_score(X, predicted_labels)
+                except ValueError:
+                    sil = np.nan
+
+            except Exception as e:
+                logger.error(f"[FAIL] n_row={n_row}, n_col={n_col} → {e}")
+                pve, sil, ari, row_labels, col_labels, model = (
+                    np.nan,
+                    np.nan,
+                    np.nan,
+                    None,
+                    None,
+                    None,
+                )
+
+            result = {
+                "n_row": n_row,
+                "n_col": n_col,
+                "Explained Variance (%)": pve,
+                "Mean Silhouette": sil,
+                "Mean ARI": ari,
+                "row_labels": row_labels,
+                "col_labels": col_labels,
+            }
+            if return_models:
+                result["model"] = model
+
+            results.append(result)
+
+    return pd.DataFrame(results)
+
+
+def cluster_data(
+    df: pd.DataFrame,
+    *,
+    freq: str = "W",
+    store_item_matrix_fn: Path = None,
+    cluster_output_fn: Path = None,
+    output_fn: Path = None,
+    model_class=SpectralBiclustering,
+    row_range: range = range(2, 5),
+    col_range: range = range(2, 5),
+    model_kwargs=None,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    if model_kwargs is None:
+        model_kwargs = {}
+    norm_data = normalize_store_item_matrix(df, freq=freq)
+    logger.info(f"Number of items: {df['item'].nunique()}")
+    logger.info(f"Number of stores: {df['store'].nunique()}")
+    if store_item_matrix_fn:
+        logger.info(f"Saving store_item_matrix to {store_item_matrix_fn}")
+        norm_data.to_csv(store_item_matrix_fn, index=False)
+    cluster_df = compute_biclustering_scores(
+        data=norm_data.values,
+        model_class=model_class,
+        row_range=row_range,
+        col_range=col_range,
+        true_row_labels=None,
+        model_kwargs=model_kwargs,
+        return_models=True,
+    )
+    if cluster_output_fn:
+        logger.info(f"Saving cluster_df to {cluster_output_fn}")
+        cluster_df.to_csv(cluster_output_fn, index=False)
+    # Select the best clustering result
+    best_idx = cluster_df["Explained Variance (%)"].idxmax()
+    logger.info(f"Best clustering result: {cluster_df.loc[best_idx]}")
+    best_row = cluster_df.loc[best_idx]
+    best_model = best_row["model"]
+
+    store_labels = best_model.row_labels_
+    item_labels = best_model.column_labels_
+
+    # Map cluster labels to actual store and item IDs
+    store_ids = norm_data.index.tolist()
+    item_ids = norm_data.columns.tolist()
+
+    store_cluster_map = dict(zip(store_ids, store_labels))
+    item_cluster_map = dict(zip(item_ids, item_labels))
+
+    # Apply to original DataFrame
+    df["store_cluster"] = df["store"].map(store_cluster_map)
+    df["item_cluster"] = df["item"].map(item_cluster_map)
+    df["cluster"] = (
+        df["store_cluster"].astype(int).astype(str)
+        + "_"
+        + df["item_cluster"].astype(int).astype(str)
+    )
+    if output_fn:
+        logger.info(f"Saving df to {output_fn}")
+        df.to_csv(output_fn, index=False)
+    return df

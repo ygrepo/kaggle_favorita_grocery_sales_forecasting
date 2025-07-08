@@ -4,9 +4,6 @@ Training script for the Favorita Grocery Sales Forecasting model.
 
 This script handles the complete training pipeline including:
 - Data loading and preprocessing
-- Model training
-- Evaluation
-- Model saving
 - Logging
 """
 
