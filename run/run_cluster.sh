@@ -18,7 +18,7 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 # CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_100_item_sales_cluster.csv"
 # OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_100_item_cluster.csv"
 
-DATA_FN="${OUTPUT_DATA_DIR}/20250707_500_train_top_51_store_9000_item_sales.csv"
+DATA_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_9000_item_sales.csv"
 STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250707_500_top_51_store_9000_item_matrix.csv"
 CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_500_train_top_51_store_9000_item_sales_cluster.csv"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_500_train_top_51_store_9000_item_cluster.csv"
