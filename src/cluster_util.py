@@ -335,6 +335,7 @@ def cluster_data(
     if model_kwargs is None:
         model_kwargs = {}
     norm_data = normalize_store_item_matrix(df, freq=freq)
+    norm_data = norm_data.fillna(0)
     logger.info(f"Number of items: {df['item'].nunique()}")
     logger.info(f"Number of stores: {df['store'].nunique()}")
     if store_item_matrix_fn:
@@ -353,9 +354,15 @@ def cluster_data(
         logger.info(f"Saving cluster_df to {cluster_output_fn}")
         cluster_df.to_csv(cluster_output_fn, index=False)
     # Select the best clustering result
-    best_idx = cluster_df["Explained Variance (%)"].idxmax()
-    logger.info(f"Best clustering result: {cluster_df.loc[best_idx]}")
-    best_row = cluster_df.loc[best_idx]
+    if cluster_df["Explained Variance (%)"].notna().any():
+        best_idx = cluster_df["Explained Variance (%)"].idxmax()
+        best_row = cluster_df.loc[best_idx]
+    else:
+        logger.error(
+            "No valid clustering results: all entries have NaN Explained Variance"
+        )
+        return
+    logger.info(f"Best clustering result: {best_row}")
     best_model = best_row["model"]
 
     store_labels = best_model.row_labels_
