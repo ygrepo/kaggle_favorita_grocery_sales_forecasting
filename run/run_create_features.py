@@ -214,9 +214,9 @@ def main():
 
         # Load and preprocess data
         df = load_data(data_fn)
-        store_item = "44_1503844"
-        logger.info(f"Selected store_item: {store_item}")
-        df = df[df["store_item"] == store_item]
+        # store_item = "44_1503844"
+        # logger.info(f"Selected store_item: {store_item}")
+        # df = df[df["store_item"] == store_item]
 
         final_df = create_features(
             df,
