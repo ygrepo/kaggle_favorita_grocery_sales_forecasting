@@ -1012,22 +1012,7 @@ def plot_bicluster_heatmaps_grid(
 ):
     """
     Plots bicluster heatmaps in a grid layout using subplots.
-    Shows x-axis as stores and y-axis as items.
-
-    Parameters
-    ----------
-    data : array-like
-        Original 2D data matrix (stores x items).
-    results_df : pd.DataFrame
-        Output from compute_biclustering_scores with 'row_labels' and 'col_labels'.
-    heatmaps_per_row : int
-        Number of heatmaps per row.
-    figsize_per_heatmap : tuple
-        Size of each heatmap.
-    cmap : str
-        Colormap.
-    show_tick_labels : bool
-        Whether to show tick labels.
+    Shows x-axis as stores and y-axis as items, with cluster boundaries.
     """
     X = np.asarray(data)
     store_ids = np.array(data.index)
@@ -1059,8 +1044,8 @@ def plot_bicluster_heatmaps_grid(
         i, j = divmod(idx, heatmaps_per_row)
         ax = axes[i][j]
 
-        row_labels = row["row_labels"]  # for stores
-        col_labels = row["col_labels"]  # for items
+        row_labels = np.asarray(row["row_labels"])
+        col_labels = np.asarray(row["col_labels"])
         n_row = row["n_row"]
         n_col = row["n_col"]
 
@@ -1075,9 +1060,52 @@ def plot_bicluster_heatmaps_grid(
 
         sns.heatmap(reordered, cmap=cmap, cbar=False, ax=ax)
 
-        # Get store and item labels after reordering
+        # Draw horizontal boundaries between row clusters
+        row_boundaries = np.flatnonzero(np.diff(row_labels[row_order])) + 1
+        for y in row_boundaries:
+            ax.axhline(y, color="white", linewidth=1.5)
+
+        # Draw vertical boundaries between column clusters
+        if np.ndim(col_labels) == 1:
+            col_boundaries = np.flatnonzero(np.diff(col_labels[col_order])) + 1
+            for x in col_boundaries:
+                ax.axvline(x, color="white", linewidth=1.5)
+
+        # Tick labels
         reordered_store_ids = store_ids[row_order]
         reordered_item_ids = item_ids[col_order]
+
+        # Label cluster squares with (row_label, col_label)
+        unique_row_labels = np.unique(row_labels)
+        unique_col_labels = np.unique(col_labels)
+
+        for rl in unique_row_labels:
+            row_mask = row_labels[row_order] == rl
+            row_start = np.where(row_mask)[0][0]
+            row_end = np.where(row_mask)[0][-1]
+
+            for cl in unique_col_labels:
+                col_mask = col_labels[col_order] == cl
+                if not np.any(col_mask):
+                    continue  # skip if this column cluster is not present
+                col_start = np.where(col_mask)[0][0]
+                col_end = np.where(col_mask)[0][-1]
+
+                # Coordinates for center of the block
+                y_center = (row_start + row_end) / 2
+                x_center = (col_start + col_end) / 2
+
+                ax.text(
+                    x_center,
+                    y_center,
+                    f"({rl},{cl})",
+                    color="white",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                    bbox=dict(facecolor="black", alpha=0.4, boxstyle="round,pad=0.3"),
+                )
 
         if show_tick_labels:
             xticks = np.linspace(
@@ -1104,6 +1132,7 @@ def plot_bicluster_heatmaps_grid(
         ax.set_xlabel("Items")
         ax.set_ylabel("Stores")
 
+    # Remove empty axes
     for k in range(n_heatmaps, n_rows * heatmaps_per_row):
         i, j = divmod(k, heatmaps_per_row)
         fig.delaxes(axes[i][j])
@@ -1113,202 +1142,6 @@ def plot_bicluster_heatmaps_grid(
         plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close(fig)
-
-
-# def plot_bicluster_heatmaps_grid(
-#     data,
-#     results_df,
-#     *,
-#     heatmaps_per_row: int = 3,
-#     figsize_per_heatmap: tuple = (5, 4),
-#     cmap: str = "viridis",
-#     show_tick_labels: bool = True,
-#     fn: str | None = None,
-# ):
-#     """
-#     Plots bicluster heatmaps in a grid layout using subplots.
-#     Shows x-axis as store indices and y-axis as item indices.
-
-#     Parameters
-#     ----------
-#     data : array-like
-#         Original 2D data matrix (items x stores).
-#     results_df : pd.DataFrame
-#         DataFrame output from compute_biclustering_scores with 'row_labels' and 'col_labels'.
-#     heatmaps_per_row : int
-#         Number of heatmaps per row in the subplot grid.
-#     figsize_per_heatmap : tuple
-#         Size of each individual heatmap (width, height).
-#     cmap : str
-#         Colormap to use for heatmaps.
-#     show_tick_labels : bool
-#         Whether to show the actual index labels on the ticks.
-#     """
-#     X = np.asarray(data)
-#     n_items, n_stores = X.shape
-
-#     # Filter out invalid clustering results
-#     valid_results = [
-#         row
-#         for _, row in results_df.iterrows()
-#         if row["row_labels"] is not None and row["col_labels"] is not None
-#     ]
-
-#     n_heatmaps = len(valid_results)
-#     if n_heatmaps == 0:
-#         print("No valid bicluster results to plot.")
-#         return
-
-#     n_rows = math.ceil(n_heatmaps / heatmaps_per_row)
-#     fig, axes = plt.subplots(
-#         nrows=n_rows,
-#         ncols=heatmaps_per_row,
-#         figsize=(
-#             figsize_per_heatmap[0] * heatmaps_per_row,
-#             figsize_per_heatmap[1] * n_rows,
-#         ),
-#         squeeze=False,
-#     )
-
-#     for idx, row in enumerate(valid_results):
-#         i, j = divmod(idx, heatmaps_per_row)
-#         ax = axes[i][j]
-
-#         row_labels = row["row_labels"]
-#         col_labels = row["col_labels"]
-#         n_row = row["n_row"]
-#         n_col = row["n_col"]
-
-#         row_order = np.argsort(row_labels)
-#         col_order = (
-#             np.argsort(col_labels)
-#             if np.ndim(col_labels) == 1
-#             else np.arange(X.shape[1])
-#         )
-#         reordered = X[row_order, :][:, col_order]
-
-#         # Plot heatmap
-#         sns.heatmap(reordered, cmap=cmap, cbar=False, ax=ax)
-
-#         # Get actual item/store indices after sorting
-#         item_indices = np.arange(n_items)[row_order]
-#         store_indices = np.arange(n_stores)[col_order]
-
-#         if show_tick_labels:
-#             ax.set_xticks(
-#                 np.linspace(
-#                     0, len(store_indices) - 1, min(10, len(store_indices)), dtype=int
-#                 )
-#             )
-#             ax.set_yticks(
-#                 np.linspace(
-#                     0, len(item_indices) - 1, min(10, len(item_indices)), dtype=int
-#                 )
-#             )
-#             ax.set_xticklabels(store_indices[ax.get_xticks().astype(int)], rotation=90)
-#             ax.set_yticklabels(item_indices[ax.get_yticks().astype(int)])
-#         else:
-#             ax.set_xticks([])
-#             ax.set_yticks([])
-
-#         ax.set_title(f"n_row={n_row}, n_col={n_col}", fontsize=10)
-#         ax.set_xlabel("Stores")
-#         ax.set_ylabel("Items")
-
-#     # Remove unused subplots
-#     for k in range(n_heatmaps, n_rows * heatmaps_per_row):
-#         i, j = divmod(k, heatmaps_per_row)
-#         fig.delaxes(axes[i][j])
-
-#     plt.tight_layout()
-#     if fn:
-#         plt.savefig(fn, dpi=300, bbox_inches="tight")
-#     plt.show()
-#     plt.close(fig)
-
-
-# def plot_bicluster_heatmaps_grid(
-#     data,
-#     results_df,
-#     *,
-#     heatmaps_per_row: int = 3,
-#     figsize_per_heatmap: tuple = (5, 4),
-#     cmap: str = "viridis",
-#     fn: str | None = None,
-# ):
-#     """
-#     Plots bicluster heatmaps in a grid layout using subplots.
-
-#     Parameters
-#     ----------
-#     data : array-like
-#         Original 2D data matrix.
-#     results_df : pd.DataFrame
-#         DataFrame output from compute_biclustering_scores with 'row_labels' and 'col_labels'.
-#     heatmaps_per_row : int
-#         Number of heatmaps per row in the subplot grid.
-#     figsize_per_heatmap : tuple
-#         Size of each individual heatmap (width, height).
-#     cmap : str
-#         Colormap to use for heatmaps.
-#     """
-#     X = np.asarray(data)
-
-#     # Filter out invalid rows
-#     valid_results = [
-#         row
-#         for _, row in results_df.iterrows()
-#         if row["row_labels"] is not None and row["col_labels"] is not None
-#     ]
-
-#     n_heatmaps = len(valid_results)
-#     if n_heatmaps == 0:
-#         print("No valid bicluster results to plot.")
-#         return
-
-#     n_rows = math.ceil(n_heatmaps / heatmaps_per_row)
-#     fig, axes = plt.subplots(
-#         nrows=n_rows,
-#         ncols=heatmaps_per_row,
-#         figsize=(
-#             figsize_per_heatmap[0] * heatmaps_per_row,
-#             figsize_per_heatmap[1] * n_rows,
-#         ),
-#         squeeze=False,
-#     )
-
-#     for idx, row in enumerate(valid_results):
-#         i, j = divmod(idx, heatmaps_per_row)
-#         ax = axes[i][j]
-
-#         row_labels = row["row_labels"]
-#         col_labels = row["col_labels"]
-#         n_row = row["n_row"]
-#         n_col = row["n_col"]
-
-#         row_order = np.argsort(row_labels)
-#         col_order = (
-#             np.argsort(col_labels)
-#             if np.ndim(col_labels) == 1
-#             else np.arange(X.shape[1])
-#         )
-#         reordered = X[row_order, :][:, col_order]
-
-#         sns.heatmap(reordered, cmap=cmap, cbar=False, ax=ax)
-#         ax.set_title(f"n_row={n_row}, n_col={n_col}", fontsize=10)
-#         ax.set_xlabel("Item")
-#         ax.set_ylabel("Store")
-
-#     # Hide unused subplots
-#     for k in range(n_heatmaps, n_rows * heatmaps_per_row):
-#         i, j = divmod(k, heatmaps_per_row)
-#         fig.delaxes(axes[i][j])
-
-#     plt.tight_layout()
-#     if fn:
-#         plt.savefig(fn, dpi=300, bbox_inches="tight")
-#     plt.show()
-#     plt.close(fig)
 
 
 def plot_biclustering_elbows(
