@@ -137,6 +137,24 @@ def select_extreme_and_median_neighbors(
     else:
         median_neighbors = pd.DataFrame()
 
+    # Set indices for each group
+    top_idx = set(top_M.index)
+    bottom_idx = set(bottom_m.index)
+    med_idx = set(median_neighbors.index)
+
+    # Intersections
+    top_and_bottom = top_idx & bottom_idx
+    top_and_med = top_idx & med_idx
+    bottom_and_med = bottom_idx & med_idx
+
+    # Union of all indices
+    all_indices = top_idx | bottom_idx | med_idx
+
+    logger.info(f"Top ∩ Bottom: {len(top_and_bottom)}")
+    logger.info(f"Top ∩ Median: {len(top_and_med)}")
+    logger.info(f"Bottom ∩ Median: {len(bottom_and_med)}")
+    logger.info(f"Total unique groups: {len(all_indices)}")
+
     # Combine and remove duplicates
     result = pd.concat([bottom_m, top_M, median_neighbors]).drop_duplicates()
     return result
@@ -188,6 +206,14 @@ def prepare_data(
         Full (store, item, date) matrix with unit_sales filled as needed
     """
     df = df.copy()
+
+    n_items = df[[group_item_column]].drop_duplicates().reset_index(drop=True).nunique()
+    logger.info(f"# unique items: {n_items}")
+
+    n_stores = (
+        df[[group_store_column]].drop_duplicates().reset_index(drop=True).nunique()
+    )
+    logger.info(f"# unique stores: {n_stores}")
 
     # Select top-M items globally
     df_top_items = select_extreme_and_median_neighbors(
