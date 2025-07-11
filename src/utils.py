@@ -279,38 +279,64 @@ def generate_sales_features(
     log_level: str = "INFO",
     output_path: Optional[Path] = None,
 ) -> pd.DataFrame:
+    """
+    Generate rolling window sales features for pre-aggregated store-item-date sales rows.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must have columns: ['date', 'store', 'item', 'unit_sales'].
+        Each row corresponds to a unique (store, item, date).
+    window_size : int
+        Number of days in each rolling window.
+    calendar_aligned : bool
+        Use calendar-based windows if True.
+    log_level : str
+        Logging level.
+    output_path : Optional[Path]
+        Path to save output to.
+
+    Returns
+    -------
+    pd.DataFrame
+        Long-form table with features for each (store, item) across windows.
+    """
+
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    df["date"] = pd.to_datetime(df["date"])
-    df["store"] = df["store"].astype("category")
-    df["item"] = df["item"].astype("category")
-    df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
+    # Drop duplicates to get one id per store_item
     id_mapping = df[["store_item", "id"]].drop_duplicates()
 
+    df["date"] = pd.to_datetime(df["date"])
+
+    # Lookup dictionaries
+    logger.debug("Generating lookup dictionaries")
     store_to_cluster = (
         df.drop_duplicates("store")[["store", "store_cluster"]]
         .set_index("store")["store_cluster"]
         .to_dict()
     )
+    logger.debug(f"Store to cluster: {len(store_to_cluster)}")
     store_item_to_item_cluster = (
         df.drop_duplicates(["store", "item"])[["store", "item", "item_cluster"]]
         .set_index(["store", "item"])["item_cluster"]
         .to_dict()
     )
+    logger.debug(f"Store item to item cluster: {len(store_item_to_item_cluster)}")
 
+    logger.debug(f"Generating windows")
     windows = generate_aligned_windows(
         df, window_size, calendar_aligned=calendar_aligned
     )
-    rows = []  # List of lists instead of dicts
+    records: List[dict] = []
 
     prev_store_med = None
     prev_item_med = None
-
-    logger.debug(f"Generating windows")
     for window_dates in windows:
+        logger.debug(f"Window dates: {window_dates}")
         w_df = df[df["date"].isin(window_dates)]
 
+        # cluster-level medians
         store_med = (
             w_df.groupby(["store_cluster", "date"])["unit_sales"]
             .median()
@@ -323,69 +349,89 @@ def generate_sales_features(
         )
         store_median_curr = store_med.median(axis=1)
         item_median_curr = item_med.median(axis=1)
-
-        store_median_change = (
-            (
+        if prev_store_med is not None:
+            store_median_change = (
                 np.log1p(np.abs(store_median_curr - prev_store_med))
                 / prev_store_med.replace(0, np.nan)
                 * 100
             )
-            if prev_store_med is not None
-            else pd.Series(np.nan, index=store_median_curr.index)
-        )
+        else:
+            store_median_change = pd.Series(np.nan, index=store_median_curr.index)
 
-        item_median_change = (
-            (
+        if prev_item_med is not None:
+            item_median_change = (
                 np.log1p(np.abs(item_median_curr - prev_item_med))
                 / prev_item_med.replace(0, np.nan)
                 * 100
             )
-            if prev_item_med is not None
-            else pd.Series(np.nan, index=item_median_curr.index)
-        )
+        else:
+            item_median_change = pd.Series(np.nan, index=item_median_curr.index)
 
-        prev_store_med = store_median_curr
-        prev_item_med = item_median_curr
+        prev_store_med = store_median_curr.copy()
+        prev_item_med = item_median_curr.copy()
 
+        # no groupby needed for store-item, just pivot
         sales = w_df.pivot(
             index=["store", "item"], columns="date", values="unit_sales"
         ).fillna(0)
 
-        for row in sales.itertuples():
-            store, item = row.Index
-            logger.debug(f"Processing {store}_{item}")
+        iterator = sales.iterrows()
+        if logger.level == logging.DEBUG:
+            iterator = tqdm(
+                iterator,
+                total=sales.shape[0],
+                desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
+            )
+
+        for (store, item), sales_vals in iterator:
+            # logger.debug(f"Sales features: Processing {store}_{item}")
             s_cl = store_to_cluster.get(store, "ALL_STORES")
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
-            base = [
-                window_dates[0],
-                f"{store}_{item}",
-                store,
-                item,
-                s_cl,
-                i_cl,
-            ]
+
+            row = {
+                "store_item": f"{store}_{item}",
+                "store": store,
+                "item": item,
+                "store_cluster": s_cl,
+                "item_cluster": i_cl,
+                "start_date": window_dates[0],
+            }
 
             for i in range(1, window_size + 1):
                 d = window_dates[i - 1] if i - 1 < len(window_dates) else None
-                if d is None:
-                    continue
-                base += [
-                    getattr(row, str(d), 0),
-                    (
+
+                if d is not None:
+                    row[f"sales_day_{i}"] = sales_vals.get(d, 0)
+                    row[f"store_med_day_{i}"] = (
                         store_med.loc[s_cl].get(d, 0)
                         if s_cl in store_med.index
                         else np.nan
-                    ),
-                    store_median_change.get(s_cl, np.nan),
-                    item_med.loc[i_cl].get(d, 0) if i_cl in item_med.index else np.nan,
-                    item_median_change.get(i_cl, np.nan),
-                ]
+                    )
+                    row[f"store_cluster_logpct_change_{i}"] = (
+                        store_median_change.get(s_cl, np.nan)
+                        if s_cl in store_median_change.index
+                        else np.nan
+                    )
+                    row[f"item_med_day_{i}"] = (
+                        item_med.loc[i_cl].get(d, 0)
+                        if i_cl in item_med.index
+                        else np.nan
+                    )
+                    row[f"item_cluster_logpct_change_{i}"] = (
+                        item_median_change.get(i_cl, np.nan)
+                        if i_cl in item_median_change.index
+                        else np.nan
+                    )
+                else:
+                    continue
 
-            rows.append(base)
+            records.append(row)
 
-        del w_df, store_med, item_med, sales  # free memory
+    # ------------------------------------------------------------------
+    # Final column order
+    # ------------------------------------------------------------------
 
-    base_cols = [
+    cols = [
         "start_date",
         "store_item",
         "store",
@@ -393,218 +439,25 @@ def generate_sales_features(
         "store_cluster",
         "item_cluster",
     ]
-    feature_cols = [
+    cols += [
         f"{prefix}{i}"
         for prefix in (
             "sales_day_",
             "store_med_day_",
-            "store_cluster_logpct_change_",
             "item_med_day_",
+            "store_cluster_logpct_change_",
             "item_cluster_logpct_change_",
         )
         for i in range(1, window_size + 1)
     ]
-
-    all_cols = base_cols + feature_cols
-
-    df_feat = pd.DataFrame(rows, columns=all_cols[: len(rows[0])] if rows else all_cols)
-    df_feat = df_feat.merge(id_mapping, on="store_item", how="left")
-    df_feat.insert(1, "id", df_feat.pop("id"))
-
+    df = pd.DataFrame(records, columns=cols) if records else pd.DataFrame(cols)
+    df = df.merge(id_mapping, on=["store_item"], how="left")
+    cols.insert(cols.index("start_date") + 1, "id")
+    df = df[cols]
     if output_path is not None:
         logger.info(f"Saving sales features to {output_path}")
-        df_feat.to_csv(output_path, index=False)
-
-    return df_feat
-
-
-# def generate_sales_features(
-#     df: pd.DataFrame,
-#     window_size: int = 5,
-#     *,
-#     calendar_aligned: bool = True,
-#     log_level: str = "INFO",
-#     output_path: Optional[Path] = None,
-# ) -> pd.DataFrame:
-#     """
-#     Generate rolling window sales features for pre-aggregated store-item-date sales rows.
-
-#     Parameters
-#     ----------
-#     df : pd.DataFrame
-#         Must have columns: ['date', 'store', 'item', 'unit_sales'].
-#         Each row corresponds to a unique (store, item, date).
-#     window_size : int
-#         Number of days in each rolling window.
-#     calendar_aligned : bool
-#         Use calendar-based windows if True.
-#     log_level : str
-#         Logging level.
-#     output_path : Optional[Path]
-#         Path to save output to.
-
-#     Returns
-#     -------
-#     pd.DataFrame
-#         Long-form table with features for each (store, item) across windows.
-#     """
-
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-#     # Drop duplicates to get one id per store_item
-#     id_mapping = df[["store_item", "id"]].drop_duplicates()
-
-#     df["date"] = pd.to_datetime(df["date"])
-
-#     # Lookup dictionaries
-#     logger.debug("Generating lookup dictionaries")
-#     store_to_cluster = (
-#         df.drop_duplicates("store")[["store", "store_cluster"]]
-#         .set_index("store")["store_cluster"]
-#         .to_dict()
-#     )
-#     logger.debug(f"Store to cluster: {len(store_to_cluster)}")
-#     store_item_to_item_cluster = (
-#         df.drop_duplicates(["store", "item"])[["store", "item", "item_cluster"]]
-#         .set_index(["store", "item"])["item_cluster"]
-#         .to_dict()
-#     )
-#     logger.debug(f"Store item to item cluster: {len(store_item_to_item_cluster)}")
-
-#     logger.debug(f"Generating windows")
-#     windows = generate_aligned_windows(
-#         df, window_size, calendar_aligned=calendar_aligned
-#     )
-#     records: List[dict] = []
-
-#     prev_store_med = None
-#     prev_item_med = None
-#     for window_dates in windows:
-#         logger.debug(f"Window dates: {window_dates}")
-#         w_df = df[df["date"].isin(window_dates)]
-
-#         # cluster-level medians
-#         store_med = (
-#             w_df.groupby(["store_cluster", "date"])["unit_sales"]
-#             .median()
-#             .unstack(fill_value=0)
-#         )
-#         item_med = (
-#             w_df.groupby(["item_cluster", "date"])["unit_sales"]
-#             .median()
-#             .unstack(fill_value=0)
-#         )
-#         store_median_curr = store_med.median(axis=1)
-#         item_median_curr = item_med.median(axis=1)
-#         if prev_store_med is not None:
-#             store_median_change = (
-#                 np.log1p(np.abs(store_median_curr - prev_store_med))
-#                 / prev_store_med.replace(0, np.nan)
-#                 * 100
-#             )
-#         else:
-#             store_median_change = pd.Series(np.nan, index=store_median_curr.index)
-
-#         if prev_item_med is not None:
-#             item_median_change = (
-#                 np.log1p(np.abs(item_median_curr - prev_item_med))
-#                 / prev_item_med.replace(0, np.nan)
-#                 * 100
-#             )
-#         else:
-#             item_median_change = pd.Series(np.nan, index=item_median_curr.index)
-
-#         prev_store_med = store_median_curr.copy()
-#         prev_item_med = item_median_curr.copy()
-
-#         # no groupby needed for store-item, just pivot
-#         sales = w_df.pivot(
-#             index=["store", "item"], columns="date", values="unit_sales"
-#         ).fillna(0)
-
-#         iterator = sales.iterrows()
-#         if logger.level == logging.DEBUG:
-#             iterator = tqdm(
-#                 iterator,
-#                 total=sales.shape[0],
-#                 desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
-#             )
-
-#         for (store, item), sales_vals in iterator:
-#             # logger.debug(f"Sales features: Processing {store}_{item}")
-#             s_cl = store_to_cluster.get(store, "ALL_STORES")
-#             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
-
-#             row = {
-#                 "store_item": f"{store}_{item}",
-#                 "store": store,
-#                 "item": item,
-#                 "store_cluster": s_cl,
-#                 "item_cluster": i_cl,
-#                 "start_date": window_dates[0],
-#             }
-
-#             for i in range(1, window_size + 1):
-#                 d = window_dates[i - 1] if i - 1 < len(window_dates) else None
-
-#                 if d is not None:
-#                     row[f"sales_day_{i}"] = sales_vals.get(d, 0)
-#                     row[f"store_med_day_{i}"] = (
-#                         store_med.loc[s_cl].get(d, 0)
-#                         if s_cl in store_med.index
-#                         else np.nan
-#                     )
-#                     row[f"store_cluster_logpct_change_{i}"] = (
-#                         store_median_change.get(s_cl, np.nan)
-#                         if s_cl in store_median_change.index
-#                         else np.nan
-#                     )
-#                     row[f"item_med_day_{i}"] = (
-#                         item_med.loc[i_cl].get(d, 0)
-#                         if i_cl in item_med.index
-#                         else np.nan
-#                     )
-#                     row[f"item_cluster_logpct_change_{i}"] = (
-#                         item_median_change.get(i_cl, np.nan)
-#                         if i_cl in item_median_change.index
-#                         else np.nan
-#                     )
-#                 else:
-#                     continue
-
-#             records.append(row)
-
-#     # ------------------------------------------------------------------
-#     # Final column order
-#     # ------------------------------------------------------------------
-
-#     cols = [
-#         "start_date",
-#         "store_item",
-#         "store",
-#         "item",
-#         "store_cluster",
-#         "item_cluster",
-#     ]
-#     cols += [
-#         f"{prefix}{i}"
-#         for prefix in (
-#             "sales_day_",
-#             "store_med_day_",
-#             "item_med_day_",
-#             "store_cluster_logpct_change_",
-#             "item_cluster_logpct_change_",
-#         )
-#         for i in range(1, window_size + 1)
-#     ]
-#     df = pd.DataFrame(records, columns=cols) if records else pd.DataFrame(cols)
-#     df = df.merge(id_mapping, on=["store_item"], how="left")
-#     cols.insert(cols.index("start_date") + 1, "id")
-#     df = df[cols]
-#     if output_path is not None:
-#         logger.info(f"Saving sales features to {output_path}")
-#         df.to_csv(output_path, index=False)
-#     return df
+        df.to_csv(output_path, index=False)
+    return df
 
 
 def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.DataFrame:
@@ -641,45 +494,6 @@ def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.Data
             result.append(row)
 
     return pd.DataFrame(result)
-
-
-# def add_y_targets_from_shift(df, window_size=16):
-#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-#     result = []
-
-#     for _, group in df.groupby("store_item"):
-#         group = group.sort_values("start_date").reset_index(drop=True)
-
-#         for i in range(len(group) - 1):
-#             cur_row = group.iloc[i]
-#             next_row = group.iloc[i + 1]
-
-#             # Check if next start_date is exactly +16 days
-#             if (next_row["start_date"] - cur_row["start_date"]).days != window_size:
-#                 continue
-
-#             row = cur_row.copy()
-#             for col in group.columns:
-#                 if any(
-#                     col.startswith(prefix)
-#                     for prefix in [
-#                         "sales_day_",
-#                         "store_med_day_",
-#                         "item_med_day_",
-#                         "store_cluster_logpct_change",
-#                         "item_cluster_logpct_change",
-#                         "dayofweek_",
-#                         "weekofmonth_",
-#                         "monthofyear_",
-#                         "paycycle_",
-#                         "season_",
-#                     ]
-#                 ):
-#                     row[f"y_{col}"] = next_row[col]
-
-#             result.append(row)
-
-#     return pd.DataFrame(result)
 
 
 def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:
@@ -720,19 +534,19 @@ def prepare_training_data_from_raw_df(
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
-    if sales_fn is not None:
-        if sales_fn.exists():
-            logger.info(f"Loading sales features from {sales_fn}")
-            sales_df = pd.read_csv(sales_fn)
-        else:
-            logger.info(f"Generating sales features to {sales_fn}")
-            sales_df = generate_sales_features(
-                df,
-                window_size,
-                calendar_aligned=calendar_aligned,
-                log_level=log_level,
-                output_path=sales_fn,
-            )
+    # # if sales_fn is not None:
+    # #     if sales_fn.exists():
+    # #         logger.info(f"Loading sales features from {sales_fn}")
+    # #         sales_df = pd.read_csv(sales_fn)
+    # #     else:
+    # #         logger.info(f"Generating sales features to {sales_fn}")
+    # #         sales_df = generate_sales_features(
+    # #             df,
+    # #             window_size,
+    # #             calendar_aligned=calendar_aligned,
+    # #             log_level=log_level,
+    # #             output_path=sales_fn,
+    #         )
 
     if cyc_fn is not None:
         if cyc_fn.exists():
@@ -748,21 +562,22 @@ def prepare_training_data_from_raw_df(
                 output_path=cyc_fn,
             )
 
-    sales_df["start_date"] = pd.to_datetime(sales_df["start_date"])
-    cyc_df["start_date"] = pd.to_datetime(cyc_df["start_date"])
+    return pd.DataFrame()
+    # sales_df["start_date"] = pd.to_datetime(sales_df["start_date"])
+    # cyc_df["start_date"] = pd.to_datetime(cyc_df["start_date"])
 
-    logger.info(f"Merging sales and cyclical features")
-    merged_df = pd.merge(
-        sales_df,
-        cyc_df,
-        on=["start_date", "id", "store_item", "store", "item"],
-    )
+    # logger.info(f"Merging sales and cyclical features")
+    # merged_df = pd.merge(
+    #     sales_df,
+    #     cyc_df,
+    #     on=["start_date", "id", "store_item", "store", "item"],
+    # )
 
-    logger.info(f"merged_df.shape: {merged_df.shape}")
-    merged_df = add_y_targets_from_shift(merged_df, window_size)
-    logger.info(f"merged_df.shape: {merged_df.shape}")
+    # logger.info(f"merged_df.shape: {merged_df.shape}")
+    # merged_df = add_y_targets_from_shift(merged_df, window_size)
+    # logger.info(f"merged_df.shape: {merged_df.shape}")
 
-    return merged_df
+    # return merged_df
 
 
 # Redefine RunningMedian class
