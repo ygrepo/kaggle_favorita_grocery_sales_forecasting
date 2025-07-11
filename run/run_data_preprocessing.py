@@ -203,10 +203,10 @@ def main():
 
         # Load and preprocess data
         df = load_data(data_fn)
-        store_item = "44_1503844"
-        logger.info(f"Selected store_item: {store_item}")
-        df = df[df["store_item"] == store_item]
-        df.to_csv("./output/data/20250711_train_44_1503844.csv", index=False)
+        # store_item = "44_1503844"
+        # logger.info(f"Selected store_item: {store_item}")
+        # df = df[df["store_item"] == store_item]
+        # df.to_csv("./output/data/20250711_train_44_1503844.csv", index=False)
 
         # Create features
         df = prepare_data(
