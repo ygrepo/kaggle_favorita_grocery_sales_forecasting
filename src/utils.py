@@ -109,7 +109,6 @@ def generate_aligned_windows(
     if window_size <= 0:
         raise ValueError("`window_size` must be a positive integer.")
 
-    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
     if calendar_aligned:
@@ -160,7 +159,6 @@ def generate_cyclical_features(
 
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
     cols = [
         "start_date",
@@ -308,7 +306,6 @@ def generate_sales_features(
     # Drop duplicates to get one id per store_item
     id_mapping = df[["store_item", "id"]].drop_duplicates()
 
-    df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
     # Lookup dictionaries
@@ -323,6 +320,7 @@ def generate_sales_features(
         .to_dict()
     )
 
+    logger.debug(f"Generating windows")
     windows = generate_aligned_windows(
         df, window_size, calendar_aligned=calendar_aligned
     )
