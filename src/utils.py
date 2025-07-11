@@ -34,7 +34,7 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     """Return feature and label column names for a given window size."""
     meta_cols = [
         "start_date",
-        "id",
+        # "id",
         "store_item",
         "store_cluster",
         "item_cluster",
@@ -59,17 +59,18 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     ]
 
     x_feature_cols = x_sales_features + x_cyclical_features
-    label_cols = [f"y_{c}" for c in x_feature_cols]
-    y_sales_features = [f"y_{c}" for c in x_sales_features]
-    y_cyclical_features = [f"y_{c}" for c in x_cyclical_features]
+    label_cols = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
+    # label_cols = [f"y_{c}" for c in x_feature_cols]
+    # y_sales_features = [f"y_{c}" for c in x_sales_features]
+    # y_cyclical_features = [f"y_{c}" for c in x_cyclical_features]
     return (
         meta_cols,
         x_sales_features,
         x_cyclical_features,
         x_feature_cols,
         label_cols,
-        y_sales_features,
-        y_cyclical_features,
+        # y_sales_features,
+        # y_cyclical_features,
     )
 
 
@@ -361,11 +362,10 @@ def generate_sales_features_numpy(
             iterator = tqdm(
                 iterator,
                 total=sales.shape[0],
+                leave=False,
                 desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
             )
-        for (store, item), sales_vals in tqdm(
-            sales.iterrows(), total=sales.shape[0], leave=False, desc="Store-Item pairs"
-        ):
+        for (store, item), sales_vals in iterator:
             s_cl = store_to_cluster.get(store, "ALL_STORES")
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
 
@@ -402,8 +402,8 @@ def generate_sales_features_numpy(
 
             records.append(row)
 
-        del w_df, store_med, item_med, sales
-        gc.collect()
+    del w_df, store_med, item_med, sales
+    gc.collect()
 
     base_cols = [
         "start_date",
@@ -597,7 +597,7 @@ def generate_sales_features(
 
             records.append(row)
 
-    # 🧼 Explicitly free up memory for each window
+    # Explicitly free up memory for each window
     del store_med, item_med
     gc.collect()
     del sales
