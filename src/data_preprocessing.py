@@ -110,10 +110,12 @@ def select_extreme_and_median_neighbors(
     # Get extremes
     if m > 0:
         bottom_m = sorted_grouped.head(m)
+        logger.info(f"Selected {len(bottom_m)} bottom groups")
     else:
         bottom_m = pd.DataFrame()
     if M > 0:
         top_M = sorted_grouped.tail(M)
+        logger.info(f"Selected {len(top_M)} top groups")
     else:
         top_M = pd.DataFrame()
 
@@ -131,6 +133,7 @@ def select_extreme_and_median_neighbors(
             .head(2 * med)
             .drop(columns="dist_to_median")
         )
+        logger.info(f"Selected {len(median_neighbors)} median groups")
     else:
         median_neighbors = pd.DataFrame()
 
