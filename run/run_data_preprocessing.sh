@@ -20,6 +20,8 @@ LOG_LEVEL="DEBUG"
 ITEM_TOP_N=100
 ITEM_MED_N=50
 ITEM_BOTTOM_N=100
+ITEM_FN="${OUTPUT_DATA_DIR}/20250711_train_top_51_store_item_sale.csv"
+STORE_FN="${OUTPUT_DATA_DIR}/20250711_train_top_51_store_300_store_sale.csv"
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
@@ -36,6 +38,8 @@ while [[ $# -gt 0 ]]; do
     --item-top-n) ITEM_TOP_N="$2"; shift 2 ;;
     --item-med-n) ITEM_MED_N="$2"; shift 2 ;;
     --item-bottom-n) ITEM_BOTTOM_N="$2"; shift 2 ;;
+    --item-fn) ITEM_FN="$2"; shift 2 ;;
+    --store-fn) STORE_FN="$2"; shift 2 ;;
     --group-store-column) GROUP_STORE_COLUMN="$2"; shift 2 ;;
     --group-item-column) GROUP_ITEM_COLUMN="$2"; shift 2 ;;
     --value-column) VALUE_COLUMN="$2"; shift 2 ;;
@@ -69,9 +73,11 @@ python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --output-fn "$OUTPUT_FN" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \
+  --store-fn "$STORE_FN" \
   --item-top-n "$ITEM_TOP_N" \
   --item-med-n "$ITEM_MED_N" \
   --item-bottom-n "$ITEM_BOTTOM_N" \
+  --item-fn "$ITEM_FN" \
   --group-store-column "$GROUP_STORE_COLUMN" \
   --group-item-column "$GROUP_ITEM_COLUMN" \
   --value-column "$VALUE_COLUMN" \

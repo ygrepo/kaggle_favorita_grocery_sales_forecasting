@@ -80,7 +80,13 @@ def count_percent(series, n=3):
 
 
 def select_extreme_and_median_neighbors(
-    df, n_col="unit_sales", group_column="store_nbr", M=0, m=0, med=0
+    df,
+    n_col="unit_sales",
+    group_column="store_nbr",
+    M=0,
+    m=0,
+    med=0,
+    fn: str = None,
 ):
     """
     Returns M highest, m lowest, and 2*med around the median total sales groups.
@@ -158,6 +164,9 @@ def select_extreme_and_median_neighbors(
     # Combine and remove duplicates
     result = pd.concat([bottom_m, top_M, median_neighbors])
     # .drop_duplicates()
+    if fn:
+        logger.info(f"Saving final_df to {fn}")
+        df.to_csv(fn, index=False)
     return result
 
 
@@ -172,6 +181,8 @@ def prepare_data(
     item_top_n=0,
     item_med_n=0,
     item_bottom_n=0,
+    item_fn: str = None,
+    store_fn: str = None,
     fn: str = None,
 ):
     """
@@ -198,6 +209,10 @@ def prepare_data(
         Number of items to retain on each side of the median
     item_bottom_n : int
         Number of bottom items to retain
+    item_fn : str or None
+        If given, saves the selected items to this path
+    store_fn : str or None
+        If given, saves the selected stores to this path
     fn : str or None
         If given, saves the resulting DataFrame to this path
 
@@ -219,6 +234,7 @@ def prepare_data(
         M=item_top_n,
         m=item_bottom_n,
         med=item_med_n,
+        fn=item_fn,
     )
     logger.info(f"Selected top items: {df_top_items.head()}")
     valid_items = df_top_items.reset_index()[group_item_column].tolist()
@@ -235,6 +251,7 @@ def prepare_data(
         M=store_top_n,
         m=store_bottom_n,
         med=store_med_n,
+        fn=store_fn,
     )
     logger.info(f"Selected top stores: {df_top_stores.head()}")
     valid_stores = df_top_stores.reset_index()[group_store_column].tolist()

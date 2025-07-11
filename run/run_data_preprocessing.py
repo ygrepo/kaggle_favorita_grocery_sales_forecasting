@@ -100,6 +100,12 @@ def parse_args():
         help="Number of bottom stores to return",
     )
     parser.add_argument(
+        "--store-fn",
+        type=str,
+        default="",
+        help="Path to store file (relative to project root)",
+    )
+    parser.add_argument(
         "--item-top-n",
         type=int,
         default=0,
@@ -116,6 +122,12 @@ def parse_args():
         type=int,
         default=0,
         help="Number of bottom items to return",
+    )
+    parser.add_argument(
+        "--item-fn",
+        type=str,
+        default="",
+        help="Path to item file (relative to project root)",
     )
     parser.add_argument(
         "--group-store-column",
@@ -194,9 +206,11 @@ def main():
         logger.info(f"  Store top n: {args.store_top_n}")
         logger.info(f"  Store med n: {args.store_med_n}")
         logger.info(f"  Store bottom n: {args.store_bottom_n}")
+        logger.info(f"  Store fn: {args.store_fn}")
         logger.info(f"  Item top n: {args.item_top_n}")
         logger.info(f"  Item med n: {args.item_med_n}")
         logger.info(f"  Item bottom n: {args.item_bottom_n}")
+        logger.info(f"  Item fn: {args.item_fn}")
         logger.info(f"  Group store column: {args.group_store_column}")
         logger.info(f"  Group item column: {args.group_item_column}")
         logger.info(f"  Value column: {args.value_column}")
@@ -220,6 +234,8 @@ def main():
             item_top_n=args.item_top_n,
             item_med_n=args.item_med_n,
             item_bottom_n=args.item_bottom_n,
+            item_fn=args.item_fn,
+            store_fn=args.store_fn,
             fn=output_fn,
         )
 
