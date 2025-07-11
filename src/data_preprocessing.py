@@ -79,13 +79,65 @@ def count_percent(series, n=3):
     return result
 
 
+def select_extreme_and_median_neighbors(
+    df, n_col="unit_sales", group_column="store_nbr", M=0, m=0, med=0
+):
+    """
+    Returns M highest, m lowest, and 2*med around the median total sales groups.
+
+    Parameters:
+        df (pd.DataFrame): Input DataFrame.
+        n_col (str): Column to sum (e.g., 'unit_sales').
+        group_column (str): Column to group by (e.g., 'store_nbr').
+        M (int): Number of top (max) groups to return.
+        m (int): Number of bottom (min) groups to return.
+        med (int): Number of groups to return on each side of the median.
+
+    Returns:
+        pd.DataFrame: Combined DataFrame of selected groups.
+    """
+    grouped = (
+        df.groupby(group_column).agg({n_col: "sum"}).rename(columns={n_col: "total"})
+    )
+    sorted_grouped = grouped.sort_values("total")
+
+    # Get extremes
+    if m > 0:
+        bottom_m = sorted_grouped.head(m)
+    else:
+        bottom_m = pd.DataFrame()
+    if M > 0:
+        top_M = sorted_grouped.tail(M)
+    else:
+        top_M = pd.DataFrame()
+
+    # Find median-centered indices
+    if med > 0:
+        n = len(sorted_grouped)
+        mid = n // 2
+        # Make sure there is enough data
+        med_indices = range(max(0, mid - med), min(n, mid + med))
+
+        median_neighbors = sorted_grouped.iloc[list(med_indices)]
+    else:
+        median_neighbors = pd.DataFrame()
+
+    # Combine and remove duplicates
+    result = pd.concat([bottom_m, top_M, median_neighbors]).drop_duplicates()
+    return result
+
+
 def prepare_data(
     df,
     group_store_column="store",
     group_item_column="item",
     value_column="unit_sales",
-    top_stores_n=10,
-    top_items_n=500,
+    store_top_n=0,
+    store_med_n=0,
+    store_bottom_n=0,
+    item_top_n=0,
+    item_med_n=0,
+    item_bottom_n=0,
     fn: str = None,
 ):
     """
@@ -100,10 +152,18 @@ def prepare_data(
         Column used to select top-N groups (typically "store")
     value_column : str
         The sales value to aggregate (typically "unit_sales")
-    top_stores_n : int
+    store_top_n : int
         Number of top stores to retain
-    top_items_n : int
+    store_med_n : int
+        Number of stores to retain on each side of the median
+    store_bottom_n : int
+        Number of bottom stores to retain
+    item_top_n : int
         Number of globally top items to retain
+    item_med_n : int
+        Number of items to retain on each side of the median
+    item_bottom_n : int
+        Number of bottom items to retain
     fn : str or None
         If given, saves the resulting DataFrame to this path
 
@@ -115,14 +175,30 @@ def prepare_data(
     df = df.copy()
 
     # Select top-M items globally
-    df_top_items = top_n_by_m(
-        df, n_col=value_column, group_column=group_item_column, top_n=top_items_n
+    df_top_items = select_extreme_and_median_neighbors(
+        df,
+        n_col=value_column,
+        group_column=group_item_column,
+        M=item_top_n,
+        m=item_bottom_n,
+        med=item_med_n,
     )
+    # df_top_items = top_n_by_m(
+    #     df, n_col=value_column, group_column=group_item_column, top_n=top_items_n
+    # )
     valid_items = df_top_items.reset_index()[group_item_column].tolist()
 
     # Select top-N stores globally
-    df_top_stores = top_n_by_m(
-        df, n_col=value_column, group_column=group_store_column, top_n=top_stores_n
+    # df_top_stores = top_n_by_m(
+    #     df, n_col=value_column, group_column=group_store_column, top_n=top_stores_n
+    # )
+    df_top_stores = select_extreme_and_median_neighbors(
+        df,
+        n_col=value_column,
+        group_column=group_store_column,
+        M=store_top_n,
+        m=store_bottom_n,
+        med=store_med_n,
     )
     valid_stores = df_top_stores.reset_index()[group_store_column].tolist()
     unique_dates = df["date"].dropna().unique()

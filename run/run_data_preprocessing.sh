@@ -13,11 +13,12 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/data"
 DATA_FN="${DATA_DIR}/20250707_train.csv"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_100_item.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_300_item.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
-TOP_STORES_N=51
-TOP_ITEMS_N=100
+ITEM_TOP_N=100
+ITEM_MED_N=50
+ITEM_BOTTOM_N=100
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
@@ -31,8 +32,9 @@ while [[ $# -gt 0 ]]; do
     --output-fn) OUTPUT_FN="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     --log-level) LOG_LEVEL="$2"; shift 2 ;;
-    --top-stores-n) TOP_STORES_N="$2"; shift 2 ;;
-    --top-items-n) TOP_ITEMS_N="$2"; shift 2 ;;
+    --item-top-n) ITEM_TOP_N="$2"; shift 2 ;;
+    --item-med-n) ITEM_MED_N="$2"; shift 2 ;;
+    --item-bottom-n) ITEM_BOTTOM_N="$2"; shift 2 ;;
     --group-store-column) GROUP_STORE_COLUMN="$2"; shift 2 ;;
     --group-item-column) GROUP_ITEM_COLUMN="$2"; shift 2 ;;
     --value-column) VALUE_COLUMN="$2"; shift 2 ;;
@@ -54,8 +56,9 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
-echo "Top stores n: $TOP_STORES_N" | tee -a "$LOG_FILE"
-echo "Top items n: $TOP_ITEMS_N" | tee -a "$LOG_FILE"
+echo "Top items n: $ITEM_TOP_N" | tee -a "$LOG_FILE"
+echo "Median items n: $ITEM_MED_N" | tee -a "$LOG_FILE"
+echo "Bottom items n: $ITEM_BOTTOM_N" | tee -a "$LOG_FILE"
 echo "Group Store column: $GROUP_STORE_COLUMN" | tee -a "$LOG_FILE"
 echo "Group Item column: $GROUP_ITEM_COLUMN" | tee -a "$LOG_FILE"
 echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
@@ -65,8 +68,9 @@ python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --output-fn "$OUTPUT_FN" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \
-  --top-stores-n "$TOP_STORES_N" \
-  --top-items-n "$TOP_ITEMS_N" \
+  --item-top-n "$ITEM_TOP_N" \
+  --item-med-n "$ITEM_MED_N" \
+  --item-bottom-n "$ITEM_BOTTOM_N" \
   --group-store-column "$GROUP_STORE_COLUMN" \
   --group-item-column "$GROUP_ITEM_COLUMN" \
   --value-column "$VALUE_COLUMN" \

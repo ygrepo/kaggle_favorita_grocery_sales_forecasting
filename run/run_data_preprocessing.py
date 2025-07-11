@@ -82,16 +82,40 @@ def parse_args():
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
-        "--top-stores-n",
+        "--store-top-n",
         type=int,
-        default=10,
+        default=0,
         help="Number of top stores to return",
     )
     parser.add_argument(
-        "--top-items-n",
+        "--store-med-n",
         type=int,
-        default=500,
+        default=0,
+        help="Number of top stores to return",
+    )
+    parser.add_argument(
+        "--store-bottom-n",
+        type=int,
+        default=0,
+        help="Number of bottom stores to return",
+    )
+    parser.add_argument(
+        "--item-top-n",
+        type=int,
+        default=0,
         help="Number of top items to return",
+    )
+    parser.add_argument(
+        "--item-med-n",
+        type=int,
+        default=0,
+        help="Number of top items to return",
+    )
+    parser.add_argument(
+        "--item-bottom-n",
+        type=int,
+        default=0,
+        help="Number of bottom items to return",
     )
     parser.add_argument(
         "--group-store-column",
@@ -167,14 +191,21 @@ def main():
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Output fn: {output_fn}")
-        logger.info(f"  Top stores n: {args.top_stores_n}")
-        logger.info(f"  Top items n: {args.top_items_n}")
+        logger.info(f"  Store top n: {args.store_top_n}")
+        logger.info(f"  Store med n: {args.store_med_n}")
+        logger.info(f"  Store bottom n: {args.store_bottom_n}")
+        logger.info(f"  Item top n: {args.item_top_n}")
+        logger.info(f"  Item med n: {args.item_med_n}")
+        logger.info(f"  Item bottom n: {args.item_bottom_n}")
         logger.info(f"  Group store column: {args.group_store_column}")
         logger.info(f"  Group item column: {args.group_item_column}")
         logger.info(f"  Value column: {args.value_column}")
 
         # Load and preprocess data
         df = load_data(data_fn)
+        store_item = "44_1503844"
+        logger.info(f"Selected store_item: {store_item}")
+        df = df[df["store_item"] == store_item]
 
         # Create features
         df = prepare_data(
@@ -182,8 +213,12 @@ def main():
             group_store_column=args.group_store_column,
             group_item_column=args.group_item_column,
             value_column=args.value_column,
-            top_stores_n=args.top_stores_n,
-            top_items_n=args.top_items_n,
+            store_top_n=args.store_top_n,
+            store_med_n=args.store_med_n,
+            store_bottom_n=args.store_bottom_n,
+            item_top_n=args.item_top_n,
+            item_med_n=args.item_med_n,
+            item_bottom_n=args.item_bottom_n,
             fn=output_fn,
         )
 
