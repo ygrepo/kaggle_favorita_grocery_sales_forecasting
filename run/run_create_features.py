@@ -234,9 +234,7 @@ def main():
             _,
             _,
             x_feature_cols,
-            label_cols,
-            _,
-            _,
+            label_cols
         ) = build_feature_and_label_cols(window_size=window_size)
         # Save final_df to csv
         logger.info(f"Saving final_df to {output_fn}")
