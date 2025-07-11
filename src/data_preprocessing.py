@@ -200,6 +200,7 @@ def prepare_data(
         m=store_bottom_n,
         med=store_med_n,
     )
+    logger.info(f"Selected top stores: {df_top_stores.head()}")
     valid_stores = df_top_stores.reset_index()[group_store_column].tolist()
     unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
