@@ -309,7 +309,7 @@ def generate_sales_features(
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Drop duplicates to get one id per store_item
-    id_mapping = df[["store_item", "id"]].drop_duplicates()
+    # id_mapping = df[["store_item", "id"]].drop_duplicates()
 
     df["date"] = pd.to_datetime(df["date"])
 
@@ -465,10 +465,10 @@ def generate_sales_features(
     df = pd.DataFrame(records, columns=cols) if records else pd.DataFrame(cols)
     del records
     gc.collect()
-    df = df.merge(id_mapping, on=["store_item"], how="left")
+    # df = df.merge(id_mapping, on=["store_item"], how="left")
     cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
-    del id_mapping
+    # del id_mapping
     gc.collect()
     if output_path is not None:
         logger.info(f"Saving sales features to {output_path}")
@@ -550,19 +550,19 @@ def prepare_training_data_from_raw_df(
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
-    # # if sales_fn is not None:
-    # #     if sales_fn.exists():
-    # #         logger.info(f"Loading sales features from {sales_fn}")
-    # #         sales_df = pd.read_csv(sales_fn)
-    # #     else:
-    # #         logger.info(f"Generating sales features to {sales_fn}")
-    # #         sales_df = generate_sales_features(
-    # #             df,
-    # #             window_size,
-    # #             calendar_aligned=calendar_aligned,
-    # #             log_level=log_level,
-    # #             output_path=sales_fn,
-    #         )
+    if sales_fn is not None:
+        if sales_fn.exists():
+            logger.info(f"Loading sales features from {sales_fn}")
+            sales_df = pd.read_csv(sales_fn)
+        else:
+            logger.info(f"Generating sales features to {sales_fn}")
+            sales_df = generate_sales_features(
+                df,
+                window_size,
+                calendar_aligned=calendar_aligned,
+                log_level=log_level,
+                output_path=sales_fn,
+            )
 
     if cyc_fn is not None:
         if cyc_fn.exists():
@@ -578,22 +578,22 @@ def prepare_training_data_from_raw_df(
                 output_path=cyc_fn,
             )
 
-    return pd.DataFrame()
-    # sales_df["start_date"] = pd.to_datetime(sales_df["start_date"])
-    # cyc_df["start_date"] = pd.to_datetime(cyc_df["start_date"])
+    # return pd.DataFrame()
+    sales_df["start_date"] = pd.to_datetime(sales_df["start_date"])
+    cyc_df["start_date"] = pd.to_datetime(cyc_df["start_date"])
 
-    # logger.info(f"Merging sales and cyclical features")
-    # merged_df = pd.merge(
-    #     sales_df,
-    #     cyc_df,
-    #     on=["start_date", "id", "store_item", "store", "item"],
-    # )
+    logger.info(f"Merging sales and cyclical features")
+    merged_df = pd.merge(
+        sales_df,
+        cyc_df,
+        on=["start_date", "store_item"],
+    )
 
-    # logger.info(f"merged_df.shape: {merged_df.shape}")
-    # merged_df = add_y_targets_from_shift(merged_df, window_size)
-    # logger.info(f"merged_df.shape: {merged_df.shape}")
+    logger.info(f"merged_df.shape: {merged_df.shape}")
+    merged_df = add_y_targets_from_shift(merged_df, window_size)
+    logger.info(f"merged_df.shape: {merged_df.shape}")
 
-    # return merged_df
+    return merged_df
 
 
 # Redefine RunningMedian class
