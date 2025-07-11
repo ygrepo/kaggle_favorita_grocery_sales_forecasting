@@ -20,7 +20,7 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_item.csv"
 STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_item_matrix.csv"
-CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_item_sales_cluster.csv"
+CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_item_cluster_result.csv"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_item_cluster.csv"
 
 ROW_RANGE="10:20"
