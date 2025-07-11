@@ -309,16 +309,19 @@ def generate_sales_features(
     df["date"] = pd.to_datetime(df["date"])
 
     # Lookup dictionaries
+    logger.debug(f"Generating lookup dictionaries")
     store_to_cluster = (
         df.drop_duplicates("store")[["store", "store_cluster"]]
         .set_index("store")["store_cluster"]
         .to_dict()
     )
+    logger.debug(f"Store to cluster: {len(store_to_cluster}")
     store_item_to_item_cluster = (
         df.drop_duplicates(["store", "item"])[["store", "item", "item_cluster"]]
         .set_index(["store", "item"])["item_cluster"]
         .to_dict()
     )
+    logger.debug(f"Store item to item cluster: {len(store_item_to_item_cluster)}")
 
     logger.debug(f"Generating windows")
     windows = generate_aligned_windows(
