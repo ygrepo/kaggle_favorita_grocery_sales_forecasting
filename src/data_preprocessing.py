@@ -168,7 +168,7 @@ def select_extreme_and_median_neighbors(
     # .drop_duplicates()
     if fn:
         logger.info(f"Saving selected groups to {fn}")
-        result.to_csv(fn, index=False)
+        result.to_csv(fn, index=True)
     return result
 
 
