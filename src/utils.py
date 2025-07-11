@@ -301,15 +301,17 @@ def generate_sales_features(
         Long-form table with features for each (store, item) across windows.
     """
 
+    logger.info(f"Log level: {log_level}")
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
+    logger.info(f"Log level: {logger.level}")
+    
     # Drop duplicates to get one id per store_item
     id_mapping = df[["store_item", "id"]].drop_duplicates()
 
     df["date"] = pd.to_datetime(df["date"])
 
     # Lookup dictionaries
-    logger.debug(f"Generating lookup dictionaries")
+    logger.debug("Generating lookup dictionaries")
     store_to_cluster = (
         df.drop_duplicates("store")[["store", "store_cluster"]]
         .set_index("store")["store_cluster"]
