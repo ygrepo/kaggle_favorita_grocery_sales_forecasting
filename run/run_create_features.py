@@ -81,7 +81,9 @@ def load_cluster(cluster_fn: Path) -> pd.DataFrame:
         raise
 
 
-def create_features(df: pd.DataFrame, window_size: int, sales_fn: Path, cyc_fn: Path):
+def create_features(
+    df: pd.DataFrame, log_level: str, window_size: int, sales_fn: Path, cyc_fn: Path
+):
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
     logger.info("Starting creating features")
@@ -91,6 +93,7 @@ def create_features(df: pd.DataFrame, window_size: int, sales_fn: Path, cyc_fn: 
         calendar_aligned=True,
         sales_fn=sales_fn,
         cyc_fn=cyc_fn,
+        log_level=log_level,
     )
     return final_df
 
@@ -223,6 +226,7 @@ def main():
             window_size=window_size,
             sales_fn=sales_fn,
             cyc_fn=cyc_fn,
+            log_level=args.log_level,
         )
 
         (
