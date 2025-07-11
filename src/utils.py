@@ -267,12 +267,176 @@ def generate_cyclical_features(
     del results
     gc.collect()
     # df = df.merge(id_mapping, on=["store_item"], how="left")
-    cols.insert(cols.index("start_date") + 1, "id")
+    # cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
     if output_path is not None:
         logger.info(f"Saving cyclical features to {output_path}")
         df.to_csv(output_path, index=False)
     return df
+
+
+def generate_sales_features_numpy(
+    df: pd.DataFrame,
+    window_size: int = 5,
+    *,
+    calendar_aligned: bool = True,
+    log_level: str = "INFO",
+    output_path: Optional[Path] = None,
+) -> pd.DataFrame:
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    df["date"] = pd.to_datetime(df["date"])
+
+    # Lookup dictionaries
+    logger.debug("Generating lookup dictionaries")
+    store_to_cluster = (
+        df.drop_duplicates("store")[["store", "store_cluster"]]
+        .set_index("store")["store_cluster"]
+        .to_dict()
+    )
+    logger.debug(f"Store to cluster: {len(store_to_cluster)}")
+    store_item_to_item_cluster = (
+        df.drop_duplicates(["store", "item"])[["store", "item", "item_cluster"]]
+        .set_index(["store", "item"])["item_cluster"]
+        .to_dict()
+    )
+    logger.debug(f"Store item to item cluster: {len(store_item_to_item_cluster)}")
+
+    logger.debug(f"Generating windows")
+    windows = generate_aligned_windows(
+        df, window_size, calendar_aligned=calendar_aligned
+    )
+    records: List[dict] = []
+
+    prev_store_med = None
+    prev_item_med = None
+
+    for window_dates in tqdm(windows, desc="Processing windows"):
+        w_df = df[df["date"].isin(window_dates)]
+
+        store_med = (
+            w_df.groupby(["store_cluster", "date"])["unit_sales"]
+            .median()
+            .unstack(fill_value=0)
+            .reindex(columns=window_dates, fill_value=0)
+        )
+        item_med = (
+            w_df.groupby(["item_cluster", "date"])["unit_sales"]
+            .median()
+            .unstack(fill_value=0)
+            .reindex(columns=window_dates, fill_value=0)
+        )
+
+        store_median_curr = store_med.median(axis=1)
+        item_median_curr = item_med.median(axis=1)
+
+        if prev_store_med is not None:
+            delta = np.abs(store_median_curr - prev_store_med)
+            store_median_change = (
+                np.log1p(delta) / prev_store_med.replace(0, np.nan) * 100
+            )
+        else:
+            store_median_change = pd.Series(np.nan, index=store_median_curr.index)
+
+        if prev_item_med is not None:
+            delta = np.abs(item_median_curr - prev_item_med)
+            item_median_change = (
+                np.log1p(delta) / prev_item_med.replace(0, np.nan) * 100
+            )
+        else:
+            item_median_change = pd.Series(np.nan, index=item_median_curr.index)
+
+        prev_store_med = store_median_curr
+        prev_item_med = item_median_curr
+
+        sales = w_df.pivot(
+            index=["store", "item"], columns="date", values="unit_sales"
+        ).reindex(columns=window_dates, fill_value=0)
+
+        iterator = sales.iterrows()
+        if logger.level == logging.DEBUG:
+            iterator = tqdm(
+                iterator,
+                total=sales.shape[0],
+                desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
+            )
+        for (store, item), sales_vals in tqdm(
+            sales.iterrows(), total=sales.shape[0], leave=False, desc="Store-Item pairs"
+        ):
+            s_cl = store_to_cluster.get(store, "ALL_STORES")
+            i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
+
+            store_med_vals = (
+                store_med.loc[s_cl].values
+                if s_cl in store_med.index
+                else np.full(window_size, np.nan)
+            )
+            item_med_vals = (
+                item_med.loc[i_cl].values
+                if i_cl in item_med.index
+                else np.full(window_size, np.nan)
+            )
+            store_delta = store_median_change.get(s_cl, np.nan)
+            item_delta = item_median_change.get(i_cl, np.nan)
+
+            sales_array = sales_vals.values
+
+            row = {
+                "store_item": f"{store}_{item}",
+                "store": store,
+                "item": item,
+                "store_cluster": s_cl,
+                "item_cluster": i_cl,
+                "start_date": window_dates[0],
+            }
+
+            for i in range(window_size):
+                row[f"sales_day_{i+1}"] = sales_array[i]
+                row[f"store_med_day_{i+1}"] = store_med_vals[i]
+                row[f"item_med_day_{i+1}"] = item_med_vals[i]
+                row[f"store_cluster_logpct_change_{i+1}"] = store_delta
+                row[f"item_cluster_logpct_change_{i+1}"] = item_delta
+
+            records.append(row)
+
+        del w_df, store_med, item_med, sales
+        gc.collect()
+
+    base_cols = [
+        "start_date",
+        "store_item",
+        "store",
+        "item",
+        "store_cluster",
+        "item_cluster",
+    ]
+    feature_cols = [
+        f"{prefix}{i}"
+        for prefix in (
+            "sales_day_",
+            "store_med_day_",
+            "item_med_day_",
+            "store_cluster_logpct_change_",
+            "item_cluster_logpct_change_",
+        )
+        for i in range(1, window_size + 1)
+    ]
+    all_cols = base_cols + feature_cols
+
+    df_feat = pd.DataFrame.from_records(
+        records, columns=all_cols if records else all_cols
+    )
+    del records
+    gc.collect()
+
+    if output_path:
+        logger.info(f"Saving features to: {output_path}")
+        df_feat.to_csv(output_path, index=False)
+
+    return df_feat
 
 
 def generate_sales_features(
