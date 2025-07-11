@@ -49,7 +49,7 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     x_sales_features = [
         f"{name}_{i}"
         for name in [
-            "sales_day",
+            #"sales_day",
             "store_med_day",
             "item_med_day",
             "store_cluster_logpct_change",
@@ -59,7 +59,7 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     ]
 
     x_feature_cols = x_sales_features + x_cyclical_features
-    label_cols = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
+    label_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
     # label_cols = [f"y_{c}" for c in x_feature_cols]
     # y_sales_features = [f"y_{c}" for c in x_sales_features]
     # y_cyclical_features = [f"y_{c}" for c in x_cyclical_features]
