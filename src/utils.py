@@ -120,6 +120,7 @@ def generate_aligned_windows(
         starts = []
         current = last_date
         while current >= first_date + pd.Timedelta(days=window_size - 1):
+            logger.debug(f"Current date: {current}")
             starts.append(current - pd.Timedelta(days=window_size - 1))
             current -= pd.Timedelta(days=window_size)
 
@@ -132,6 +133,7 @@ def generate_aligned_windows(
     else:
         # --- forward, data‑aligned windows (may be shorter at the tail) ---
         unique_dates = sorted(pd.to_datetime(df["date"].unique()))
+        logger.debug(f"Unique dates: {unique_dates}")
         return [
             unique_dates[i : i + window_size]
             for i in range(0, len(unique_dates), window_size)
@@ -329,6 +331,7 @@ def generate_sales_features(
     prev_store_med = None
     prev_item_med = None
     for window_dates in windows:
+        logger.debug(f"Window dates: {window_dates}")
         w_df = df[df["date"].isin(window_dates)]
 
         # cluster-level medians
