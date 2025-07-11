@@ -97,7 +97,7 @@ def select_extreme_and_median_neighbors(
         pd.DataFrame: Combined DataFrame of selected groups.
     """
     df = df.copy()
-    df = df[[group_column, n_col]].drop_duplicates()
+    df = df[[group_column, n_col]]
     logger.info(f"Selected {len(df)} groups")
     grouped = (
         df.groupby(group_column).agg({n_col: "sum"}).rename(columns={n_col: "total"})
@@ -109,12 +109,12 @@ def select_extreme_and_median_neighbors(
 
     # Get extremes
     if m > 0:
-        bottom_m = sorted_grouped.head(m)
+        bottom_m = sorted_grouped.head(m).drop_duplicates()
         logger.info(f"Selected {len(bottom_m)} bottom groups")
     else:
         bottom_m = pd.DataFrame()
     if M > 0:
-        top_M = sorted_grouped.tail(M)
+        top_M = sorted_grouped.tail(M).drop_duplicates()
         logger.info(f"Selected {len(top_M)} top groups")
     else:
         top_M = pd.DataFrame()
@@ -156,7 +156,8 @@ def select_extreme_and_median_neighbors(
     logger.info(f"Total unique groups: {len(all_indices)}")
 
     # Combine and remove duplicates
-    result = pd.concat([bottom_m, top_M, median_neighbors]).drop_duplicates()
+    result = pd.concat([bottom_m, top_M, median_neighbors])
+    # .drop_duplicates()
     return result
 
 
@@ -210,11 +211,6 @@ def prepare_data(
     n_items = df[[group_item_column]].drop_duplicates().reset_index(drop=True).nunique()
     logger.info(f"# unique items: {n_items}")
 
-    n_stores = (
-        df[[group_store_column]].drop_duplicates().reset_index(drop=True).nunique()
-    )
-    logger.info(f"# unique stores: {n_stores}")
-
     # Select top-M items globally
     df_top_items = select_extreme_and_median_neighbors(
         df,
@@ -224,9 +220,14 @@ def prepare_data(
         m=item_bottom_n,
         med=item_med_n,
     )
+    logger.info(f"Selected top items: {df_top_items.head()}")
     valid_items = df_top_items.reset_index()[group_item_column].tolist()
     logger.info(f"# top items: {len(valid_items)}")
 
+    n_stores = (
+        df[[group_store_column]].drop_duplicates().reset_index(drop=True).nunique()
+    )
+    logger.info(f"# unique stores: {n_stores}")
     df_top_stores = select_extreme_and_median_neighbors(
         df,
         n_col=value_column,
