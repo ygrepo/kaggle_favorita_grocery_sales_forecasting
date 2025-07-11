@@ -351,8 +351,6 @@ def generate_sales_features(
             .median()
             .unstack(fill_value=0)
         )
-        del w_df
-        gc.collect()
         store_median_curr = store_med.median(axis=1)
         item_median_curr = item_med.median(axis=1)
         del store_med, item_med
@@ -382,6 +380,8 @@ def generate_sales_features(
         sales = w_df.pivot(
             index=["store", "item"], columns="date", values="unit_sales"
         ).fillna(0)
+        del w_df
+        gc.collect()
 
         iterator = sales.iterrows()
         if logger.level == logging.DEBUG:
