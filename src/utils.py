@@ -466,7 +466,7 @@ def generate_sales_features(
     del records
     gc.collect()
     # df = df.merge(id_mapping, on=["store_item"], how="left")
-    cols.insert(cols.index("start_date") + 1, "id")
+    # cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
     # del id_mapping
     gc.collect()
