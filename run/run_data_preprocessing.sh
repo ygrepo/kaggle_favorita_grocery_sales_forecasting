@@ -11,7 +11,8 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/data"
-DATA_FN="${DATA_DIR}/20250707_train.csv"
+#DATA_FN="${DATA_DIR}/20250707_train.csv"
+DATA_FN="${DATA_DIR}/20250711_train_44_1503844.csv"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_300_item.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"

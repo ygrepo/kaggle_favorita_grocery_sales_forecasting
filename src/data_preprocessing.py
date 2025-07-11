@@ -101,6 +101,9 @@ def select_extreme_and_median_neighbors(
     )
     sorted_grouped = grouped.sort_values("total")
 
+    if M == 0 and m == 0 and med == 0:
+        return sorted_grouped
+
     # Get extremes
     if m > 0:
         bottom_m = sorted_grouped.head(m)
@@ -187,6 +190,7 @@ def prepare_data(
     #     df, n_col=value_column, group_column=group_item_column, top_n=top_items_n
     # )
     valid_items = df_top_items.reset_index()[group_item_column].tolist()
+    logger.info(f"# top items: {len(valid_items)}")
 
     # Select top-N stores globally
     # df_top_stores = top_n_by_m(
@@ -202,6 +206,7 @@ def prepare_data(
     )
     logger.info(f"Selected top stores: {df_top_stores.head()}")
     valid_stores = df_top_stores.reset_index()[group_store_column].tolist()
+    logger.info(f"# top stores: {len(valid_stores)}")
     unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
         [valid_stores, valid_items, sorted(unique_dates)],
