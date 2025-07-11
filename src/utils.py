@@ -353,8 +353,6 @@ def generate_sales_features(
         )
         store_median_curr = store_med.median(axis=1)
         item_median_curr = item_med.median(axis=1)
-        del store_med, item_med
-        gc.collect()
         if prev_store_med is not None:
             store_median_change = (
                 np.log1p(np.abs(store_median_curr - prev_store_med))
@@ -436,6 +434,8 @@ def generate_sales_features(
             records.append(row)
 
     # 🧼 Explicitly free up memory for each window
+    del store_med, item_med
+    gc.collect()
     del sales
     gc.collect()
 
