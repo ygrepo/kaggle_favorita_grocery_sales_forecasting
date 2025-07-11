@@ -228,13 +228,14 @@ def generate_cyclical_features(
         iterator = tqdm(iterator, desc="Generating cyclical features")
 
     for store_item, group in iterator:
-        # logger.debug(f"Cyclical features: Processing {store_item}")
+        #logger.debug(f"Cyclical features: Processing {store_item}")
         group = group.sort_values("date").reset_index(drop=True)
         windows = generate_aligned_windows(
             group, window_size, calendar_aligned=calendar_aligned
         )
 
         for i, window_dates in enumerate(windows):
+            #logger.debug(f"Cyclical features: Processing {store_item} window {i}")
             window_df = group[group["date"].isin(window_dates)]
             row = {
                 "start_date": window_dates[0],
@@ -454,6 +455,7 @@ def generate_sales_features(
     cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
     if output_path is not None:
+        logger.info(f"Saving sales features to {output_path}")
         df.to_csv(output_path, index=False)
     return df
 
