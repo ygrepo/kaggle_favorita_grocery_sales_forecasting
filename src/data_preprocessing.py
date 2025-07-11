@@ -96,6 +96,9 @@ def select_extreme_and_median_neighbors(
     Returns:
         pd.DataFrame: Combined DataFrame of selected groups.
     """
+    df = df.copy()
+    df = df[[group_column, n_col]].drop_duplicates()
+    logger.info(f"Selected {len(df)} groups")
     grouped = (
         df.groupby(group_column).agg({n_col: "sum"}).rename(columns={n_col: "total"})
     )
@@ -116,12 +119,18 @@ def select_extreme_and_median_neighbors(
 
     # Find median-centered indices
     if med > 0:
-        n = len(sorted_grouped)
-        mid = n // 2
-        # Make sure there is enough data
-        med_indices = range(max(0, mid - med), min(n, mid + med))
+        median_val = grouped["total"].median()
 
-        median_neighbors = sorted_grouped.iloc[list(med_indices)]
+        # Compute absolute difference to median
+        grouped["dist_to_median"] = np.abs(grouped["total"] - median_val)
+
+        # Get 2*med rows closest to the median (excluding exact duplicates)
+        median_neighbors = (
+            grouped.sort_values("dist_to_median")
+            .drop(index=bottom_m.index.union(top_M.index), errors="ignore")
+            .head(2 * med)
+            .drop(columns="dist_to_median")
+        )
     else:
         median_neighbors = pd.DataFrame()
 
@@ -186,16 +195,9 @@ def prepare_data(
         m=item_bottom_n,
         med=item_med_n,
     )
-    # df_top_items = top_n_by_m(
-    #     df, n_col=value_column, group_column=group_item_column, top_n=top_items_n
-    # )
     valid_items = df_top_items.reset_index()[group_item_column].tolist()
     logger.info(f"# top items: {len(valid_items)}")
 
-    # Select top-N stores globally
-    # df_top_stores = top_n_by_m(
-    #     df, n_col=value_column, group_column=group_store_column, top_n=top_stores_n
-    # )
     df_top_stores = select_extreme_and_median_neighbors(
         df,
         n_col=value_column,
