@@ -165,8 +165,8 @@ def select_extreme_and_median_neighbors(
     result = pd.concat([bottom_m, top_M, median_neighbors])
     # .drop_duplicates()
     if fn:
-        logger.info(f"Saving final_df to {fn}")
-        df.to_csv(fn, index=False)
+        logger.info(f"Saving selected groups to {fn}")
+        result.to_csv(fn, index=False)
     return result
 
 
