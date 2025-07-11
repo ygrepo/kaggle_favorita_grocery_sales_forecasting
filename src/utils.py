@@ -119,7 +119,7 @@ def generate_aligned_windows(
         starts = []
         current = last_date
         while current >= first_date + pd.Timedelta(days=window_size - 1):
-            logger.debug(f"Current date: {current}")
+            # logger.debug(f"Current date: {current}")
             starts.append(current - pd.Timedelta(days=window_size - 1))
             current -= pd.Timedelta(days=window_size)
 
@@ -132,7 +132,7 @@ def generate_aligned_windows(
     else:
         # --- forward, data‑aligned windows (may be shorter at the tail) ---
         unique_dates = sorted(pd.to_datetime(df["date"].unique()))
-        logger.debug(f"Unique dates: {unique_dates}")
+        # logger.debug(f"Unique dates: {unique_dates}")
         return [
             unique_dates[i : i + window_size]
             for i in range(0, len(unique_dates), window_size)
@@ -245,7 +245,7 @@ def generate_cyclical_features(
             }
 
             if window_df.empty:
-                logger.warning(f"Empty window for {store_item} at {window_dates[0]}")
+                # logger.warning(f"Empty window for {store_item} at {window_dates[0]}")
                 continue
 
             else:
@@ -261,7 +261,11 @@ def generate_cyclical_features(
                                 row[f"{f}_{t}_{i+1}"] = 0.0
             results.append(row)
 
+    del group, windows, window_df, row
+    gc.collect()
     df = pd.DataFrame(results, columns=cols)
+    del results
+    gc.collect()
     df = df.merge(id_mapping, on=["store_item"], how="left")
     cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
@@ -347,8 +351,12 @@ def generate_sales_features(
             .median()
             .unstack(fill_value=0)
         )
+        del w_df
+        gc.collect()
         store_median_curr = store_med.median(axis=1)
         item_median_curr = item_med.median(axis=1)
+        del store_med, item_med
+        gc.collect()
         if prev_store_med is not None:
             store_median_change = (
                 np.log1p(np.abs(store_median_curr - prev_store_med))
@@ -427,6 +435,10 @@ def generate_sales_features(
 
             records.append(row)
 
+    # 🧼 Explicitly free up memory for each window
+    del sales
+    gc.collect()
+
     # ------------------------------------------------------------------
     # Final column order
     # ------------------------------------------------------------------
@@ -451,9 +463,13 @@ def generate_sales_features(
         for i in range(1, window_size + 1)
     ]
     df = pd.DataFrame(records, columns=cols) if records else pd.DataFrame(cols)
+    del records
+    gc.collect()
     df = df.merge(id_mapping, on=["store_item"], how="left")
     cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
+    del id_mapping
+    gc.collect()
     if output_path is not None:
         logger.info(f"Saving sales features to {output_path}")
         df.to_csv(output_path, index=False)
