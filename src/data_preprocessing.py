@@ -239,7 +239,7 @@ def prepare_data(
         fn=item_fn,
     )
     logger.info(f"Selected top items: {df_top_items.head()}")
-    valid_items = df_top_items[group_item_column].tolist()
+    valid_items = df_top_items.reset_index()[group_item_column].tolist()
     logger.info(f"# top items: {len(valid_items)}")
 
     n_stores = df[group_store_column].nunique()
