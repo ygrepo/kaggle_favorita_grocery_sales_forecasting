@@ -1152,6 +1152,7 @@ def plot_biclustering_elbows(
     metric: str = "Explained Variance (%)",  # or "Mean Loss", "Mean Silhouette"
     tick_step: int = 1,
     vline_index: int | None = None,
+    vline_text: str | None = None,
     vline_kwargs: dict | None = None,
     figsize: tuple[int, int] = (10, 5),
     fn: str | None = None,  # optional PNG filename
@@ -1194,8 +1195,14 @@ def plot_biclustering_elbows(
     ax.set_ylabel(metric, fontsize=14, fontweight="bold")
     ax.set_title(title, fontsize=title_fontsize, fontweight="bold")
 
+    # Auto tick step
+    n_points = len(df_sorted)
+    tick_step = max(1, n_points // 20)
+
     ax.set_xticks(df_sorted.index[::tick_step])
-    ax.set_xticklabels(df_sorted["label"][::tick_step], rotation=45, ha="right")
+    ax.set_xticklabels(df_sorted["label"][::tick_step], rotation=60, ha="right")
+
+    fig.subplots_adjust(bottom=0.25)
 
     # ───────────────────── Optional vertical line ─────────────────────
     if vline_index is not None and 0 <= vline_index < len(df_sorted):
@@ -1207,7 +1214,7 @@ def plot_biclustering_elbows(
         ax.text(
             vline_index,
             ax.get_ylim()[0],
-            f"  idx={vline_index}",
+            vline_text,
             color=default_line_style["color"],
             va="bottom",
             ha="left",
