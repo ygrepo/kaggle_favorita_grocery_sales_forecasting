@@ -155,7 +155,7 @@ def generate_cyclical_features(
     is assigned to the single cluster label 'ALL_STORES' / 'ALL_ITEMS'.
     """
     # Drop duplicates to get one id per store_item
-    id_mapping = df[["store_item", "id"]].drop_duplicates()
+    # id_mapping = df[["store_item", "id"]].drop_duplicates()
 
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
@@ -266,7 +266,7 @@ def generate_cyclical_features(
     df = pd.DataFrame(results, columns=cols)
     del results
     gc.collect()
-    df = df.merge(id_mapping, on=["store_item"], how="left")
+    # df = df.merge(id_mapping, on=["store_item"], how="left")
     cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
     if output_path is not None:
@@ -482,15 +482,15 @@ def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.Data
 
     feature_prefixes = [
         "sales_day_",
-        "store_med_day_",
-        "item_med_day_",
-        "store_cluster_logpct_change",
-        "item_cluster_logpct_change",
-        "dayofweek_",
-        "weekofmonth_",
-        "monthofyear_",
-        "paycycle_",
-        "season_",
+        # "store_med_day_",
+        # "item_med_day_",
+        # "store_cluster_logpct_change",
+        # "item_cluster_logpct_change",
+        # "dayofweek_",
+        # "weekofmonth_",
+        # "monthofyear_",
+        # "paycycle_",
+        # "season_",
     ]
 
     for _, group in df.groupby("store_item", sort=False):
