@@ -11,17 +11,18 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/data"
-DATA_FN="${DATA_DIR}/20250707_train.csv"
+#DATA_FN="${DATA_DIR}/20250707_train.csv"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
+DATA_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_44_1503844.csv"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_20_item.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_store_20_item_cluster.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 ITEM_TOP_N=5
 ITEM_MED_N=5
 ITEM_BOTTOM_N=5
-ITEM_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_items.csv"
-STORE_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_items_stores.csv"
+ITEM_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_items.csv"
+STORE_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_items_stores.csv"
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"

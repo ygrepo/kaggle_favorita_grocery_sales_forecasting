@@ -82,7 +82,12 @@ def load_cluster(cluster_fn: Path) -> pd.DataFrame:
 
 
 def create_features(
-    df: pd.DataFrame, log_level: str, window_size: int, sales_fn: Path, cyc_fn: Path
+    df: pd.DataFrame,
+    window_size: int,
+    add_y_targets: bool,
+    log_level: str,
+    sales_fn: Path,
+    cyc_fn: Path,
 ):
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
@@ -90,6 +95,7 @@ def create_features(
     final_df = prepare_training_data_from_raw_df(
         df,
         window_size=window_size,
+        add_y_targets=add_y_targets,
         calendar_aligned=True,
         sales_fn=sales_fn,
         cyc_fn=cyc_fn,
@@ -174,6 +180,12 @@ def parse_args():
         help="Size of the lookback window",
     )
     parser.add_argument(
+        "--add-y-targets",
+        type=str2bool,
+        default=False,
+        help="Add y targets to the features",
+    )
+    parser.add_argument(
         "--log-dir",
         type=str,
         default="../output/logs",
@@ -200,6 +212,7 @@ def main():
     output_fn = Path(args.output_fn).resolve()
     log_dir = Path(args.log_dir).resolve()
     window_size = args.window_size
+    add_y_targets = str2bool(args.add_y_targets)
 
     # Set up logging
     print(f"Log dir: {log_dir}")
@@ -213,7 +226,8 @@ def main():
         logger.info(f"  Cyc fn: {cyc_fn}")
         logger.info(f"  Output fn: {output_fn}")
         logger.info(f"  Log dir: {log_dir}")
-        logger.info(f"  Window size: {args.window_size}")
+        logger.info(f"  Window size: {window_size}")
+        logger.info(f"  Add y targets: {add_y_targets}")
 
         # Load and preprocess data
         df = load_data(data_fn)
@@ -224,9 +238,10 @@ def main():
         final_df = create_features(
             df,
             window_size=window_size,
+            add_y_targets=add_y_targets,
+            log_level=args.log_level,
             sales_fn=sales_fn,
             cyc_fn=cyc_fn,
-            log_level=args.log_level,
         )
 
         (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(

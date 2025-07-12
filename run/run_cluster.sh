@@ -19,11 +19,17 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 # OUTPUT_FN="${OUTPUT_DATA_DIR}/20250707_train_top_51_store_100_item_cluster.csv"
 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_100_item.csv" 
-DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_20_item.csv" 
+#DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_20_item.csv" 
+DATA_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_store_20_item_cluster.csv"
 
-STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_matrix.csv"
-CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster_result.csv"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster.csv"
+# STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_matrix.csv"
+# CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster_result.csv"
+# OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster.csv"
+
+STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_matrix.csv"
+CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_cluster_result.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
+
 
 ROW_RANGE="10:20"
 COL_RANGE="10:20"

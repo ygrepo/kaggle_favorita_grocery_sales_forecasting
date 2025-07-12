@@ -49,9 +49,11 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     x_sales_features = [
         f"{name}_{i}"
         for name in [
-            #"sales_day",
+            # "sales_day",
             "store_med_day",
             "item_med_day",
+            "store_med_change",
+            "item_med_change",
             "store_cluster_logpct_change",
             "item_cluster_logpct_change",
         ]
@@ -336,16 +338,16 @@ def generate_sales_features_numpy(
 
         if prev_store_med is not None:
             delta = np.abs(store_median_curr - prev_store_med)
-            store_median_change = (
-                np.log1p(delta) / prev_store_med.replace(0, np.nan) * 100
+            store_median_change = np.log1p(
+                delta / prev_store_med.replace(0, np.nan) * 100
             )
         else:
             store_median_change = pd.Series(np.nan, index=store_median_curr.index)
 
         if prev_item_med is not None:
             delta = np.abs(item_median_curr - prev_item_med)
-            item_median_change = (
-                np.log1p(delta) / prev_item_med.replace(0, np.nan) * 100
+            item_median_change = np.log1p(
+                delta / prev_item_med.replace(0, np.nan) * 100
             )
         else:
             item_median_change = pd.Series(np.nan, index=item_median_curr.index)
@@ -518,22 +520,24 @@ def generate_sales_features(
         store_median_curr = store_med.median(axis=1)
         item_median_curr = item_med.median(axis=1)
         if prev_store_med is not None:
-            store_median_change = (
-                np.log1p(np.abs(store_median_curr - prev_store_med))
-                / prev_store_med.replace(0, np.nan)
-                * 100
-            )
+            store_median_change = store_median_curr.replace(
+                0, np.nan
+            ) / prev_store_med.replace(0, np.nan)
+            store_median_log_pct_change = np.log(store_median_change)
         else:
             store_median_change = pd.Series(np.nan, index=store_median_curr.index)
+            store_median_log_pct_change = pd.Series(
+                np.nan, index=store_median_curr.index
+            )
 
         if prev_item_med is not None:
-            item_median_change = (
-                np.log1p(np.abs(item_median_curr - prev_item_med))
-                / prev_item_med.replace(0, np.nan)
-                * 100
-            )
+            item_median_change = item_median_curr.replace(
+                0, np.nan
+            ) / prev_item_med.replace(0, np.nan)
+            item_median_log_pct_change = np.log(item_median_change)
         else:
             item_median_change = pd.Series(np.nan, index=item_median_curr.index)
+            item_median_log_pct_change = pd.Series(np.nan, index=item_median_curr.index)
 
         prev_store_med = store_median_curr.copy()
         prev_item_med = item_median_curr.copy()
@@ -577,9 +581,14 @@ def generate_sales_features(
                         if s_cl in store_med.index
                         else np.nan
                     )
-                    row[f"store_cluster_logpct_change_{i}"] = (
+                    row[f"store_med_change_{i}"] = (
                         store_median_change.get(s_cl, np.nan)
                         if s_cl in store_median_change.index
+                        else np.nan
+                    )
+                    row[f"store_cluster_logpct_change_{i}"] = (
+                        store_median_log_pct_change.get(s_cl, np.nan)
+                        if s_cl in store_median_log_pct_change.index
                         else np.nan
                     )
                     row[f"item_med_day_{i}"] = (
@@ -587,9 +596,14 @@ def generate_sales_features(
                         if i_cl in item_med.index
                         else np.nan
                     )
-                    row[f"item_cluster_logpct_change_{i}"] = (
+                    row[f"item_med_change_{i}"] = (
                         item_median_change.get(i_cl, np.nan)
                         if i_cl in item_median_change.index
+                        else np.nan
+                    )
+                    row[f"item_cluster_logpct_change_{i}"] = (
+                        item_median_log_pct_change.get(i_cl, np.nan)
+                        if i_cl in item_median_log_pct_change.index
                         else np.nan
                     )
                 else:
@@ -621,6 +635,8 @@ def generate_sales_features(
             "sales_day_",
             "store_med_day_",
             "item_med_day_",
+            "store_med_change_",
+            "item_med_change_",
             "store_cluster_logpct_change_",
             "item_cluster_logpct_change_",
         )
@@ -646,15 +662,17 @@ def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.Data
 
     feature_prefixes = [
         "sales_day_",
-        # "store_med_day_",
-        # "item_med_day_",
-        # "store_cluster_logpct_change",
-        # "item_cluster_logpct_change",
-        # "dayofweek_",
-        # "weekofmonth_",
-        # "monthofyear_",
-        # "paycycle_",
-        # "season_",
+        "store_med_day_",
+        "item_med_day_",
+        "store_med_change_",
+        "item_med_change_",
+        "store_cluster_logpct_change_",
+        "item_cluster_logpct_change_",
+        "dayofweek_",
+        "weekofmonth_",
+        "monthofyear_",
+        "paycycle_",
+        "season_",
     ]
 
     for _, group in df.groupby("store_item", sort=False):
@@ -705,6 +723,7 @@ def prepare_training_data_from_raw_df(
     *,
     window_size=16,
     calendar_aligned: bool = True,
+    add_y_targets: bool = True,
     sales_fn: Optional[Path] = None,
     cyc_fn: Optional[Path] = None,
     log_level: str = "INFO",
@@ -754,8 +773,9 @@ def prepare_training_data_from_raw_df(
     )
 
     logger.info(f"merged_df.shape: {merged_df.shape}")
-    merged_df = add_y_targets_from_shift(merged_df, window_size)
-    logger.info(f"merged_df.shape: {merged_df.shape}")
+    if add_y_targets:
+        merged_df = add_y_targets_from_shift(merged_df, window_size)
+        logger.info(f"merged_df.shape: {merged_df.shape}")
 
     return merged_df
 
