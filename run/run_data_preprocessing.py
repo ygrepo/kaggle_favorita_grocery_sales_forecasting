@@ -130,7 +130,13 @@ def parse_args():
         help="Number of rows to load",
     )
     parser.add_argument(
-        "--date",
+        "--start-date",
+        type=str,
+        default="",
+        help="Date to cap on",
+    )
+    parser.add_argument(
+        "--end-date",
         type=str,
         default="",
         help="Date to cap on",
@@ -162,7 +168,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_data(data_fn: Path, nrows: int = 0, date: str = "") -> pd.DataFrame:
+def load_data(
+    data_fn: Path, nrows: int = 0, start_date: str = "", end_date: str = ""
+) -> pd.DataFrame:
     """Load and preprocess training data.
 
     Args:
@@ -195,11 +203,16 @@ def load_data(data_fn: Path, nrows: int = 0, date: str = "") -> pd.DataFrame:
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, low_memory=False, parse_dates=["date"]
             )
-        if date:
-            logger.info(f"Filtering data for date {date}")
-            logger.info(f"Before filtering:{df.shape}")
-            df = df[df["date"] >= date]
-            logger.info(f"After filtering:{df.shape}")
+        if start_date:
+            logger.info(f"Filtering data for start date {start_date}")
+            logger.info(f"Before start date filtering: {df.shape}")
+            df = df[df["date"] >= start_date]
+            logger.info(f"After start date filtering: {df.shape}")
+        if end_date:
+            logger.info(f"Filtering data for end date {end_date}")
+            logger.info(f"Before end date filtering: {df.shape}")
+            df = df[df["date"] <= end_date]
+            logger.info(f"After end date filtering: {df.shape}")
         cols = ["date", "store_item", "store", "item", "unit_sales"] + [
             c
             for c in df.columns
@@ -232,7 +245,8 @@ def main():
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Nrows: {args.nrows}")
-        logger.info(f"  Date: {args.date}")
+        logger.info(f"  Start date: {args.start_date}")
+        logger.info(f"  End date: {args.end_date}")
         logger.info(f"  Output fn: {output_fn}")
         logger.info(f"  Store top n: {args.store_top_n}")
         logger.info(f"  Store med n: {args.store_med_n}")
@@ -247,7 +261,12 @@ def main():
         logger.info(f"  Value column: {args.value_column}")
 
         # Load and preprocess data
-        df = load_data(data_fn, nrows=args.nrows, date=args.date)
+        df = load_data(
+            data_fn,
+            nrows=args.nrows,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
         # df = df[df["store_item"] == store_item]
