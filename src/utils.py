@@ -720,6 +720,128 @@ def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def create_sale_features(
+    df,
+    *,
+    window_size=16,
+    calendar_aligned: bool = True,
+    fn: Optional[Path] = None,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    if "store_item" not in df.columns:
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+
+    if fn is not None:
+        if fn.exists():
+            logger.info(f"Loading sales features from {fn}")
+            df = pd.read_csv(fn)
+        else:
+            logger.info(f"Generating sales features to {fn}")
+            df = generate_sales_features(
+                df,
+                window_size,
+                calendar_aligned=calendar_aligned,
+                log_level=log_level,
+                output_path=fn,
+            )
+    else:
+        logger.info("Generating sales features")
+        df = generate_sales_features(
+            df,
+            window_size,
+            calendar_aligned=calendar_aligned,
+            log_level=log_level,
+        )
+    df["start_date"] = pd.to_datetime(df["start_date"])
+    return df
+
+
+def create_cyc_features(
+    df,
+    *,
+    window_size=16,
+    calendar_aligned: bool = True,
+    fn: Optional[Path] = None,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    if "store_item" not in df.columns:
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+
+    if fn is not None:
+        if fn.exists():
+            logger.info(f"Loading cyclical features from {fn}")
+            df = pd.read_csv(fn)
+        else:
+            logger.info(f"Generating cyclical features to {fn}")
+            df = generate_cyclical_features(
+                df,
+                window_size,
+                calendar_aligned=calendar_aligned,
+                log_level=log_level,
+                output_path=fn,
+            )
+    else:
+        logger.info("Generating cyclical features")
+        df = generate_cyclical_features(
+            df,
+            window_size,
+            calendar_aligned=calendar_aligned,
+            log_level=log_level,
+        )
+    df["start_date"] = pd.to_datetime(df["start_date"])
+    return df
+
+
+def create_features(
+    add_y_targets: bool = True,
+    sales_fn: Optional[Path] = None,
+    cyc_fn: Optional[Path] = None,
+    window_size: int = 16,
+    log_level: str = "INFO",
+    output_fn: Optional[Path] = None,
+) -> pd.DataFrame:
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info("Loading sales features")
+    if sales_fn.exists():
+        logger.info(f"Loading sales features from {sales_fn}")
+        sales_df = pd.read_csv(sales_fn)
+    else:
+        logger.warning(f"Sales features not found at {sales_fn}")
+        sales_df = pd.DataFrame()
+    logger.info(f"sales_df.shape: {sales_df.shape}")
+
+    logger.info("Loading cyclical features")
+    if cyc_fn.exists():
+        logger.info(f"Loading cyclical features from {cyc_fn}")
+        cyc_df = pd.read_csv(cyc_fn)
+    else:
+        logger.warning(f"Cyclical features not found at {cyc_fn}")
+        cyc_df = pd.DataFrame()
+    logger.info(f"cyc_df.shape: {cyc_df.shape}")
+
+    logger.info("Merging sales and cyclical features")
+    merged_df = pd.merge(
+        sales_df,
+        cyc_df,
+        on=["start_date", "store_item"],
+    )
+    logger.info(f"merged_df.shape: {merged_df.shape}")
+
+    if add_y_targets:
+        merged_df = add_y_targets_from_shift(merged_df, window_size)
+        logger.info(f"merged_df.shape: {merged_df.shape}")
+
+    if output_fn is not None:
+        logger.info(f"Saving features to {output_fn}")
+        merged_df.to_csv(output_fn, index=False)
+
+    return merged_df
+
+
 def prepare_training_data_from_raw_df(
     df,
     *,
@@ -735,37 +857,22 @@ def prepare_training_data_from_raw_df(
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
 
-    if sales_fn is not None:
-        if sales_fn.exists():
-            logger.info(f"Loading sales features from {sales_fn}")
-            sales_df = pd.read_csv(sales_fn)
-        else:
-            logger.info(f"Generating sales features to {sales_fn}")
-            sales_df = generate_sales_features(
-                df,
-                window_size,
-                calendar_aligned=calendar_aligned,
-                log_level=log_level,
-                output_path=sales_fn,
-            )
-
-    if cyc_fn is not None:
-        if cyc_fn.exists():
-            logger.info(f"Loading cyclical features from {cyc_fn}")
-            cyc_df = pd.read_csv(cyc_fn)
-        else:
-            logger.info(f"Generating cyclical features to {cyc_fn}")
-            cyc_df = generate_cyclical_features(
-                df,
-                window_size,
-                calendar_aligned=calendar_aligned,
-                log_level=log_level,
-                output_path=cyc_fn,
-            )
-
-    # return pd.DataFrame()
-    sales_df["start_date"] = pd.to_datetime(sales_df["start_date"])
-    cyc_df["start_date"] = pd.to_datetime(cyc_df["start_date"])
+    sales_df = create_sale_features(
+        df,
+        window_size=window_size,
+        calendar_aligned=calendar_aligned,
+        sales_fn=sales_fn,
+        log_level=log_level,
+    )
+    cyc_df = create_cyc_features(
+        df,
+        window_size=window_size,
+        calendar_aligned=calendar_aligned,
+        cyc_fn=cyc_fn,
+        log_level=log_level,
+    )
+    del df
+    gc.collect()
 
     logger.info(f"Merging sales and cyclical features")
     merged_df = pd.merge(

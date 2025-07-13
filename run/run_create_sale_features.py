@@ -15,31 +15,65 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
-from scipy.linalg import dft
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import create_features, build_feature_and_label_cols
+from src.utils import create_sale_features
 
 
-def create_sale_cyc_features(
+def load_data(data_fn: Path) -> pd.DataFrame:
+    """Load and preprocess training data.
+
+    Args:
+        data_fn: Path to the training data file
+
+    Returns:
+        Preprocessed DataFrame
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data from {data_fn}")
+
+    try:
+        dtype_dict = {
+            "id": np.uint32,
+            "store_nbr": np.uint8,
+            "item_nbr": np.uint32,
+            "unit_sales": np.float32,
+        }
+        df = pd.read_csv(data_fn, dtype=dtype_dict, low_memory=False)
+        df.rename(columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True)
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+        cols = ["date", "store_item", "store", "item"] + [
+            c for c in df.columns if c not in ("date", "store_item", "store", "item")
+        ]
+        df = df[cols]
+        df["date"] = pd.to_datetime(df["date"])
+        df.sort_values("date", inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        logger.info(f"Loaded data with shape {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+
+def create_features(
+    df: pd.DataFrame,
     window_size: int,
-    add_y_targets: bool,
     log_level: str,
-    sales_fn: Path,
-    cyc_fn: Path,
+    fn: Path,
 ):
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
     logger.info("Starting creating features")
-    df = create_features(
+    df = create_sale_features(
+        df,
         window_size=window_size,
-        add_y_targets=add_y_targets,
         calendar_aligned=True,
-        sales_fn=sales_fn,
-        cyc_fn=cyc_fn,
+        fn=fn,
         log_level=log_level,
     )
     return df
@@ -74,51 +108,28 @@ def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
     return logger
 
 
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ("yes", "true", "t", "1"):
-        return True
-    elif v.lower() in ("no", "false", "f", "0"):
-        return False
-    else:
-        raise argparse.ArgumentTypeError("Expected a boolean value (true/false)")
-
-
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--sales-fn",
+        "--data-fn",
+        type=str,
+        default="",
+        help="Path to training data file (relative to project root)",
+    )
+    parser.add_argument(
+        "--fn",
         type=str,
         default="",
         help="Path to sales file (relative to project root)",
-    )
-    parser.add_argument(
-        "--cyc-fn",
-        type=str,
-        default="",
-        help="Path to cyc file (relative to project root)",
-    )
-    parser.add_argument(
-        "--output-fn",
-        type=str,
-        default="",
-        help="Path to output file (relative to project root)",
     )
     parser.add_argument(
         "--window-size",
         type=int,
         default=16,
         help="Size of the lookback window",
-    )
-    parser.add_argument(
-        "--add-y-targets",
-        type=str2bool,
-        default=False,
-        help="Add y targets to the features",
     )
     parser.add_argument(
         "--log-dir",
@@ -140,12 +151,11 @@ def main():
     """Main training function."""
     # Parse command line arguments
     args = parse_args()
-    sales_fn = Path(args.sales_fn).resolve()
-    cyc_fn = Path(args.cyc_fn).resolve()
-    output_fn = Path(args.output_fn).resolve()
+    # Convert paths to absolute paths relative to project root
+    data_fn = Path(args.data_fn).resolve()
+    fn = Path(args.fn).resolve()
     log_dir = Path(args.log_dir).resolve()
     window_size = args.window_size
-    add_y_targets = str2bool(args.add_y_targets)
 
     # Set up logging
     print(f"Log dir: {log_dir}")
@@ -154,27 +164,23 @@ def main():
     try:
         # Log configuration
         logger.info("Starting creating training features with configuration:")
-        logger.info(f"  Sales fn: {sales_fn}")
-        logger.info(f"  Cyc fn: {cyc_fn}")
-        logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Data fn: {data_fn}")
+        logger.info(f"  Output fn: {fn}")
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Window size: {window_size}")
-        logger.info(f"  Add y targets: {add_y_targets}")
 
-        df = create_sale_cyc_features(
+        # Load and preprocess data
+        df = load_data(data_fn)
+        # store_item = "44_1503844"
+        # logger.info(f"Selected store_item: {store_item}")
+        # df = df[df["store_item"] == store_item]
+
+        df = create_features(
+            df,
             window_size=window_size,
-            add_y_targets=add_y_targets,
             log_level=args.log_level,
-            sales_fn=sales_fn,
-            cyc_fn=cyc_fn,
+            fn=fn,
         )
-
-        (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
-            window_size=window_size
-        )
-        # Save final_df to csv
-        logger.info(f"Saving final_df to {output_fn}")
-        df[meta_cols + x_feature_cols + label_cols].to_csv(output_fn, index=False)
 
     except Exception as e:
         logger.error(f"Error creating training features: {e}")
