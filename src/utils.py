@@ -227,6 +227,8 @@ def generate_cyclical_features(
     # ───────────────── build window rows ─────────────────
     results: List[dict] = []
     iterator = df.groupby("store_item")
+    del df
+    gc.collect()
     if logger.level == logging.DEBUG:
         iterator = tqdm(iterator, desc="Generating cyclical features")
 

@@ -15,14 +15,16 @@ DATA_FN="${DATA_DIR}/20250707_train.csv"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_44_1503844.csv"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_300_item_cluster.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_3000_item_cluster.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
-ITEM_TOP_N=100
-ITEM_MED_N=50
-ITEM_BOTTOM_N=100
-ITEM_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_items.csv"
-STORE_FN="${OUTPUT_DATA_DIR}/20250711_train_top_300_items_stores.csv"
+ITEM_TOP_N=1000
+ITEM_MED_N=500
+ITEM_BOTTOM_N=1000
+NROWS=0
+DATE="2016-01-01"
+ITEM_FN="${OUTPUT_DATA_DIR}/20250711_train_top_3000_items.csv"
+STORE_FN="${OUTPUT_DATA_DIR}/20250711_train_top_3000_items_stores.csv"
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
@@ -32,6 +34,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --data-fn) DATA_FN="$2"; shift 2 ;;
+    --nrows) NROWS="$2"; shift 2 ;;
+    --date) DATE="$2"; shift 2 ;;
     --output-data-dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --output-fn) OUTPUT_FN="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
@@ -62,6 +66,8 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
+echo "Nrows: $NROWS" | tee -a "$LOG_FILE"
+echo "Date: $DATE" | tee -a "$LOG_FILE"
 echo "Top items n: $ITEM_TOP_N" | tee -a "$LOG_FILE"
 echo "Median items n: $ITEM_MED_N" | tee -a "$LOG_FILE"
 echo "Bottom items n: $ITEM_BOTTOM_N" | tee -a "$LOG_FILE"
@@ -75,6 +81,8 @@ python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \
   --store-fn "$STORE_FN" \
+  --nrows "$NROWS" \
+  --date "$DATE" \
   --item-top-n "$ITEM_TOP_N" \
   --item-med-n "$ITEM_MED_N" \
   --item-bottom-n "$ITEM_BOTTOM_N" \
