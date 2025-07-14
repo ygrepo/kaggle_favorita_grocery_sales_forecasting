@@ -786,22 +786,22 @@ def create_features(
     logger.info(f"cyc_df.shape: {cyc_df.shape}")
 
     logger.info("Merging sales and cyclical features")
-    merged_df = pd.merge(
+    df = pd.merge(
         sales_df,
         cyc_df,
         on=["start_date", "store_item"],
     )
-    logger.info(f"merged_df.shape: {merged_df.shape}")
+    logger.info(f"df.shape: {df.shape}")
 
     if add_y_targets:
-        merged_df = add_y_targets_from_shift(merged_df, window_size)
-        logger.info(f"merged_df.shape: {merged_df.shape}")
+        df = add_y_targets_from_shift(df, window_size)
+        logger.info(f"df.shape: {df.shape}")
 
     if output_fn is not None:
         logger.info(f"Saving features to {output_fn}")
-        merged_df.to_csv(output_fn, index=False)
+        df.to_csv(output_fn, index=False)
 
-    return merged_df
+    return df
 
 
 def prepare_training_data_from_raw_df(
