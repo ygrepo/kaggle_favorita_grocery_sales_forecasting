@@ -37,7 +37,6 @@ def create_sale_cyc_features(
     df = create_features(
         window_size=window_size,
         add_y_targets=add_y_targets,
-        calendar_aligned=True,
         sales_fn=sales_fn,
         cyc_fn=cyc_fn,
         log_level=log_level,
