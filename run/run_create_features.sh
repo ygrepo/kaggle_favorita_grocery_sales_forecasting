@@ -10,6 +10,8 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
+DATA_DIR="${PROJECT_ROOT}/output/data"
+
 #OUTPUT_FN="${DATA_DIR}/20250711_train_top_20_item_clusters_sales_cyclical_features_1_days_X_y.csv"
 OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_3000_item_clusters_sales_cyclical_features_1_days_X_y.csv"
 #SALES_FN="${DATA_DIR}/20250711_train_top_20_item_sale_cluster.csv"
