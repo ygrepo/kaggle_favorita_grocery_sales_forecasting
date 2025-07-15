@@ -12,9 +12,9 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
 
-DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_1_days.csv"
-OUTPUT_DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_1_days_nw.csv"
-OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_1_days_X_y.csv"
+DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features.csv"
+OUTPUT_DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_new.csv"
+OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
