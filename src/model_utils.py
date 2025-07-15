@@ -15,6 +15,7 @@ import pickle
 from pathlib import Path
 from enum import Enum
 
+
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,85 @@ def set_seed(seed: int = 42):
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Loaders
+# ─────────────────────────────────────────────────────────────────────
+def generate_non_overlapping_loaders(
+    df: pd.DataFrame,
+    window_size: int = 1,
+    batch_size: int = 32,
+):
+    """
+    Create non-overlapping training-validation pairs for time series.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Indexed by datetime, columns: [X..., y] (target is last column).
+    window_size : int
+        Number of days in training window.
+    batch_size : int
+        Batch size for each DataLoader.
+
+    Returns
+    -------
+    List of (train_loader, val_loader) tuples per window.
+    """
+
+    df = df.sort_index()
+    X_all = df.iloc[:, :-1].values
+    y_all = df.iloc[:, -1].values
+    index_all = df.index
+
+    num_samples = len(df)
+    loaders = []
+
+    i = 0
+    while i + window_size < num_samples:
+        train_start = i
+        train_end = i + window_size
+        val_idx = train_end  # predict next day
+
+        # Ensure continuity
+        if (index_all[train_end] - index_all[train_start]).days != window_size:
+            i += 1
+            continue
+
+        X_train = X_all[train_start:train_end]
+        y_train = y_all[train_start:train_end]
+
+        X_val = X_all[val_idx].reshape(1, -1)  # shape (1, num_features)
+        y_val = np.array([y_all[val_idx]])
+
+        # Fit scaler on training only
+        scaler = MinMaxScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_val_scaled = scaler.transform(X_val)
+
+        # Convert to tensors
+        X_train_tensor = torch.tensor(X_train_scaled, dtype=torch.float32)
+        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+
+        X_val_tensor = torch.tensor(X_val_scaled, dtype=torch.float32)
+        y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+
+        # Datasets and Loaders
+        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+
+        loaders.append((train_loader, val_loader))
+
+        i += window_size + 1  # move to next block
+
+    return loaders
+
+
+# ─────────────────────────────────────────────────────────────────────
+# LightningWrapper
+# ─────────────────────────────────────────────────────────────────────
 class LightningWrapper(pl.LightningModule):
     """Minimal Lightning module wrapping the forecasting model."""
 

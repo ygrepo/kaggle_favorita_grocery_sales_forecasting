@@ -601,17 +601,17 @@ def add_y_targets_from_shift(
             "season_",
         ]
 
-    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-
-    grouped = df.groupby("store_item", sort=False)
-    for _, group in tqdm(grouped, desc="Processing store_items"):
+    def helper(group):
         group = group.sort_values("start_date").reset_index(drop=True)
         next_group = group.shift(-1)
         date_diff = (next_group["start_date"] - group["start_date"]).dt.days
         valid = date_diff == window_size
 
         if not valid.any():
-            continue
+            logger.warning(
+                f"No valid windows found for store_item {group['store_item'].iloc[0]}"
+            )
+            return
 
         matched = group[valid].copy()
         shifted = next_group[valid]
@@ -625,6 +625,13 @@ def add_y_targets_from_shift(
         # Explicit memory cleanup
         del group, next_group, matched, shifted, date_diff, valid
         gc.collect()
+
+    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+    grouped = df.groupby("store_item", sort=False)
+
+    # Stream and aggregate into a single DataFrame (optional)
+    results = pd.concat(helper(grouped), ignore_index=True)
+    return results
 
 
 # def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.DataFrame:
