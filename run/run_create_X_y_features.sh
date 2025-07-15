@@ -24,7 +24,7 @@ WINDOW_SIZE=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-fn) DATA_FN="$2"; shift 2 ;;
-    --output-data-fn) OUTPUT_DATA_FN="$2"; shift 2 ;;
+    #--output-data-fn) OUTPUT_DATA_FN="$2"; shift 2 ;;
     --output-fn) OUTPUT_FN="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     --log-level) LOG_LEVEL="$2"; shift 2 ;;
@@ -50,7 +50,7 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 set +e  # Disable exit on error to handle the error message
 echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
-echo "  Output data fn: ${OUTPUT_DATA_FN}" | tee -a "$LOG_FILE"
+# echo "  Output data fn: ${OUTPUT_DATA_FN}" | tee -a "$LOG_FILE"
 echo "  Output fn: ${OUTPUT_FN}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
