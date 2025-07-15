@@ -38,7 +38,7 @@ mkdir -p "$LOG_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/create_features_${TIMESTAMP}.log"
+LOG_FILE="${LOG_DIR}/create_X_y_features_${TIMESTAMP}.log"
 
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
@@ -55,7 +55,7 @@ echo "  Output fn: ${OUTPUT_FN}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_features.py" \
+python "${SCRIPT_DIR}/run_create_X_y_features.py" \
   --data-fn "$DATA_FN" \
   --output-data-fn "$OUTPUT_DATA_FN" \
   --output-fn "$OUTPUT_FN" \
