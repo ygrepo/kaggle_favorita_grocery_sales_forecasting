@@ -76,6 +76,88 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     )
 
 
+def load_data(
+    data_fn: Path,
+    window_size: int,
+    output_fn: Path,
+    log_level: str,
+) -> pd.DataFrame:
+    """Load and preprocess training data.
+
+    Args:
+        data_fn: Path to the training data file
+
+    Returns:
+        Preprocessed DataFrame
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info(f"Loading data from {data_fn}")
+    try:
+        dtype_dict = {
+            "start_date": np.uint32,
+            "store_item": str,
+            "store_cluster": np.uint8,
+            "item_cluster": np.uint8,
+            "unit_sales": np.float32,
+            **{f"store_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"item_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"store_med_change_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"item_med_change_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{
+                f"store_cluster_logpct_change_{i}": np.float32
+                for i in range(1, window_size + 1)
+            },
+            **{
+                f"item_cluster_logpct_change_{i}": np.float32
+                for i in range(1, window_size + 1)
+            },
+            **{
+                f"dayofweek_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"weekofmonth_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"monthofyear_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"paycycle_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"season_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+        }
+        df = pd.read_csv(
+            data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
+        )
+        (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
+            window_size=window_size
+        )
+        df = df[meta_cols + x_feature_cols + label_cols]
+        df["start_date"] = pd.to_datetime(df["start_date"])
+        df.sort_values("start_date", inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        if output_fn:
+            logger.info(f"Saving final_df to {output_fn}")
+            df.to_csv(output_fn, index=False)
+
+        logger.info(f"Loaded data with shape {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+
 def generate_aligned_windows(
     df: pd.DataFrame,
     window_size: int,
@@ -264,145 +346,6 @@ def generate_cyclical_features(
         df.to_csv(output_path, index=False)
 
     return df
-
-
-# def generate_cyclical_features(
-#     df: pd.DataFrame,
-#     window_size: int = 16,
-#     *,
-#     calendar_aligned: bool = True,
-#     log_level: str = "INFO",
-#     output_path: Optional[Path] = None,
-# ) -> pd.DataFrame:
-#     """
-#     Generate day‑/week‑/month/season/pay‑cycle sine & cosine features
-#     for non‑overlapping windows and *include* store/item cluster IDs.
-
-#     If `cluster_df` is None, every store (or item)
-#     is assigned to the single cluster label 'ALL_STORES' / 'ALL_ITEMS'.
-#     """
-#     # Drop duplicates to get one id per store_item
-#     # id_mapping = df[["store_item", "id"]].drop_duplicates()
-
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-#     df["date"] = pd.to_datetime(df["date"])
-#     cols = [
-#         "start_date",
-#         "store_item",
-#         "store",
-#         "item",
-#     ]
-#     for i in range(1, window_size + 1):
-#         for feature in [
-#             "dayofweek",
-#             "weekofmonth",
-#             "monthofyear",
-#             "paycycle",
-#             "season",
-#         ]:
-#             for trig in ["sin", "cos"]:
-#                 cols.append(f"{feature}_{trig}_{i}")
-
-#     if df.empty:
-#         return pd.DataFrame(columns=cols)
-
-#     # ───────────────── raw cyclical columns ─────────────────
-#     df = df.assign(
-#         dayofweek=df["date"].dt.dayofweek,
-#         weekofmonth=lambda d: (d["date"].dt.day - 1) // 7 + 1,
-#         monthofyear=df["date"].dt.month,
-#     ).assign(
-#         dayofweek_sin=lambda d: np.sin(2 * np.pi * d["dayofweek"] / 7),
-#         dayofweek_cos=lambda d: np.cos(2 * np.pi * d["dayofweek"] / 7),
-#         weekofmonth_sin=lambda d: np.sin(2 * np.pi * d["weekofmonth"] / 5),
-#         weekofmonth_cos=lambda d: np.cos(2 * np.pi * d["weekofmonth"] / 5),
-#         monthofyear_sin=lambda d: np.sin(2 * np.pi * d["monthofyear"] / 12),
-#         monthofyear_cos=lambda d: np.cos(2 * np.pi * d["monthofyear"] / 12),
-#     )
-
-#     # Pay‑cycle helpers
-#     def _pay_cycle_ratio(d: pd.Timestamp) -> float:
-#         month_end_day = (d + pd.offsets.MonthEnd(0)).day
-#         if d.day >= 15:
-#             last_pay = d.replace(day=15)
-#             next_pay = d.replace(day=month_end_day)
-#         else:
-#             prev_month_end = d - pd.offsets.MonthEnd(1)
-#             last_pay = prev_month_end
-#             next_pay = d.replace(day=15)
-#         cycle_len = (next_pay - last_pay).days
-#         return ((d - last_pay).days / cycle_len) if cycle_len else 0.0
-
-#     df["paycycle_ratio"] = df["date"].apply(_pay_cycle_ratio)
-#     df["paycycle_sin"] = np.sin(2 * np.pi * df["paycycle_ratio"])
-#     df["paycycle_cos"] = np.cos(2 * np.pi * df["paycycle_ratio"])
-
-#     # Season helpers
-#     def _season_ratio(d: pd.Timestamp) -> float:
-#         base = pd.Timestamp(year=d.year, month=3, day=20)
-#         if d < base:
-#             base = pd.Timestamp(year=d.year - 1, month=3, day=20)
-#         return ((d - base).days % 365) / 365
-
-#     df["season_ratio"] = df["date"].apply(_season_ratio)
-#     df["season_sin"] = np.sin(2 * np.pi * df["season_ratio"])
-#     df["season_cos"] = np.cos(2 * np.pi * df["season_ratio"])
-
-#     # ───────────────── build window rows ─────────────────
-#     results: List[dict] = []
-#     iterator = df.groupby("store_item")
-#     del df
-#     gc.collect()
-#     if logger.level == logging.DEBUG:
-#         iterator = tqdm(iterator, desc="Generating cyclical features")
-
-#     for store_item, group in iterator:
-#         # logger.debug(f"Cyclical features: Processing {store_item}")
-#         group = group.sort_values("date").reset_index(drop=True)
-#         windows = generate_aligned_windows(
-#             group, window_size, calendar_aligned=calendar_aligned
-#         )
-
-#         for i, window_dates in enumerate(windows):
-#             # logger.debug(f"Cyclical features: Processing {store_item} window {i}")
-#             window_df = group[group["date"].isin(window_dates)]
-#             row = {
-#                 "start_date": window_dates[0],
-#                 "store_item": store_item,
-#                 "store": group["store"].iloc[0],
-#                 "item": group["item"].iloc[0],
-#             }
-
-#             if window_df.empty:
-#                 # logger.warning(f"Empty window for {store_item} at {window_dates[0]}")
-#                 continue
-
-#             else:
-#                 for i in range(window_size):
-#                     if i < len(window_df):
-#                         r = window_df.iloc[i]
-#                         for f in CYCLICAL_FEATURES:
-#                             for t in TRIGS:
-#                                 row[f"{f}_{t}_{i+1}"] = r[f"{f}_{t}"]
-#                     else:
-#                         for f in CYCLICAL_FEATURES:
-#                             for t in TRIGS:
-#                                 row[f"{f}_{t}_{i+1}"] = 0.0
-#             results.append(row)
-
-#     del group, windows, window_df, row
-#     gc.collect()
-#     df = pd.DataFrame(results, columns=cols)
-#     del results
-#     gc.collect()
-#     # df = df.merge(id_mapping, on=["store_item"], how="left")
-#     # cols.insert(cols.index("start_date") + 1, "id")
-#     df = df[cols]
-#     if output_path is not None:
-#         logger.info(f"Saving cyclical features to {output_path}")
-#         df.to_csv(output_path, index=False)
-#     return df
 
 
 def generate_sales_features(
