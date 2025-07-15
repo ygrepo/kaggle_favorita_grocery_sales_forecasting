@@ -17,7 +17,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import load_data, add_y_targets_from_shift
+from src.utils import load_data, create_y_targets_from_shift
 
 
 def add_y_targets(
@@ -36,7 +36,11 @@ def add_y_targets(
         output_fn=output_data_fn,
         log_level=log_level,
     )
-    df = add_y_targets_from_shift(df)
+    df = create_y_targets_from_shift(
+        df,
+        window_size=window_size,
+        log_level=log_level,
+    )
     if output_fn:
         logger.info(f"Saving final_df to {output_fn}")
         df.to_csv(output_fn, index=False)

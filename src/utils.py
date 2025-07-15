@@ -563,13 +563,14 @@ def generate_sales_features(
     return df
 
 
-def add_y_targets_from_shift(
+def create_y_targets_from_shift(
     df: pd.DataFrame,
     window_size: int = 16,
-    feature_prefixes: list[str] = None,
-) -> Iterator[pd.DataFrame]:
+    feature_prefixes: Optional[list[str]] = None,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
     """
-    Yield batches of rows with y_targets from a shifted next window per store_item group.
+    Create a DataFrame with y-targets from shifted windows per store_item group.
 
     Parameters
     ----------
@@ -580,11 +581,45 @@ def add_y_targets_from_shift(
     feature_prefixes : list[str], optional
         List of feature prefixes to target for creating y_ features.
 
-    Yields
-    ------
+    Returns
+    -------
     pd.DataFrame
-        A batch of rows with y_ columns appended.
+        Aggregated DataFrame with y_ columns added.
     """
+
+    def add_y_targets_from_shift(
+        df: pd.DataFrame,
+        window_size: int,
+        feature_prefixes: list[str],
+    ) -> Iterator[pd.DataFrame]:
+
+        df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+
+        for store_item, group in tqdm(
+            df.groupby("store_item", sort=False), desc="Processing store_items"
+        ):
+            group = group.sort_values("start_date").reset_index(drop=True)
+            next_group = group.shift(-1)
+
+            date_diff = (next_group["start_date"] - group["start_date"]).dt.days
+            valid = date_diff == window_size
+
+            if not valid.any():
+                logger.debug(f"No valid window for store_item {store_item}")
+                continue
+
+            matched = group.loc[valid].copy()
+            shifted = next_group.loc[valid]
+
+            for col in group.columns:
+                if any(col.startswith(prefix) for prefix in feature_prefixes):
+                    matched[f"y_{col}"] = shifted[col].values
+
+            yield matched
+
+            del group, next_group, matched, shifted, date_diff, valid
+            gc.collect()
+
     if feature_prefixes is None:
         feature_prefixes = [
             "sales_day_",
@@ -601,37 +636,11 @@ def add_y_targets_from_shift(
             "season_",
         ]
 
-    def helper(group):
-        group = group.sort_values("start_date").reset_index(drop=True)
-        next_group = group.shift(-1)
-        date_diff = (next_group["start_date"] - group["start_date"]).dt.days
-        valid = date_diff == window_size
-
-        if not valid.any():
-            logger.warning(
-                f"No valid windows found for store_item {group['store_item'].iloc[0]}"
-            )
-            return
-
-        matched = group[valid].copy()
-        shifted = next_group[valid]
-
-        for col in group.columns:
-            if any(col.startswith(prefix) for prefix in feature_prefixes):
-                matched[f"y_{col}"] = shifted[col].values
-
-        yield matched
-
-        # Explicit memory cleanup
-        del group, next_group, matched, shifted, date_diff, valid
-        gc.collect()
-
-    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-    grouped = df.groupby("store_item", sort=False)
-
-    # Stream and aggregate into a single DataFrame (optional)
-    results = pd.concat(helper(grouped), ignore_index=True)
-    return results
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    return pd.concat(
+        add_y_targets_from_shift(df, window_size, feature_prefixes),
+        ignore_index=True,
+    )
 
 
 # def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.DataFrame:
