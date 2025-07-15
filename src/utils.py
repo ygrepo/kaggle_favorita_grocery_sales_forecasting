@@ -3,11 +3,8 @@ from __future__ import annotations
 import heapq
 import numpy as np
 import pandas as pd
-from scipy.linalg import dft
 from sklearn.preprocessing import MinMaxScaler
-from scipy.stats import zscore
-import umap
-from typing import List, Optional, Generator, Union, Iterator
+from typing import List, Optional, Iterator
 import logging
 from tqdm import tqdm
 from pathlib import Path
