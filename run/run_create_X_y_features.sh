@@ -13,7 +13,7 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 
 DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features.csv"
-OUTPUT_DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_new.csv"
+#OUTPUT_DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_new.csv"
 OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -57,7 +57,7 @@ echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_create_X_y_features.py" \
   --data-fn "$DATA_FN" \
-  --output-data-fn "$OUTPUT_DATA_FN" \
+  #--output-data-fn "$OUTPUT_DATA_FN" \
   --output-fn "$OUTPUT_FN" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \

@@ -7,7 +7,7 @@ from scipy.linalg import dft
 from sklearn.preprocessing import MinMaxScaler
 from scipy.stats import zscore
 import umap
-from typing import List, Optional, Generator, Union
+from typing import List, Optional, Generator, Union, Iterator
 import logging
 from tqdm import tqdm
 from pathlib import Path
@@ -563,42 +563,106 @@ def generate_sales_features(
     return df
 
 
-def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.DataFrame:
+def add_y_targets_from_shift(
+    df: pd.DataFrame,
+    window_size: int = 16,
+    feature_prefixes: list[str] = None,
+) -> Iterator[pd.DataFrame]:
+    """
+    Yield batches of rows with y_targets from a shifted next window per store_item group.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with 'store_item' and 'start_date'.
+    window_size : int
+        Expected gap in days between consecutive windows.
+    feature_prefixes : list[str], optional
+        List of feature prefixes to target for creating y_ features.
+
+    Yields
+    ------
+    pd.DataFrame
+        A batch of rows with y_ columns appended.
+    """
+    if feature_prefixes is None:
+        feature_prefixes = [
+            "sales_day_",
+            "store_med_day_",
+            "item_med_day_",
+            "store_med_change_",
+            "item_med_change_",
+            "store_cluster_logpct_change_",
+            "item_cluster_logpct_change_",
+            "dayofweek_",
+            "weekofmonth_",
+            "monthofyear_",
+            "paycycle_",
+            "season_",
+        ]
+
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-    result = []
 
-    feature_prefixes = [
-        "sales_day_",
-        "store_med_day_",
-        "item_med_day_",
-        "store_med_change_",
-        "item_med_change_",
-        "store_cluster_logpct_change_",
-        "item_cluster_logpct_change_",
-        "dayofweek_",
-        "weekofmonth_",
-        "monthofyear_",
-        "paycycle_",
-        "season_",
-    ]
+    grouped = df.groupby("store_item", sort=False)
+    for _, group in tqdm(grouped, desc="Processing store_items"):
+        group = group.sort_values("start_date").reset_index(drop=True)
+        next_group = group.shift(-1)
+        date_diff = (next_group["start_date"] - group["start_date"]).dt.days
+        valid = date_diff == window_size
 
-    for _, group in df.groupby("store_item", sort=False):
-        group = group.reset_index(drop=True)
-        for i in range(len(group) - 1):
-            cur = group.iloc[i]
-            nxt = group.iloc[i + 1]
+        if not valid.any():
+            continue
 
-            if (nxt["start_date"] - cur["start_date"]).days != window_size:
-                continue
+        matched = group[valid].copy()
+        shifted = next_group[valid]
 
-            row = cur.copy()
-            for col in group.columns:
-                if any(col.startswith(prefix) for prefix in feature_prefixes):
-                    row[f"y_{col}"] = nxt[col]
+        for col in group.columns:
+            if any(col.startswith(prefix) for prefix in feature_prefixes):
+                matched[f"y_{col}"] = shifted[col].values
 
-            result.append(row)
+        yield matched
 
-    return pd.DataFrame(result)
+        # Explicit memory cleanup
+        del group, next_group, matched, shifted, date_diff, valid
+        gc.collect()
+
+
+# def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.DataFrame:
+#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+#     result = []
+
+#     feature_prefixes = [
+#         "sales_day_",
+#         "store_med_day_",
+#         "item_med_day_",
+#         "store_med_change_",
+#         "item_med_change_",
+#         "store_cluster_logpct_change_",
+#         "item_cluster_logpct_change_",
+#         "dayofweek_",
+#         "weekofmonth_",
+#         "monthofyear_",
+#         "paycycle_",
+#         "season_",
+#     ]
+
+#     for _, group in df.groupby("store_item", sort=False):
+#         group = group.reset_index(drop=True)
+#         for i in range(len(group) - 1):
+#             cur = group.iloc[i]
+#             nxt = group.iloc[i + 1]
+
+#             if (nxt["start_date"] - cur["start_date"]).days != window_size:
+#                 continue
+
+#             row = cur.copy()
+#             for col in group.columns:
+#                 if any(col.startswith(prefix) for prefix in feature_prefixes):
+#                     row[f"y_{col}"] = nxt[col]
+
+#             result.append(row)
+
+#     return pd.DataFrame(result)
 
 
 def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:

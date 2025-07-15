@@ -38,6 +38,7 @@ def add_y_targets(
     )
     df = add_y_targets_from_shift(df)
     if output_fn:
+        logger.info(f"Saving final_df to {output_fn}")
         df.to_csv(output_fn, index=False)
     return df
 
@@ -121,7 +122,7 @@ def main():
     # Parse command line arguments
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
-    output_data_fn = Path(args.output_data_fn).resolve()
+    # output_data_fn = Path(args.output_data_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
     log_dir = Path(args.log_dir).resolve()
     window_size = args.window_size
@@ -134,7 +135,7 @@ def main():
         # Log configuration
         logger.info("Starting adding y targets with configuration:")
         logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Output data fn: {output_data_fn}")
+        # logger.info(f"  Output data fn: {output_data_fn}")
         logger.info(f"  Output fn: {output_fn}")
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Window size: {window_size}")
@@ -142,7 +143,7 @@ def main():
         add_y_targets(
             window_size=window_size,
             data_fn=data_fn,
-            output_data_fn=output_data_fn,
+            output_data_fn=None,
             output_fn=output_fn,
             log_level=args.log_level,
         )
