@@ -63,6 +63,12 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
+        "--filtered-data-fn",
+        type=str,
+        default="",
+        help="Path to filtered data file (relative to project root)",
+    )
+    parser.add_argument(
         "--log-dir",
         type=str,
         default="../output/logs",
@@ -169,7 +175,11 @@ def parse_args():
 
 
 def load_data(
-    data_fn: Path, nrows: int = 0, start_date: str = "", end_date: str = ""
+    data_fn: Path,
+    nrows: int = 0,
+    start_date: str = "",
+    end_date: str = "",
+    fn: Path = None,
 ) -> pd.DataFrame:
     """Load and preprocess training data.
 
@@ -203,6 +213,8 @@ def load_data(
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, low_memory=False, parse_dates=["date"]
             )
+        initial_stores = df["store"].unique().tolist()
+        initial_items = df["item"].unique().tolist()
         if start_date:
             logger.info(f"Filtering data for start date {start_date}")
             logger.info(f"Before start date filtering: {df.shape}")
@@ -220,6 +232,17 @@ def load_data(
         ]
         df = df[cols]
         df["date"] = pd.to_datetime(df["date"])
+        intersect_stores = np.intersect1d(initial_stores, df["store"].unique())
+        intersect_items = np.intersect1d(initial_items, df["item"].unique())
+        logger.info(f"# intersect stores: {len(intersect_stores)}")
+        logger.info(f"# intersect items: {len(intersect_items)}")
+        missing_stores = np.setdiff1d(initial_stores, df["store"].unique())
+        missing_items = np.setdiff1d(initial_items, df["item"].unique())
+        logger.info(f"# missing stores: {len(missing_stores)}")
+        logger.info(f"# missing items: {len(missing_items)}")
+        if fn:
+            logger.info(f"Saving data to {fn}")
+            df.to_csv(fn, index=False)
         logger.info(f"Loaded data with shape {df.shape}")
         return df
     except Exception as e:
@@ -235,6 +258,7 @@ def main():
     data_fn = Path(args.data_fn).resolve()
     log_dir = Path(args.log_dir).resolve()
     output_fn = Path(args.output_fn).resolve()
+    filtered_data_fn = Path(args.filtered_data_fn).resolve()
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
 
@@ -248,6 +272,7 @@ def main():
         logger.info(f"  Start date: {args.start_date}")
         logger.info(f"  End date: {args.end_date}")
         logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Filtered data fn: {filtered_data_fn}")
         logger.info(f"  Store top n: {args.store_top_n}")
         logger.info(f"  Store med n: {args.store_med_n}")
         logger.info(f"  Store bottom n: {args.store_bottom_n}")
@@ -266,6 +291,7 @@ def main():
             nrows=args.nrows,
             start_date=args.start_date,
             end_date=args.end_date,
+            fn=filtered_data_fn,
         )
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
