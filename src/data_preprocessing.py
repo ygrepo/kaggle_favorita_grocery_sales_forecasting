@@ -223,7 +223,6 @@ def prepare_data(
     pd.DataFrame
         Full (store, item, date) matrix with unit_sales filled as needed
     """
-    df = df.copy()
 
     n_items = df[group_item_column].nunique()
     logger.info(f"# unique items: {n_items}")
@@ -241,6 +240,11 @@ def prepare_data(
     logger.info(f"Selected top items: {df_top_items.head()}")
     valid_items = df_top_items.reset_index()[group_item_column].tolist()
     logger.info(f"# top items: {len(valid_items)}")
+    initial_items = df[group_item_column].unique().tolist()
+    intersect_items = np.intersect1d(initial_items, valid_items)
+    logger.info(f"# intersect items: {len(intersect_items)}")
+    missing_items = np.setdiff1d(initial_items, valid_items)
+    logger.info(f"# missing items: {len(missing_items)}")
 
     n_stores = df[group_store_column].nunique()
     logger.info(f"# unique stores: {n_stores}")
@@ -256,6 +260,12 @@ def prepare_data(
     logger.info(f"Selected top stores: {df_top_stores.head()}")
     valid_stores = df_top_stores.reset_index()[group_store_column].tolist()
     logger.info(f"# top stores: {len(valid_stores)}")
+    initial_stores = df[group_store_column].unique().tolist()
+    intersect_stores = np.intersect1d(initial_stores, valid_stores)
+    logger.info(f"# intersect stores: {len(intersect_stores)}")
+    missing_stores = np.setdiff1d(initial_stores, valid_stores)
+    logger.info(f"# missing stores: {len(missing_stores)}")
+
     unique_dates = df["date"].dropna().unique()
     grid = pd.MultiIndex.from_product(
         [valid_stores, valid_items, sorted(unique_dates)],
