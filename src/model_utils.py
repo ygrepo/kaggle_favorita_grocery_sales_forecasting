@@ -207,6 +207,12 @@ def generate_non_overlapping_loaders(
     df: pd.DataFrame,
     window_size: int = 1,
     batch_size: int = 32,
+    x_feature_cols: List[str],
+    x_sales_features: List[str],
+    x_cyclical_features: List[str],
+    label_cols: List[str],
+    y_sales_features: List[str],
+    y_cyclical_features: List[str],
 ):
     """
     Create non-overlapping training-validation pairs for time series.

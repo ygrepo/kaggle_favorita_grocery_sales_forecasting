@@ -593,8 +593,6 @@ def create_y_targets_from_shift(
         feature_prefixes: list[str],
     ) -> Iterator[pd.DataFrame]:
 
-        df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-
         for store_item, group in tqdm(
             df.groupby("store_item", sort=False), desc="Processing store_items"
         ):
@@ -603,9 +601,15 @@ def create_y_targets_from_shift(
 
             date_diff = (next_group["start_date"] - group["start_date"]).dt.days
             valid = date_diff == window_size
+            logger.debug(f"Group: {group['start_date'].values}")
+            logger.debug(f"Next group: {next_group['start_date'].values}")
+            logger.debug(f"Date diff: {date_diff}")
 
             if not valid.any():
                 logger.debug(f"No valid window for store_item {store_item}")
+                # logger.debug(f"Date diff: {date_diff}")
+                # logger.debug(f"Group: {group}")
+                # logger.debug(f"Next group: {next_group}")
                 continue
 
             matched = group.loc[valid].copy()
@@ -637,6 +641,8 @@ def create_y_targets_from_shift(
         ]
 
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info(f"Window size: {window_size}")
+    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
     return pd.concat(
         add_y_targets_from_shift(df, window_size, feature_prefixes),
         ignore_index=True,
