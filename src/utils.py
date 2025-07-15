@@ -577,6 +577,8 @@ def create_y_targets_from_shift(
         Expected gap in days between consecutive windows.
     feature_prefixes : list[str], optional
         List of feature prefixes to target for creating y_ features.
+    log_level : str
+        Logging level, e.g. "INFO", "DEBUG".
 
     Returns
     -------
@@ -598,15 +600,26 @@ def create_y_targets_from_shift(
 
             date_diff = (next_group["start_date"] - group["start_date"]).dt.days
             valid = date_diff == window_size
-            logger.debug(f"Group: {group['start_date'].values}")
-            logger.debug(f"Next group: {next_group['start_date'].values}")
-            logger.debug(f"Date diff: {date_diff}")
+
+            if logger.isEnabledFor(logging.DEBUG):
+                group_dates = group["start_date"].dt.strftime("%Y-%m-%d")
+                next_dates = next_group["start_date"].dt.strftime("%Y-%m-%d")
+
+                if len(group_dates) <= 10:
+                    logger.debug(f"Group {store_item} dates: {group_dates.tolist()}")
+                    logger.debug(f"Next dates: {next_dates.tolist()}")
+                    logger.debug(f"Date diffs: {date_diff.tolist()}")
+                else:
+                    logger.debug(
+                        f"Group {store_item}: {group_dates.iloc[0]} to {group_dates.iloc[-1]}"
+                    )
+                    logger.debug(f"Next: {next_dates.iloc[0]} to {next_dates.iloc[-1]}")
+                    logger.debug(
+                        f"Min/Max date diff: {date_diff.min()} / {date_diff.max()}"
+                    )
 
             if not valid.any():
                 logger.debug(f"No valid window for store_item {store_item}")
-                # logger.debug(f"Date diff: {date_diff}")
-                # logger.debug(f"Group: {group}")
-                # logger.debug(f"Next group: {next_group}")
                 continue
 
             matched = group.loc[valid].copy()
@@ -639,49 +652,14 @@ def create_y_targets_from_shift(
 
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info(f"Window size: {window_size}")
+    logger.info(f"Input shape: {df.shape}")
+
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+
     return pd.concat(
         add_y_targets_from_shift(df, window_size, feature_prefixes),
         ignore_index=True,
     )
-
-
-# def add_y_targets_from_shift(df: pd.DataFrame, window_size: int = 16) -> pd.DataFrame:
-#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-#     result = []
-
-#     feature_prefixes = [
-#         "sales_day_",
-#         "store_med_day_",
-#         "item_med_day_",
-#         "store_med_change_",
-#         "item_med_change_",
-#         "store_cluster_logpct_change_",
-#         "item_cluster_logpct_change_",
-#         "dayofweek_",
-#         "weekofmonth_",
-#         "monthofyear_",
-#         "paycycle_",
-#         "season_",
-#     ]
-
-#     for _, group in df.groupby("store_item", sort=False):
-#         group = group.reset_index(drop=True)
-#         for i in range(len(group) - 1):
-#             cur = group.iloc[i]
-#             nxt = group.iloc[i + 1]
-
-#             if (nxt["start_date"] - cur["start_date"]).days != window_size:
-#                 continue
-
-#             row = cur.copy()
-#             for col in group.columns:
-#                 if any(col.startswith(prefix) for prefix in feature_prefixes):
-#                     row[f"y_{col}"] = nxt[col]
-
-#             result.append(row)
-
-#     return pd.DataFrame(result)
 
 
 def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:
