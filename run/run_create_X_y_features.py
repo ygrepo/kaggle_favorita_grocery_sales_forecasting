@@ -78,37 +78,37 @@ def parse_args():
         description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--data-fn",
+        "--data_fn",
         type=str,
         default="",
         help="Path to data file (relative to project root)",
     )
     parser.add_argument(
-        "--output-data-fn",
+        "--output_data_fn",
         type=str,
         default="",
         help="Path to output data file (relative to project root)",
     )
     parser.add_argument(
-        "--output-fn",
+        "--output_fn",
         type=str,
         default="",
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
-        "--window-size",
+        "--window_size",
         type=int,
         default=16,
         help="Size of the lookback window",
     )
     parser.add_argument(
-        "--log-dir",
+        "--log_dir",
         type=str,
         default="../output/logs",
         help="Directory to save script outputs (relative to project root)",
     )
     parser.add_argument(
-        "--log-level",
+        "--log_level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],

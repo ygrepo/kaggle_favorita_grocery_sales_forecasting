@@ -56,12 +56,12 @@ echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_create_X_y_features.py" \
-  --data-fn "$DATA_FN" \
+  --data_fn "$DATA_FN" \
   #--output-data-fn "$OUTPUT_DATA_FN" \
-  --output-fn "$OUTPUT_FN" \
-  --log-dir "$LOG_DIR" \
-  --log-level "$LOG_LEVEL" \
-  --window-size "$WINDOW_SIZE" \
+  --output_fn "$OUTPUT_FN" \
+  --log_dir "$LOG_DIR" \
+  --log_level "$LOG_LEVEL" \
+  --window_size "$WINDOW_SIZE" \
    2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script
