@@ -12,7 +12,7 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/data"
 DATA_FN="${DATA_DIR}/20250707_train.csv"
-FILTERED_DATA_FN="${DATA_DIR}/20250707_train_filtered.csv"
+#FILTERED_DATA_FN="${DATA_DIR}/20250707_train_filtered.csv"
 
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --data-fn) DATA_FN="$2"; shift 2 ;;
-    --filtered-data-fn) FILTERED_DATA_FN="$2"; shift 2 ;;
+    #--filtered-data-fn) FILTERED_DATA_FN="$2"; shift 2 ;;
     --nrows) NROWS="$2"; shift 2 ;;
     --start-date) START_DATE="$2"; shift 2 ;;
     --end-date) END_DATE="$2"; shift 2 ;;
@@ -69,7 +69,7 @@ echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
-echo "Filtered data fn: $FILTERED_DATA_FN" | tee -a "$LOG_FILE"
+#echo "Filtered data fn: $FILTERED_DATA_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
 echo "Nrows: $NROWS" | tee -a "$LOG_FILE"
@@ -85,7 +85,7 @@ echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --data-fn "$DATA_FN" \
   --output-fn "$OUTPUT_FN" \
-  --filtered-data-fn "$FILTERED_DATA_FN" \
+  #--filtered-data-fn "$FILTERED_DATA_FN" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \
   --store-fn "$STORE_FN" \

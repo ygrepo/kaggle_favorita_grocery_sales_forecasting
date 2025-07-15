@@ -272,7 +272,7 @@ def main():
         logger.info(f"  Start date: {args.start_date}")
         logger.info(f"  End date: {args.end_date}")
         logger.info(f"  Output fn: {output_fn}")
-        logger.info(f"  Filtered data fn: {filtered_data_fn}")
+        # logger.info(f"  Filtered data fn: {filtered_data_fn}")
         logger.info(f"  Store top n: {args.store_top_n}")
         logger.info(f"  Store med n: {args.store_med_n}")
         logger.info(f"  Store bottom n: {args.store_bottom_n}")
@@ -291,7 +291,7 @@ def main():
             nrows=args.nrows,
             start_date=args.start_date,
             end_date=args.end_date,
-            fn=filtered_data_fn,
+            fn=None,
         )
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
@@ -299,7 +299,7 @@ def main():
         # df.to_csv("./output/data/20250711_train_44_1503844.csv", index=False)
 
         # Create features
-        df = prepare_data(
+        df = prepare_data(  
             df,
             group_store_column=args.group_store_column,
             group_item_column=args.group_item_column,
