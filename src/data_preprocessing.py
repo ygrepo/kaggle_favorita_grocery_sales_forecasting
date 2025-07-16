@@ -291,6 +291,6 @@ def prepare_data(
 
     if fn:
         logger.info(f"Saving final_df to {fn}")
-        df.to_csv(fn, index=False)
+        df.sparse.to_parquet(fn, compression="snappy")
 
     return df

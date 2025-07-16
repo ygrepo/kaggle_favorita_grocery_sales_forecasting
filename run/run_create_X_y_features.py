@@ -41,6 +41,7 @@ def add_y_targets(
         df,
         window_size=window_size,
         log_level=log_level,
+        feature_prefixes=["sales_day_"],
     )
     if output_fn:
         logger.info(f"Saving final_df to {output_fn}")

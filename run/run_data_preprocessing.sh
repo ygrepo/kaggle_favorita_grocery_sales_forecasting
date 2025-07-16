@@ -17,7 +17,7 @@ DATA_FN="${DATA_DIR}/20250707_train.csv"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_44_1503844.csv"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.parquet"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 ITEM_TOP_N=5
@@ -85,7 +85,6 @@ echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --data-fn "$DATA_FN" \
   --output-fn "$OUTPUT_FN" \
-  #--filtered-data-fn "$FILTERED_DATA_FN" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \
   --store-fn "$STORE_FN" \

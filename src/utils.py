@@ -312,7 +312,7 @@ def generate_cyclical_features(
         return pd.DataFrame()
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df.dropna(subset=["date"], inplace=True)
+    # df.dropna(subset=["date"], inplace=True)
 
     # Extract date components once
     dates = df["date"]
@@ -823,7 +823,7 @@ def create_cyc_features(
 
 
 def create_features(
-    add_y_targets: bool = True,
+    add_y_targets: bool = False,
     sales_fn: Optional[Path] = None,
     cyc_fn: Optional[Path] = None,
     window_size: int = 16,
@@ -858,7 +858,9 @@ def create_features(
     logger.info(f"df.shape: {df.shape}")
 
     if add_y_targets:
-        df = add_y_targets_from_shift(df, window_size)
+        df = create_y_targets_from_shift(
+            df, window_size, feature_prefixes=["sales_day_"]
+        )
         logger.info(f"df.shape: {df.shape}")
 
     if output_fn is not None:
@@ -909,7 +911,12 @@ def prepare_training_data_from_raw_df(
 
     logger.info(f"merged_df.shape: {merged_df.shape}")
     if add_y_targets:
-        merged_df = add_y_targets_from_shift(merged_df, window_size)
+        merged_df = create_y_targets_from_shift(
+            merged_df,
+            window_size=window_size,
+            feature_prefixes=["sales_day_"],
+            log_level=log_level,
+        )
         logger.info(f"merged_df.shape: {merged_df.shape}")
 
     return merged_df

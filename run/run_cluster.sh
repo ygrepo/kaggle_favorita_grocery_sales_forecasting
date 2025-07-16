@@ -20,22 +20,22 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_100_item.csv" 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_20_item.csv" 
-DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_2000_item_cluster.csv"
-DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_15_item.csv"
+#DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_2000_item_cluster.csv"
+DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.csv"
 
 # STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_matrix.csv"
 # CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster_result.csv"
 # OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster.csv"
 
-STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_15_item_matrix.csv"
-CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_15_item_cluster_result.csv"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_15_item_cluster.csv"
+STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_matrix.csv"
+CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.csv"
 
 
+#ROW_RANGE="10:20"
+#COL_RANGE="2:5"
 ROW_RANGE="10:20"
-COL_RANGE="2:5"
-# ROW_RANGE="10:20"
-# COL_RANGE="10:20"
+COL_RANGE="10:20"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
