@@ -291,7 +291,7 @@ def prepare_data(
 
     if fn:
         logger.info(f"Saving final_df to {fn}")
-        sparse_df = df.astype(pd.SparseDtype("float", fill_value=0))
-        sparse_df.sparse.to_parquet(fn, compression="snappy")
+        #        sparse_df = df.astype(pd.SparseDtype("float", fill_value=0))
+        df.to_parquet(fn, compression="snappy")
 
     return df

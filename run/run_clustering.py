@@ -65,28 +65,30 @@ def load_data(data_fn: Path) -> pd.DataFrame:
     logger.info(f"Loading data from {data_fn}")
 
     try:
-        dtype_dict = {
-            "store": "uint16",
-            "item": "uint32",
-            "store_item": "string",  # allow NaNs as <NA>
-            "unit_sales": "float32",
-            "id": "Int64",  # nullable integer
-            "onpromotion": "boolean",  # if you want True/False with nulls
-        }
-        df = pd.read_csv(
-            data_fn,
-            dtype=dtype_dict,
-            parse_dates=["date"],
-            keep_default_na=True,
-            na_values=[""],
-        )
+        df = pd.read_parquet(data_fn)
+
+        # dtype_dict = {
+        #     "store": "uint16",
+        #     "item": "uint32",
+        #     "store_item": "string",  # allow NaNs as <NA>
+        #     "unit_sales": "float32",
+        #     "id": "Int64",  # nullable integer
+        #     "onpromotion": "boolean",  # if you want True/False with nulls
+        # }
+        # df = pd.read_csv(
+        #     data_fn,
+        #     dtype=dtype_dict,
+        #     parse_dates=["date"],
+        #     keep_default_na=True,
+        #     na_values=[""],
+        # )
         # Convert nullable Int64 or boolean to float64 with NaN
         cols = ["date", "store_item", "store", "item"] + [
             c for c in df.columns if c not in ("date", "store_item", "store", "item")
         ]
         df = df[cols]
-        df["id"] = df["id"].astype("float64")  # <NA> → np.nan
-        df["id"] = df["id"].astype(object).where(df["id"].notna(), np.nan)
+        # df["id"] = df["id"].astype("float64")  # <NA> → np.nan
+        # df["id"] = df["id"].astype(object).where(df["id"].notna(), np.nan)
         df["store_item"] = (
             df["store_item"].astype(object).where(df["store_item"].notna(), np.nan)
         )
