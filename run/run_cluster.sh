@@ -32,10 +32,10 @@ CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.par
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.parquet"
 
 
-#ROW_RANGE="10:20"
-#COL_RANGE="2:5"
-ROW_RANGE="10:20"
-COL_RANGE="10:20"
+ROW_RANGE="2:5"
+COL_RANGE="2:5"
+# ROW_RANGE="10:20"
+# COL_RANGE="10:20"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
