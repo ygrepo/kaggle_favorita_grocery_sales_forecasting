@@ -383,6 +383,10 @@ def cluster_data(
         + "_"
         + df["item_cluster"].astype(int).astype(str)
     )
+    df["store_item"] = df["store_item"].astype(str)
+    df["item_cluster"] = df["item_cluster"].astype(str)
+    df["store_cluster"] = df["store_cluster"].astype(str)
+    df["cluster"] = df["cluster"].astype(str)
     if output_fn:
         logger.info(f"Saving df to {output_fn}")
         df.to_parquet(output_fn)
