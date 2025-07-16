@@ -278,11 +278,11 @@ def prepare_data(
     # Fill missing unit_sales with NaN
     missing_mask = df[value_column].isna()
     num_missing = missing_mask.sum()
-    df.loc[missing_mask, value_column] = np.nan
+    df.loc[missing_mask, value_column] = 0
 
     # Logging
     logger.info(
-        f"Filled {num_missing} missing (store, item, date) rows with unit_sales = NaN"
+        f"Filled {num_missing} missing (store, item, date) rows with unit_sales = 0"
     )
     logger.info(f"Final dataset shape: {df.shape}")
     logger.info(f"Unique stores: {df['store'].nunique()}")

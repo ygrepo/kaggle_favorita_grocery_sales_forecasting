@@ -204,10 +204,23 @@ def set_seed(seed: int = 42):
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
 
+import logging
+import pickle
+from pathlib import Path
+from typing import List
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.preprocessing import MinMaxScaler
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
 
 def generate_loaders(
     df: pd.DataFrame,
-    x_feature_cols: List[str],
     x_sales_features: List[str],
     x_cyclical_features: List[str],
     scalers_dir: Path,
@@ -224,13 +237,11 @@ def generate_loaders(
     dataloader_dir.mkdir(parents=True, exist_ok=True)
 
     df = df.sort_index()
-    X_all = df.iloc[:, :-1].values
-    y_all = df.iloc[:, -1].values.reshape(-1, 1)  # reshape y to 2D
-
     num_samples = len(df)
 
     i = 0
     logger.info(f"Generating loaders for {num_samples} samples")
+
     while i + window_size < num_samples:
         train_start = i
         train_end = i + window_size
@@ -240,29 +251,32 @@ def generate_loaders(
             f"Processing window: train [{train_start}:{train_end}], val [{val_idx}]"
         )
 
-        X_train = X_all[train_start:train_end]
-        y_train = y_all[train_start:train_end]
-        X_val = X_all[val_idx].reshape(1, -1)
-        y_val = y_all[val_idx].reshape(1, -1)
+        # Extract X and y using label-based indexing
+        df_train = df.iloc[train_start:train_end]
+        df_val = df.iloc[[val_idx]]
 
-        x_sales_idx = [x_feature_cols.index(c) for c in x_sales_features]
-        x_cyc_idx = [x_feature_cols.index(c) for c in x_cyclical_features]
-        y_idx = [0]
+        # Extract and preprocess sales and cyclical features
+        x_sales_train = np.log1p(
+            np.clip(df_train.loc[:, x_sales_features].values, 0, None)
+        )
+        x_sales_val = np.log1p(np.clip(df_val.loc[:, x_sales_features].values, 0, None))
+        x_cyc_train = df_train.loc[:, x_cyclical_features].values
+        x_cyc_val = df_val.loc[:, x_cyclical_features].values
 
-        x_sales_train = np.log1p(np.clip(X_train[:, x_sales_idx], 0, None))
-        x_sales_val = np.log1p(np.clip(X_val[:, x_sales_idx], 0, None))
-        x_cyc_train = X_train[:, x_cyc_idx]
-        x_cyc_val = X_val[:, x_cyc_idx]
+        # Extract and preprocess labels
+        y_train = df_train.iloc[:, -1].values.reshape(-1, 1)
+        y_val = df_val.iloc[:, -1].values.reshape(1, -1)
+        y_train_log = np.log1p(np.clip(y_train, 0, None))
+        y_val_log = np.log1p(np.clip(y_val, 0, None))
 
-        y_train_log = np.log1p(np.clip(y_train[:, y_idx], 0, None))
-        y_val_log = np.log1p(np.clip(y_val[:, y_idx], 0, None))
-
+        # Fit scalers on training data only
         x_sales_scaler = MinMaxScaler().fit(x_sales_train)
         x_cyc_scaler = MinMaxScaler().fit(x_cyc_train)
         y_scaler = MinMaxScaler().fit(y_train_log)
 
         logger.debug("Fitted scalers on training data.")
 
+        # Apply transformations
         X_train_full = np.hstack(
             [
                 x_sales_scaler.transform(x_sales_train),
@@ -270,20 +284,18 @@ def generate_loaders(
             ]
         )
         X_val_full = np.hstack(
-            [
-                x_sales_scaler.transform(x_sales_val),
-                x_cyc_scaler.transform(x_cyc_val),
-            ]
+            [x_sales_scaler.transform(x_sales_val), x_cyc_scaler.transform(x_cyc_val)]
         )
-
         y_train_scaled = y_scaler.transform(y_train_log)
         y_val_scaled = y_scaler.transform(y_val_log)
 
+        # Convert to PyTorch tensors
         X_train_tensor = torch.tensor(X_train_full, dtype=torch.float32)
         y_train_tensor = torch.tensor(y_train_scaled, dtype=torch.float32)
         X_val_tensor = torch.tensor(X_val_full, dtype=torch.float32)
         y_val_tensor = torch.tensor(y_val_scaled, dtype=torch.float32)
 
+        # Create datasets and loaders
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
         val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
 
@@ -302,22 +314,20 @@ def generate_loaders(
             persistent_workers=True,
         )
 
+        # Save loaders and scalers
         suffix = f"{today_str}_idx{i}"
         torch.save(train_loader, dataloader_dir / f"{suffix}_train_loader.pt")
-        del train_loader
         torch.save(val_loader, dataloader_dir / f"{suffix}_val_loader.pt")
-        del val_loader
+        del train_loader, val_loader
 
         pickle.dump(
             x_sales_scaler, open(scalers_dir / f"{suffix}_x_sales_scaler.pkl", "wb")
         )
-        del x_sales_scaler
         pickle.dump(
             x_cyc_scaler, open(scalers_dir / f"{suffix}_x_cyc_scaler.pkl", "wb")
         )
-        del x_cyc_scaler
         pickle.dump(y_scaler, open(scalers_dir / f"{suffix}_y_scaler.pkl", "wb"))
-        del y_scaler
+        del x_sales_scaler, x_cyc_scaler, y_scaler
 
         logger.debug(f"Saved scalers and dataloaders for window {suffix}")
         i += window_size + 1
