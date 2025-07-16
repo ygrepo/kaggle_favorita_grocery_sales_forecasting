@@ -34,14 +34,14 @@ def create_sale_cyc_features(
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
     logger.info("Starting creating features")
-    df = create_features(
+    create_features(
         window_size=window_size,
         add_y_targets=add_y_targets,
         sales_fn=sales_fn,
         cyc_fn=cyc_fn,
         log_level=log_level,
     )
-    return df
+    logger.info("Features created successfully")
 
 
 def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
@@ -160,7 +160,7 @@ def main():
         logger.info(f"  Window size: {window_size}")
         logger.info(f"  Add y targets: {add_y_targets}")
 
-        df = create_sale_cyc_features(
+        create_sale_cyc_features(
             window_size=window_size,
             add_y_targets=add_y_targets,
             log_level=args.log_level,
@@ -168,12 +168,6 @@ def main():
             cyc_fn=cyc_fn,
         )
 
-        (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
-            window_size=window_size
-        )
-        # Save final_df to csv
-        logger.info(f"Saving final_df to {output_fn}")
-        df[meta_cols + x_feature_cols + label_cols].to_csv(output_fn, index=False)
 
     except Exception as e:
         logger.error(f"Error creating training features: {e}")
