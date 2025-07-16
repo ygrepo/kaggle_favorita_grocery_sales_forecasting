@@ -45,7 +45,10 @@ def add_y_targets(
     )
     if output_fn:
         logger.info(f"Saving final_df to {output_fn}")
-        df.to_csv(output_fn, index=False)
+        if output_fn.suffix == ".parquet":
+            df.to_parquet(output_fn)
+        else:
+            df.to_csv(output_fn, index=False)
     return df
 
 

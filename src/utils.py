@@ -90,63 +90,75 @@ def load_data(
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info(f"Loading data from {data_fn}")
     try:
-        dtype_dict = {
-            "start_date": np.uint32,
-            "store_item": str,
-            "store_cluster": np.uint8,
-            "item_cluster": np.uint8,
-            "unit_sales": np.float32,
-            **{f"store_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
-            **{f"item_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
-            **{f"store_med_change_{i}": np.float32 for i in range(1, window_size + 1)},
-            **{f"item_med_change_{i}": np.float32 for i in range(1, window_size + 1)},
-            **{
-                f"store_cluster_logpct_change_{i}": np.float32
-                for i in range(1, window_size + 1)
-            },
-            **{
-                f"item_cluster_logpct_change_{i}": np.float32
-                for i in range(1, window_size + 1)
-            },
-            **{
-                f"dayofweek_{trig}_{i}": np.float32
-                for i in range(1, window_size + 1)
-                for trig in TRIGS
-            },
-            **{
-                f"weekofmonth_{trig}_{i}": np.float32
-                for i in range(1, window_size + 1)
-                for trig in TRIGS
-            },
-            **{
-                f"monthofyear_{trig}_{i}": np.float32
-                for i in range(1, window_size + 1)
-                for trig in TRIGS
-            },
-            **{
-                f"paycycle_{trig}_{i}": np.float32
-                for i in range(1, window_size + 1)
-                for trig in TRIGS
-            },
-            **{
-                f"season_{trig}_{i}": np.float32
-                for i in range(1, window_size + 1)
-                for trig in TRIGS
-            },
-        }
-        df = pd.read_csv(
-            data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
-        )
-        (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
+        if data_fn.suffix == ".parquet":
+            df = pd.read_parquet(data_fn)
+        else:
+            dtype_dict = {
+                "start_date": np.uint32,
+                "store_item": str,
+                "store_cluster": np.uint8,
+                "item_cluster": np.uint8,
+                "unit_sales": np.float32,
+                **{f"store_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
+                **{f"item_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
+                **{
+                    f"store_med_change_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                },
+                **{
+                    f"item_med_change_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                },
+                **{
+                    f"store_cluster_logpct_change_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                },
+                **{
+                    f"item_cluster_logpct_change_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                },
+                **{
+                    f"dayofweek_{trig}_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                    for trig in TRIGS
+                },
+                **{
+                    f"weekofmonth_{trig}_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                    for trig in TRIGS
+                },
+                **{
+                    f"monthofyear_{trig}_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                    for trig in TRIGS
+                },
+                **{
+                    f"paycycle_{trig}_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                    for trig in TRIGS
+                },
+                **{
+                    f"season_{trig}_{i}": np.float32
+                    for i in range(1, window_size + 1)
+                    for trig in TRIGS
+                },
+            }
+            df = pd.read_csv(
+                data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
+            )
+        (meta_cols, _, _, x_feature_cols, _) = build_feature_and_label_cols(
             window_size=window_size
         )
-        df = df[meta_cols + x_feature_cols + label_cols]
+        df = df[meta_cols + x_feature_cols]
         df["start_date"] = pd.to_datetime(df["start_date"])
         df.sort_values("start_date", inplace=True)
         df.reset_index(drop=True, inplace=True)
         if output_fn:
             logger.info(f"Saving final_df to {output_fn}")
-            df.to_csv(output_fn, index=False)
+            if output_fn.suffix == ".parquet":
+                df.to_parquet(output_fn)
+            else:
+                df.to_csv(output_fn, index=False)
 
         logger.info(f"Loaded data with shape {df.shape}")
         return df
