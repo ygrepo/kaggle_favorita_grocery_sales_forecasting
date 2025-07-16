@@ -884,7 +884,7 @@ def create_features(
     if output_fn is not None:
         logger.info(f"Saving features to {output_fn}")
         if output_fn.suffix == ".parquet":
-            df.to_parquet(output_fn, index=False)
+            df.to_parquet(output_fn)
         else:
             df.to_csv(output_fn, index=False)
 
