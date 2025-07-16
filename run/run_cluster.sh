@@ -27,8 +27,8 @@ DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.parquet"
 # CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster_result.csv"
 # OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster.csv"
 
-STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_matrix.csv"
-CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.csv"
+STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_matrix.parquet"
+CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.parquet"
 
 
