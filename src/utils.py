@@ -417,8 +417,11 @@ def generate_cyclical_features(
     gc.collect()
 
     if output_path is not None:
+        if output_path.suffix == ".parquet":
+            df.to_parquet(output_path)
+        else:
+            df.to_csv(output_path, index=False)
         logger.info(f"Saving cyclical features to {output_path}")
-        df.to_csv(output_path, index=False)
 
     return df
 
@@ -805,8 +808,11 @@ def create_cyc_features(
 
     if fn is not None:
         if fn.exists():
+            if fn.suffix == ".parquet":
+                df = pd.read_parquet(fn)
+            else:
+                df = pd.read_csv(fn)
             logger.info(f"Loading cyclical features from {fn}")
-            df = pd.read_csv(fn)
         else:
             logger.info(f"Generating cyclical features to {fn}")
             df = generate_cyclical_features(
