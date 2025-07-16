@@ -568,6 +568,7 @@ def create_y_targets_from_shift(
 ) -> pd.DataFrame:
     """
     Create a DataFrame with y-targets from shifted windows per store_item group.
+    Only valid row pairs are kept (shifted by window_size days).
 
     Parameters
     ----------
@@ -583,7 +584,7 @@ def create_y_targets_from_shift(
     Returns
     -------
     pd.DataFrame
-        Aggregated DataFrame with y_ columns added.
+        Aggregated DataFrame with y_ columns added (only for valid rows).
     """
 
     def add_y_targets_from_shift(
@@ -618,11 +619,11 @@ def create_y_targets_from_shift(
                         f"Min/Max date diff: {date_diff.min()} / {date_diff.max()}"
                     )
 
-            if not valid.any():
+            matched = group.loc[valid].copy()
+            if matched.empty:
                 logger.debug(f"No valid window for store_item {store_item}")
                 continue
 
-            matched = group.loc[valid].copy()
             shifted = next_group.loc[valid]
 
             for col in group.columns:
@@ -637,19 +638,20 @@ def create_y_targets_from_shift(
     if feature_prefixes is None:
         feature_prefixes = [
             "sales_day_",
-            "store_med_day_",
-            "item_med_day_",
-            "store_med_change_",
-            "item_med_change_",
-            "store_cluster_logpct_change_",
-            "item_cluster_logpct_change_",
-            "dayofweek_",
-            "weekofmonth_",
-            "monthofyear_",
-            "paycycle_",
-            "season_",
+            # "store_med_day_",
+            # "item_med_day_",
+            # "store_med_change_",
+            # "item_med_change_",
+            # "store_cluster_logpct_change_",
+            # "item_cluster_logpct_change_",
+            # "dayofweek_",
+            # "weekofmonth_",
+            # "monthofyear_",
+            # "paycycle_",
+            # "season_",
         ]
 
+    # Set up logging
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info(f"Window size: {window_size}")
     logger.info(f"Input shape: {df.shape}")
@@ -662,28 +664,130 @@ def create_y_targets_from_shift(
     )
 
 
-def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Attach next window's features with a y_ prefix without dropping rows."""
-    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-    prefixes = [
-        "sales_day_",
-        "store_med_day_",
-        "item_med_day_",
-        "dayofweek_",
-        "weekofmonth_",
-        "monthofyear_",
-        "paycycle_",
-        "season_",
-    ]
+# def create_y_targets_from_shift(
+#     df: pd.DataFrame,
+#     window_size: int = 16,
+#     feature_prefixes: Optional[list[str]] = None,
+#     log_level: str = "INFO",
+# ) -> pd.DataFrame:
+#     """
+#     Create a DataFrame with y-targets from shifted windows per store_item group.
 
-    cols_to_shift = [c for c in df.columns if any(c.startswith(p) for p in prefixes)]
-    result = df.copy()
+#     Parameters
+#     ----------
+#     df : pd.DataFrame
+#         Input DataFrame with 'store_item' and 'start_date'.
+#     window_size : int
+#         Expected gap in days between consecutive windows.
+#     feature_prefixes : list[str], optional
+#         List of feature prefixes to target for creating y_ features.
+#     log_level : str
+#         Logging level, e.g. "INFO", "DEBUG".
 
-    for _, group in df.groupby("store_item"):
-        shifted = group[cols_to_shift].shift(-1)
-        result.loc[group.index, [f"y_{c}" for c in cols_to_shift]] = shifted.values
+#     Returns
+#     -------
+#     pd.DataFrame
+#         Aggregated DataFrame with y_ columns added.
+#     """
 
-    return result
+#     def add_y_targets_from_shift(
+#         df: pd.DataFrame,
+#         window_size: int,
+#         feature_prefixes: list[str],
+#     ) -> Iterator[pd.DataFrame]:
+
+#         for store_item, group in tqdm(
+#             df.groupby("store_item", sort=False), desc="Processing store_items"
+#         ):
+#             group = group.sort_values("start_date").reset_index(drop=True)
+#             next_group = group.shift(-1)
+
+#             date_diff = (next_group["start_date"] - group["start_date"]).dt.days
+#             valid = date_diff == window_size
+
+#             if logger.isEnabledFor(logging.DEBUG):
+#                 group_dates = group["start_date"].dt.strftime("%Y-%m-%d")
+#                 next_dates = next_group["start_date"].dt.strftime("%Y-%m-%d")
+
+#                 if len(group_dates) <= 10:
+#                     logger.debug(f"Group {store_item} dates: {group_dates.tolist()}")
+#                     logger.debug(f"Next dates: {next_dates.tolist()}")
+#                     logger.debug(f"Date diffs: {date_diff.tolist()}")
+#                 else:
+#                     logger.debug(
+#                         f"Group {store_item}: {group_dates.iloc[0]} to {group_dates.iloc[-1]}"
+#                     )
+#                     logger.debug(f"Next: {next_dates.iloc[0]} to {next_dates.iloc[-1]}")
+#                     logger.debug(
+#                         f"Min/Max date diff: {date_diff.min()} / {date_diff.max()}"
+#                     )
+
+#             if not valid.any():
+#                 logger.debug(f"No valid window for store_item {store_item}")
+#                 continue
+
+#             matched = group.loc[valid].copy()
+#             shifted = next_group.loc[valid]
+
+#             for col in group.columns:
+#                 if any(col.startswith(prefix) for prefix in feature_prefixes):
+#                     matched[f"y_{col}"] = shifted[col].values
+
+#             yield matched
+
+#             del group, next_group, matched, shifted, date_diff, valid
+#             gc.collect()
+
+#     if feature_prefixes is None:
+#         feature_prefixes = [
+#             "sales_day_",
+#             # "store_med_day_",
+#             # "item_med_day_",
+#             # "store_med_change_",
+#             # "item_med_change_",
+#             # "store_cluster_logpct_change_",
+#             # "item_cluster_logpct_change_",
+#             # "dayofweek_",
+#             # "weekofmonth_",
+#             # "monthofyear_",
+#             # "paycycle_",
+#             # "season_",
+#         ]
+
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     logger.info(f"Window size: {window_size}")
+#     logger.info(f"Input shape: {df.shape}")
+
+#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+
+#     return pd.concat(
+#         add_y_targets_from_shift(df, window_size, feature_prefixes),
+#         ignore_index=True,
+#     )
+
+
+# def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:
+#     """Attach next window's features with a y_ prefix without dropping rows."""
+#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+#     prefixes = [
+#         "sales_day_",
+#         "store_med_day_",
+#         "item_med_day_",
+#         "dayofweek_",
+#         "weekofmonth_",
+#         "monthofyear_",
+#         "paycycle_",
+#         "season_",
+#     ]
+
+#     cols_to_shift = [c for c in df.columns if any(c.startswith(p) for p in prefixes)]
+#     result = df.copy()
+
+#     for _, group in df.groupby("store_item"):
+#         shifted = group[cols_to_shift].shift(-1)
+#         result.loc[group.index, [f"y_{c}" for c in cols_to_shift]] = shifted.values
+
+#     return result
 
 
 def create_sale_features(
