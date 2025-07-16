@@ -45,7 +45,7 @@ def load_data(data_fn: Path) -> pd.DataFrame:
                 "item_nbr": np.uint32,
                 "unit_sales": np.float32,
             }
-        df = pd.read_csv(data_fn, dtype=dtype_dict, low_memory=False)
+            df = pd.read_csv(data_fn, dtype=dtype_dict, low_memory=False)
         df.rename(columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True)
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
         cols = ["date", "store_item", "store", "item"] + [
@@ -161,8 +161,8 @@ def main():
     window_size = args.window_size
 
     # Set up logging
-    print(f"Log dir: {log_dir}")
     logger = setup_logging(log_dir, args.log_level)
+    logger.info(f"Log dir: {log_dir}")
 
     try:
         # Log configuration
