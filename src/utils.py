@@ -880,13 +880,18 @@ def create_features(
             df, window_size, feature_prefixes=["sales_day_"]
         )
         logger.info(f"df.shape: {df.shape}")
-
-    if output_fn is not None:
-        logger.info(f"Saving features to {output_fn}")
         (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
             window_size=window_size
         )
         df = df[meta_cols + x_feature_cols + label_cols]
+    else:
+        logger.info("Not adding y targets")
+        (meta_cols, _, _, x_feature_cols, _) = build_feature_and_label_cols(
+            window_size=window_size
+        )
+        df = df[meta_cols + x_feature_cols]
+    if output_fn is not None:
+        logger.info(f"Saving features to {output_fn}")
         if output_fn.suffix == ".parquet":
             df.to_parquet(output_fn)
         else:
