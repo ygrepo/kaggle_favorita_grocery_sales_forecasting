@@ -36,13 +36,16 @@ def load_data(data_fn: Path) -> pd.DataFrame:
     logger.info(f"Loading data from {data_fn}")
 
     try:
-        dtype_dict = {
-            "id": np.uint32,
-            "store_nbr": np.uint8,
-            "item_nbr": np.uint32,
-            "unit_sales": np.float32,
-        }
-        df = pd.read_csv(data_fn, dtype=dtype_dict, low_memory=False)
+        if data_fn.suffix == ".parquet":
+            df = pd.read_parquet(data_fn)
+        else:
+            dtype_dict = {
+                "id": np.uint32,
+                "store_nbr": np.uint8,
+                "item_nbr": np.uint32,
+                "unit_sales": np.float32,
+            }
+            df = pd.read_csv(data_fn, dtype=dtype_dict, low_memory=False)
         df.rename(columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True)
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
         cols = ["date", "store_item", "store", "item"] + [
