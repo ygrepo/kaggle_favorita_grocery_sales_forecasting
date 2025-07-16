@@ -17,35 +17,39 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import load_data
-from src.utils import create_y_targets_from_shift
+from src.model_utils import generate_loaders
+from src.utils import load_X_y_data, build_feature_and_label_cols
 
 
-def add_y_targets(
+def create_data_loaders(
     window_size: int,
     data_fn: Path,
-    output_data_fn: Path,
-    output_fn: Path,
+    scalers_dir: Path,
+    dataloader_dir: Path,
     log_level: str,
 ):
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
     logger.info("Starting adding data")
-    df = load_data(
+    df = load_X_y_data(
         data_fn=data_fn,
         window_size=window_size,
-        output_fn=output_data_fn,
         log_level=log_level,
     )
-    df = create_y_targets_from_shift(
+    (_, x_sales_features, x_cyclical_features, x_feature_cols, label_cols) = (
+        build_feature_and_label_cols(window_size=window_size)
+    )
+
+    generate_loaders(
         df,
+        x_feature_cols,
+        x_sales_features,
+        x_cyclical_features,
         window_size=window_size,
         log_level=log_level,
+        scalers_dir=scalers_dir,
+        dataloader_dir=dataloader_dir,
     )
-    if output_fn:
-        logger.info(f"Saving final_df to {output_fn}")
-        df.to_csv(output_fn, index=False)
-    return df
 
 
 def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
@@ -89,16 +93,16 @@ def parse_args():
         help="Path to data file (relative to project root)",
     )
     parser.add_argument(
-        "--output_data_fn",
+        "--scalers_dir",
         type=str,
         default="",
-        help="Path to output data file (relative to project root)",
+        help="Path to scalers directory (relative to project root)",
     )
     parser.add_argument(
-        "--output_fn",
+        "--dataloader_dir",
         type=str,
         default="",
-        help="Path to output file (relative to project root)",
+        help="Path to dataloader directory (relative to project root)",
     )
     parser.add_argument(
         "--window_size",
@@ -127,8 +131,8 @@ def main():
     # Parse command line arguments
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
-    # output_data_fn = Path(args.output_data_fn).resolve()
-    output_fn = Path(args.output_fn).resolve()
+    scalers_dir = Path(args.scalers_dir).resolve()
+    dataloader_dir = Path(args.dataloader_dir).resolve()
     log_dir = Path(args.log_dir).resolve()
     window_size = args.window_size
 
@@ -138,23 +142,24 @@ def main():
 
     try:
         # Log configuration
-        logger.info("Starting adding y targets with configuration:")
+        logger.info("Starting creating data loaders with configuration:")
         logger.info(f"  Data fn: {data_fn}")
-        # logger.info(f"  Output data fn: {output_data_fn}")
-        logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Scalers dir: {scalers_dir}")
+        logger.info(f"  Dataloader dir: {dataloader_dir}")
+        logger.info(f"  Window size: {window_size}")
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Window size: {window_size}")
 
-        add_y_targets(
+        create_data_loaders(
             window_size=window_size,
             data_fn=data_fn,
-            output_data_fn=None,
-            output_fn=output_fn,
+            scalers_dir=scalers_dir,
+            dataloader_dir=dataloader_dir,
             log_level=args.log_level,
         )
 
     except Exception as e:
-        logger.error(f"Error adding y targets: {e}")
+        logger.error(f"Error creating data loaders: {e}")
         raise
 
 

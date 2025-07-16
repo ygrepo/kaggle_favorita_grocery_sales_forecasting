@@ -155,6 +155,84 @@ def load_data(
         raise
 
 
+def load_X_y_data(
+    data_fn: Path,
+    window_size: int,
+    log_level: str,
+) -> pd.DataFrame:
+    """Load and preprocess training data.
+
+    Args:
+        data_fn: Path to the training data file
+
+    Returns:
+        Preprocessed DataFrame
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info(f"Loading data from {data_fn}")
+    try:
+        dtype_dict = {
+            "start_date": np.uint32,
+            "store_item": str,
+            "store_cluster": np.uint8,
+            "item_cluster": np.uint8,
+            **{f"store_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"item_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"store_med_change_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"item_med_change_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{
+                f"store_cluster_logpct_change_{i}": np.float32
+                for i in range(1, window_size + 1)
+            },
+            **{
+                f"item_cluster_logpct_change_{i}": np.float32
+                for i in range(1, window_size + 1)
+            },
+            **{
+                f"dayofweek_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"weekofmonth_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"monthofyear_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"paycycle_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{
+                f"season_{trig}_{i}": np.float32
+                for i in range(1, window_size + 1)
+                for trig in TRIGS
+            },
+            **{f"sales_day_{i}": np.float32 for i in range(1, window_size + 1)},
+            **{f"y_sales_day_{i}": np.float32 for i in range(1, window_size + 1)},
+        }
+        df = pd.read_csv(
+            data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
+        )
+        (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
+            window_size=window_size
+        )
+        df = df[meta_cols + x_feature_cols + label_cols]
+        df["start_date"] = pd.to_datetime(df["start_date"])
+        df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+
+        logger.info(f"Loaded data with shape {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+
 def generate_aligned_windows(
     df: pd.DataFrame,
     window_size: int,
@@ -666,132 +744,6 @@ def create_y_targets_from_shift(
     df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
 
     return df
-
-
-# def create_y_targets_from_shift(
-#     df: pd.DataFrame,
-#     window_size: int = 16,
-#     feature_prefixes: Optional[list[str]] = None,
-#     log_level: str = "INFO",
-# ) -> pd.DataFrame:
-#     """
-#     Create a DataFrame with y-targets from shifted windows per store_item group.
-
-#     Parameters
-#     ----------
-#     df : pd.DataFrame
-#         Input DataFrame with 'store_item' and 'start_date'.
-#     window_size : int
-#         Expected gap in days between consecutive windows.
-#     feature_prefixes : list[str], optional
-#         List of feature prefixes to target for creating y_ features.
-#     log_level : str
-#         Logging level, e.g. "INFO", "DEBUG".
-
-#     Returns
-#     -------
-#     pd.DataFrame
-#         Aggregated DataFrame with y_ columns added.
-#     """
-
-#     def add_y_targets_from_shift(
-#         df: pd.DataFrame,
-#         window_size: int,
-#         feature_prefixes: list[str],
-#     ) -> Iterator[pd.DataFrame]:
-
-#         for store_item, group in tqdm(
-#             df.groupby("store_item", sort=False), desc="Processing store_items"
-#         ):
-#             group = group.sort_values("start_date").reset_index(drop=True)
-#             next_group = group.shift(-1)
-
-#             date_diff = (next_group["start_date"] - group["start_date"]).dt.days
-#             valid = date_diff == window_size
-
-#             if logger.isEnabledFor(logging.DEBUG):
-#                 group_dates = group["start_date"].dt.strftime("%Y-%m-%d")
-#                 next_dates = next_group["start_date"].dt.strftime("%Y-%m-%d")
-
-#                 if len(group_dates) <= 10:
-#                     logger.debug(f"Group {store_item} dates: {group_dates.tolist()}")
-#                     logger.debug(f"Next dates: {next_dates.tolist()}")
-#                     logger.debug(f"Date diffs: {date_diff.tolist()}")
-#                 else:
-#                     logger.debug(
-#                         f"Group {store_item}: {group_dates.iloc[0]} to {group_dates.iloc[-1]}"
-#                     )
-#                     logger.debug(f"Next: {next_dates.iloc[0]} to {next_dates.iloc[-1]}")
-#                     logger.debug(
-#                         f"Min/Max date diff: {date_diff.min()} / {date_diff.max()}"
-#                     )
-
-#             if not valid.any():
-#                 logger.debug(f"No valid window for store_item {store_item}")
-#                 continue
-
-#             matched = group.loc[valid].copy()
-#             shifted = next_group.loc[valid]
-
-#             for col in group.columns:
-#                 if any(col.startswith(prefix) for prefix in feature_prefixes):
-#                     matched[f"y_{col}"] = shifted[col].values
-
-#             yield matched
-
-#             del group, next_group, matched, shifted, date_diff, valid
-#             gc.collect()
-
-#     if feature_prefixes is None:
-#         feature_prefixes = [
-#             "sales_day_",
-#             # "store_med_day_",
-#             # "item_med_day_",
-#             # "store_med_change_",
-#             # "item_med_change_",
-#             # "store_cluster_logpct_change_",
-#             # "item_cluster_logpct_change_",
-#             # "dayofweek_",
-#             # "weekofmonth_",
-#             # "monthofyear_",
-#             # "paycycle_",
-#             # "season_",
-#         ]
-
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-#     logger.info(f"Window size: {window_size}")
-#     logger.info(f"Input shape: {df.shape}")
-
-#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-
-#     return pd.concat(
-#         add_y_targets_from_shift(df, window_size, feature_prefixes),
-#         ignore_index=True,
-#     )
-
-
-# def add_next_window_targets(df: pd.DataFrame) -> pd.DataFrame:
-#     """Attach next window's features with a y_ prefix without dropping rows."""
-#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-#     prefixes = [
-#         "sales_day_",
-#         "store_med_day_",
-#         "item_med_day_",
-#         "dayofweek_",
-#         "weekofmonth_",
-#         "monthofyear_",
-#         "paycycle_",
-#         "season_",
-#     ]
-
-#     cols_to_shift = [c for c in df.columns if any(c.startswith(p) for p in prefixes)]
-#     result = df.copy()
-
-#     for _, group in df.groupby("store_item"):
-#         shifted = group[cols_to_shift].shift(-1)
-#         result.loc[group.index, [f"y_{c}" for c in cols_to_shift]] = shifted.values
-
-#     return result
 
 
 def create_sale_features(

@@ -2,8 +2,8 @@ import os
 import torch
 from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader
-import lightning.pytorch as pl
 from sklearn.preprocessing import MinMaxScaler
+import lightning.pytorch as pl
 import random
 import logging
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -203,83 +203,135 @@ def set_seed(seed: int = 42):
 # ─────────────────────────────────────────────────────────────────────
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
-def generate_non_overlapping_loaders(
+
+
+def generate_loaders(
     df: pd.DataFrame,
-    window_size: int = 1,
-    batch_size: int = 32,
     x_feature_cols: List[str],
     x_sales_features: List[str],
     x_cyclical_features: List[str],
-    label_cols: List[str],
-    y_sales_features: List[str],
-    y_cyclical_features: List[str],
+    scalers_dir: Path,
+    dataloader_dir: Path,
+    *,
+    window_size: int = 1,
+    batch_size: int = 32,
+    num_workers: int = 5,
+    log_level: str = "INFO",
 ):
-    """
-    Create non-overlapping training-validation pairs for time series.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Indexed by datetime, columns: [X..., y] (target is last column).
-    window_size : int
-        Number of days in training window.
-    batch_size : int
-        Batch size for each DataLoader.
-
-    Returns
-    -------
-    List of (train_loader, val_loader) tuples per window.
-    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    scalers_dir.mkdir(parents=True, exist_ok=True)
+    dataloader_dir.mkdir(parents=True, exist_ok=True)
 
     df = df.sort_index()
     X_all = df.iloc[:, :-1].values
-    y_all = df.iloc[:, -1].values
+    y_all = df.iloc[:, -1].values.reshape(-1, 1)  # reshape y to 2D
     index_all = df.index
 
     num_samples = len(df)
-    loaders = []
 
     i = 0
+    logger.info(f"Generating loaders for {num_samples} samples")
     while i + window_size < num_samples:
         train_start = i
         train_end = i + window_size
-        val_idx = train_end  # predict next day
+        val_idx = train_end
 
-        # Ensure continuity
         if (index_all[train_end] - index_all[train_start]).days != window_size:
+            logger.debug(
+                f"Skipping index {i}: discontinuous window ({index_all[train_start]} to {index_all[train_end]})"
+            )
             i += 1
             continue
 
+        logger.debug(
+            f"Processing window: train [{train_start}:{train_end}], val [{val_idx}]"
+        )
+
         X_train = X_all[train_start:train_end]
         y_train = y_all[train_start:train_end]
+        X_val = X_all[val_idx].reshape(1, -1)
+        y_val = y_all[val_idx].reshape(1, -1)
 
-        X_val = X_all[val_idx].reshape(1, -1)  # shape (1, num_features)
-        y_val = np.array([y_all[val_idx]])
+        x_sales_idx = [x_feature_cols.index(c) for c in x_sales_features]
+        x_cyc_idx = [x_feature_cols.index(c) for c in x_cyclical_features]
+        y_idx = [0]
 
-        # Fit scaler on training only
-        scaler = MinMaxScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
+        x_sales_train = np.log1p(np.clip(X_train[:, x_sales_idx], 0, None))
+        x_sales_val = np.log1p(np.clip(X_val[:, x_sales_idx], 0, None))
+        x_cyc_train = X_train[:, x_cyc_idx]
+        x_cyc_val = X_val[:, x_cyc_idx]
 
-        # Convert to tensors
-        X_train_tensor = torch.tensor(X_train_scaled, dtype=torch.float32)
-        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+        y_train_log = np.log1p(np.clip(y_train[:, y_idx], 0, None))
+        y_val_log = np.log1p(np.clip(y_val[:, y_idx], 0, None))
 
-        X_val_tensor = torch.tensor(X_val_scaled, dtype=torch.float32)
-        y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+        x_sales_scaler = MinMaxScaler().fit(x_sales_train)
+        x_cyc_scaler = MinMaxScaler().fit(x_cyc_train)
+        y_scaler = MinMaxScaler().fit(y_train_log)
 
-        # Datasets and Loaders
+        logger.debug("Fitted scalers on training data.")
+
+        X_train_full = np.hstack(
+            [
+                x_sales_scaler.transform(x_sales_train),
+                x_cyc_scaler.transform(x_cyc_train),
+            ]
+        )
+        X_val_full = np.hstack(
+            [
+                x_sales_scaler.transform(x_sales_val),
+                x_cyc_scaler.transform(x_cyc_val),
+            ]
+        )
+
+        y_train_scaled = y_scaler.transform(y_train_log)
+        y_val_scaled = y_scaler.transform(y_val_log)
+
+        X_train_tensor = torch.tensor(X_train_full, dtype=torch.float32)
+        y_train_tensor = torch.tensor(y_train_scaled, dtype=torch.float32)
+        X_val_tensor = torch.tensor(X_val_full, dtype=torch.float32)
+        y_val_tensor = torch.tensor(y_val_scaled, dtype=torch.float32)
+
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
         val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-        val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            persistent_workers=True,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            persistent_workers=True,
+        )
 
-        loaders.append((train_loader, val_loader))
+        suffix = f"{today_str}_idx{i}"
+        torch.save(train_loader, dataloader_dir / f"{suffix}_train_loader.pt")
+        del train_loader
+        torch.save(val_loader, dataloader_dir / f"{suffix}_val_loader.pt")
+        del val_loader
 
-        i += window_size + 1  # move to next block
+        pickle.dump(
+            x_sales_scaler, open(scalers_dir / f"{suffix}_x_sales_scaler.pkl", "wb")
+        )
+        del x_sales_scaler
+        pickle.dump(
+            x_cyc_scaler, open(scalers_dir / f"{suffix}_x_cyc_scaler.pkl", "wb")
+        )
+        del x_cyc_scaler
+        pickle.dump(y_scaler, open(scalers_dir / f"{suffix}_y_scaler.pkl", "wb"))
+        del y_scaler
 
-    return loaders
+        logger.debug(f"Saved scalers and dataloaders for window {suffix}")
+        i += window_size + 1
+
+    logger.info(f"Total windows processed: {i}")
+    logger.info("Finished generating loaders")
 
 
 # ─────────────────────────────────────────────────────────────────────
