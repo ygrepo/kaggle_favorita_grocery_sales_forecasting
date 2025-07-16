@@ -147,8 +147,8 @@ def main():
     add_y_targets = str2bool(args.add_y_targets)
 
     # Set up logging
-    print(f"Log dir: {log_dir}")
     logger = setup_logging(log_dir, args.log_level)
+    logger.info(f"Log dir: {log_dir}")
 
     try:
         # Log configuration

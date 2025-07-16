@@ -846,7 +846,10 @@ def create_features(
     logger.info("Loading sales features")
     if sales_fn.exists():
         logger.info(f"Loading sales features from {sales_fn}")
-        sales_df = pd.read_csv(sales_fn)
+        if sales_fn.suffix == ".parquet":
+            sales_df = pd.read_parquet(sales_fn)
+        else:
+            sales_df = pd.read_csv(sales_fn)
     else:
         logger.warning(f"Sales features not found at {sales_fn}")
         sales_df = pd.DataFrame()
@@ -855,7 +858,10 @@ def create_features(
     logger.info("Loading cyclical features")
     if cyc_fn.exists():
         logger.info(f"Loading cyclical features from {cyc_fn}")
-        cyc_df = pd.read_csv(cyc_fn)
+        if cyc_fn.suffix == ".parquet":
+            cyc_df = pd.read_parquet(cyc_fn)
+        else:
+            cyc_df = pd.read_csv(cyc_fn)
     else:
         logger.warning(f"Cyclical features not found at {cyc_fn}")
         cyc_df = pd.DataFrame()
@@ -877,7 +883,10 @@ def create_features(
 
     if output_fn is not None:
         logger.info(f"Saving features to {output_fn}")
-        df.to_csv(output_fn, index=False)
+        if output_fn.suffix == ".parquet":
+            df.to_parquet(output_fn, index=False)
+        else:
+            df.to_csv(output_fn, index=False)
 
     return df
 
