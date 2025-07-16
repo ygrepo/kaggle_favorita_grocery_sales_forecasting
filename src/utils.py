@@ -658,10 +658,14 @@ def create_y_targets_from_shift(
 
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
 
-    return pd.concat(
+    df = pd.concat(
         add_y_targets_from_shift(df, window_size, feature_prefixes),
         ignore_index=True,
     )
+
+    df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+
+    return df
 
 
 # def create_y_targets_from_shift(
