@@ -385,5 +385,5 @@ def cluster_data(
     )
     if output_fn:
         logger.info(f"Saving df to {output_fn}")
-        df.to_csv(output_fn, index=False)
+        df.to_parquet(output_fn, index=False)
     return df

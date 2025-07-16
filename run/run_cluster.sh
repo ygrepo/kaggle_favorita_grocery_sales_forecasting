@@ -21,7 +21,7 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_100_item.csv" 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_20_item.csv" 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_2000_item_cluster.csv"
-DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.csv"
+DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.parquet"
 
 # STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_matrix.csv"
 # CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster_result.csv"
@@ -29,7 +29,7 @@ DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.csv"
 
 STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_matrix.csv"
 CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.csv"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.parquet"
 
 
 #ROW_RANGE="10:20"

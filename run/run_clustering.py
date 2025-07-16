@@ -97,8 +97,10 @@ def load_data(data_fn: Path) -> pd.DataFrame:
         )
         df["date"] = pd.to_datetime(df["date"])
         logger.info(f"Loaded data with shape {df.shape}")
-        df = df[df["unit_sales"].notna()]
-        logger.info(f"Dropped rows with NaN unit_sales, new shape: {df.shape}")
+        df.fillna(0, inplace=True)
+        logger.info(f"Filled NaN values with 0")
+        # df = df[df["unit_sales"].notna()]
+        # logger.info(f"Dropped rows with NaN unit_sales, new shape: {df.shape}")
         return df
     except Exception as e:
         logger.error(f"Error loading data: {e}")
