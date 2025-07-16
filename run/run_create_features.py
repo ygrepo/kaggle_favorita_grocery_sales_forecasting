@@ -30,6 +30,7 @@ def create_sale_cyc_features(
     log_level: str,
     sales_fn: Path,
     cyc_fn: Path,
+    fn: Path,
 ):
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ def create_sale_cyc_features(
         sales_fn=sales_fn,
         cyc_fn=cyc_fn,
         log_level=log_level,
+        output_fn=fn,
     )
     logger.info("Features created successfully")
 
@@ -166,8 +168,8 @@ def main():
             log_level=args.log_level,
             sales_fn=sales_fn,
             cyc_fn=cyc_fn,
+            fn=output_fn,
         )
-
 
     except Exception as e:
         logger.error(f"Error creating training features: {e}")
