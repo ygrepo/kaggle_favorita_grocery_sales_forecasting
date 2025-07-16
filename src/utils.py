@@ -634,7 +634,10 @@ def generate_sales_features(
     gc.collect()
     if output_path is not None:
         logger.info(f"Saving sales features to {output_path}")
-        df.to_csv(output_path, index=False)
+        if output_path.suffix == ".parquet":
+            df.to_parquet(output_path)
+        else:
+            df.to_csv(output_path, index=False)
     return df
 
 
@@ -762,7 +765,10 @@ def create_sale_features(
     if fn is not None:
         if fn.exists():
             logger.info(f"Loading sales features from {fn}")
-            df = pd.read_csv(fn)
+            if fn.suffix == ".parquet":
+                df = pd.read_parquet(fn)
+            else:
+                df = pd.read_csv(fn)
         else:
             logger.info(f"Generating sales features to {fn}")
             df = generate_sales_features(
