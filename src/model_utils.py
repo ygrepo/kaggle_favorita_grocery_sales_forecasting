@@ -226,7 +226,6 @@ def generate_loaders(
     df = df.sort_index()
     X_all = df.iloc[:, :-1].values
     y_all = df.iloc[:, -1].values.reshape(-1, 1)  # reshape y to 2D
-    index_all = df.index
 
     num_samples = len(df)
 
@@ -236,13 +235,6 @@ def generate_loaders(
         train_start = i
         train_end = i + window_size
         val_idx = train_end
-
-        if (index_all[train_end] - index_all[train_start]).days != window_size:
-            logger.debug(
-                f"Skipping index {i}: discontinuous window ({index_all[train_start]} to {index_all[train_end]})"
-            )
-            i += 1
-            continue
 
         logger.debug(
             f"Processing window: train [{train_start}:{train_end}], val [{val_idx}]"
