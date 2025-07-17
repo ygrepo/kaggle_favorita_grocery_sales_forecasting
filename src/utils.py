@@ -523,30 +523,30 @@ def generate_sales_features(
             .median()
             .unstack(fill_value=0)
         )
-        store_median_curr = store_med.median(axis=1)
-        item_median_curr = item_med.median(axis=1)
-        if prev_store_med is not None:
-            store_median_change = store_median_curr.replace(
-                0, np.nan
-            ) / prev_store_med.replace(0, np.nan)
-            store_median_log_pct_change = np.log(store_median_change)
-        else:
-            store_median_change = pd.Series(np.nan, index=store_median_curr.index)
-            store_median_log_pct_change = pd.Series(
-                np.nan, index=store_median_curr.index
-            )
+        # store_median_curr = store_med.median(axis=1)
+        # item_median_curr = item_med.median(axis=1)
+        # if prev_store_med is not None:
+        #     store_median_change = store_median_curr.replace(
+        #         0, np.nan
+        #     ) / prev_store_med.replace(0, np.nan)
+        #     store_median_log_pct_change = np.log(store_median_change)
+        # else:
+        #     store_median_change = pd.Series(np.nan, index=store_median_curr.index)
+        #     store_median_log_pct_change = pd.Series(
+        #         np.nan, index=store_median_curr.index
+        #     )
 
-        if prev_item_med is not None:
-            item_median_change = item_median_curr.replace(
-                0, np.nan
-            ) / prev_item_med.replace(0, np.nan)
-            item_median_log_pct_change = np.log(item_median_change)
-        else:
-            item_median_change = pd.Series(np.nan, index=item_median_curr.index)
-            item_median_log_pct_change = pd.Series(np.nan, index=item_median_curr.index)
+        # if prev_item_med is not None:
+        #     item_median_change = item_median_curr.replace(
+        #         0, np.nan
+        #     ) / prev_item_med.replace(0, np.nan)
+        #     item_median_log_pct_change = np.log(item_median_change)
+        # else:
+        #     item_median_change = pd.Series(np.nan, index=item_median_curr.index)
+        #     item_median_log_pct_change = pd.Series(np.nan, index=item_median_curr.index)
 
-        prev_store_med = store_median_curr.copy()
-        prev_item_med = item_median_curr.copy()
+        # prev_store_med = store_median_curr.copy()
+        # prev_item_med = item_median_curr.copy()
 
         # no groupby needed for store-item, just pivot
         sales = w_df.pivot(
@@ -587,14 +587,38 @@ def generate_sales_features(
                         if s_cl in store_med.index
                         else np.nan
                     )
-                    row[f"store_med_change_{i}"] = (
-                        store_median_change.get(s_cl, np.nan)
-                        if s_cl in store_median_change.index
+                    # Cluster medians for this day
+                    store_med_val = (
+                        store_med.loc[s_cl].get(d, np.nan)
+                        if s_cl in store_med.index
                         else np.nan
                     )
-                    row[f"store_cluster_logpct_change_{i}"] = (
-                        store_median_log_pct_change.get(s_cl, np.nan)
-                        if s_cl in store_median_log_pct_change.index
+                    item_med_val = (
+                        item_med.loc[i_cl].get(d, np.nan)
+                        if i_cl in item_med.index
+                        else np.nan
+                    )
+                    sales_val = sales_vals.get(d, np.nan)
+
+                    row[f"store_med_change_{i}"] = (
+                        sales_val / store_med_val
+                        if store_med_val and store_med_val > 0
+                        else np.nan
+                    )
+                    row[f"item_med_change_{i}"] = (
+                        sales_val / item_med_val
+                        if item_med_val and item_med_val > 0
+                        else np.nan
+                    )
+
+                    # row[f"store_med_change_{i}"] = (
+                    #     store_median_change.get(s_cl, np.nan)
+                    #     if s_cl in store_median_change.index
+                    #     else np.nan
+                    # )
+                    row[f"store_med_logpct_change_{i}"] = (
+                        np.log(sales_val / store_med_val)
+                        if store_med_val and store_med_val > 0
                         else np.nan
                     )
                     row[f"item_med_day_{i}"] = (
@@ -602,16 +626,21 @@ def generate_sales_features(
                         if i_cl in item_med.index
                         else np.nan
                     )
-                    row[f"item_med_change_{i}"] = (
-                        item_median_change.get(i_cl, np.nan)
-                        if i_cl in item_median_change.index
+                    row[f"item_med_logpct_change_{i}"] = (
+                        np.log(sales_val / item_med_val)
+                        if item_med_val and item_med_val > 0
                         else np.nan
                     )
-                    row[f"item_cluster_logpct_change_{i}"] = (
-                        item_median_log_pct_change.get(i_cl, np.nan)
-                        if i_cl in item_median_log_pct_change.index
-                        else np.nan
-                    )
+                    # row[f"item_med_change_{i}"] = (
+                    #     item_median_change.get(i_cl, np.nan)
+                    #     if i_cl in item_median_change.index
+                    #     else np.nan
+                    # )
+                    # row[f"item_cluster_logpct_change_{i}"] = (
+                    #     item_median_log_pct_change.get(i_cl, np.nan)
+                    #     if i_cl in item_median_log_pct_change.index
+                    #     else np.nan
+                    # )
                 else:
                     continue
 
@@ -643,8 +672,8 @@ def generate_sales_features(
             "item_med_day_",
             "store_med_change_",
             "item_med_change_",
-            "store_cluster_logpct_change_",
-            "item_cluster_logpct_change_",
+            "store_med_logpct_change_",
+            "item_med_logpct_change_",
         )
         for i in range(1, window_size + 1)
     ]

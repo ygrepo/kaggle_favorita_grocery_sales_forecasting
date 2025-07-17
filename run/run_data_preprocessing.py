@@ -273,7 +273,6 @@ def load_weights(
             weights_fn,
             dtype=dtype_dict,
             low_memory=False,
-            parse_dates=["date"],
         )
         df.rename(columns={"item_nbr": "item", "perishable": "weight"}, inplace=True)
         df = df[["item", "weight"]]
@@ -330,11 +329,16 @@ def main():
             end_date=args.end_date,
             fn=None,
         )
-        w_df = load_weights(weights_fn)
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
         # df = df[df["store_item"] == store_item]
         # df.to_csv("./output/data/20250711_train_44_1503844.csv", index=False)
+
+        # Merge with weights
+        w_df = load_weights(weights_fn)
+        w_df = w_df[["item", "weight"]]
+        df = pd.merge(df, w_df, on=["item"], how="left")
+        df["weight"] = df["weight"].fillna(1)
 
         # Create features
         df = prepare_data(
