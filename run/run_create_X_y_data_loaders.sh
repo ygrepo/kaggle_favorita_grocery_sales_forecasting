@@ -12,7 +12,7 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
 
-DATA_FN="${DATA_DIR}/20250711_train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.csv"
+DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
 #DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
 SCALERS_DIR="${DATA_DIR}/scalers"
 DATALOADER_DIR="${DATA_DIR}/dataloader"

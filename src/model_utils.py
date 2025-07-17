@@ -14,6 +14,18 @@ from datetime import datetime
 import pickle
 from pathlib import Path
 from enum import Enum
+import logging
+import pickle
+from pathlib import Path
+from typing import List
+from tqdm import tqdm
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.preprocessing import MinMaxScaler
+from datetime import datetime
 
 
 # Set up logger
@@ -203,30 +215,17 @@ def set_seed(seed: int = 42):
 # ─────────────────────────────────────────────────────────────────────
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
-
-import logging
-import pickle
-from pathlib import Path
-from typing import List
-
-import numpy as np
-import pandas as pd
-import torch
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.preprocessing import MinMaxScaler
-from datetime import datetime
-
-logger = logging.getLogger(__name__)
-
-
 def generate_loaders(
     df: pd.DataFrame,
+    meta_cols: List[str],
+    x_feature_cols: List[str],
     x_sales_features: List[str],
     x_cyclical_features: List[str],
+    label_cols: List[str],
     scalers_dir: Path,
     dataloader_dir: Path,
     *,
-    window_size: int = 1,
+    window_size: int = 16,
     batch_size: int = 32,
     num_workers: int = 5,
     log_level: str = "INFO",
@@ -236,104 +235,132 @@ def generate_loaders(
     scalers_dir.mkdir(parents=True, exist_ok=True)
     dataloader_dir.mkdir(parents=True, exist_ok=True)
 
-    df = df.sort_index()
+    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
     num_samples = len(df)
+    logger.info(f"Preparing global loaders from {num_samples} samples")
 
-    i = 0
-    logger.info(f"Generating loaders for {num_samples} samples")
+    all_cols = meta_cols + x_feature_cols
+    X_train_raw, y_train_raw = [], []
+    X_val_raw, y_val_raw = [], []
+    meta_train_raw, meta_val_raw = [], []
 
-    while i + window_size < num_samples:
+    num_windows = num_samples - window_size
+    logger.info(f"Processing {num_windows} windows")
+
+    for i in tqdm(range(num_windows), desc="Processing windows", unit="window"):
         train_start = i
         train_end = i + window_size
         val_idx = train_end
 
-        logger.debug(
-            f"Processing window: train [{train_start}:{train_end}], val [{val_idx}]"
-        )
+        df_train = df.iloc[train_start:train_end].fillna(0)
+        df_val = df.iloc[[val_idx]].fillna(0)
 
-        # Extract X and y using label-based indexing
-        df_train = df.iloc[train_start:train_end]
-        df_val = df.iloc[[val_idx]]
+        all_train = df_train[all_cols].values
+        y_train = df_train[label_cols].values
+        all_val = df_val[all_cols].values
+        y_val = df_val[label_cols].values
 
-        # Extract and preprocess sales and cyclical features
-        x_sales_train = np.log1p(
-            np.clip(df_train.loc[:, x_sales_features].values, 0, None)
-        )
-        x_sales_val = np.log1p(np.clip(df_val.loc[:, x_sales_features].values, 0, None))
-        x_cyc_train = df_train.loc[:, x_cyclical_features].values
-        x_cyc_val = df_val.loc[:, x_cyclical_features].values
+        X_train_raw.append(all_train)
+        y_train_raw.append(y_train)
+        X_val_raw.append(all_val)
+        y_val_raw.append(y_val)
 
-        # Extract and preprocess labels
-        y_train = df_train.iloc[:, -1].values.reshape(-1, 1)
-        y_val = df_val.iloc[:, -1].values.reshape(1, -1)
-        y_train_log = np.log1p(np.clip(y_train, 0, None))
-        y_val_log = np.log1p(np.clip(y_val, 0, None))
+        meta_train_raw.append(df_train[meta_cols].reset_index(drop=True))
+        meta_val_raw.append(df_val[meta_cols].reset_index(drop=True))
 
-        # Fit scalers on training data only
-        x_sales_scaler = MinMaxScaler().fit(x_sales_train)
-        x_cyc_scaler = MinMaxScaler().fit(x_cyc_train)
-        y_scaler = MinMaxScaler().fit(y_train_log)
+    X_train = np.vstack(X_train_raw)
+    y_train = np.vstack(y_train_raw)
+    X_val = np.vstack(X_val_raw)
+    y_val = np.vstack(y_val_raw)
 
-        logger.debug("Fitted scalers on training data.")
+    meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
+    meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
 
-        # Apply transformations
-        X_train_full = np.hstack(
-            [
-                x_sales_scaler.transform(x_sales_train),
-                x_cyc_scaler.transform(x_cyc_train),
-            ]
-        )
-        X_val_full = np.hstack(
-            [x_sales_scaler.transform(x_sales_val), x_cyc_scaler.transform(x_cyc_val)]
-        )
-        y_train_scaled = y_scaler.transform(y_train_log)
-        y_val_scaled = y_scaler.transform(y_val_log)
+    combined_cols = meta_cols + x_feature_cols
+    col_index_map = {col: idx for idx, col in enumerate(combined_cols)}
+    x_sales_idx = [col_index_map[c] for c in x_sales_features]
+    x_cyc_idx = [col_index_map[c] for c in x_cyclical_features]
 
-        # Convert to PyTorch tensors
-        X_train_tensor = torch.tensor(X_train_full, dtype=torch.float32)
-        y_train_tensor = torch.tensor(y_train_scaled, dtype=torch.float32)
-        X_val_tensor = torch.tensor(X_val_full, dtype=torch.float32)
-        y_val_tensor = torch.tensor(y_val_scaled, dtype=torch.float32)
+    # Transform + scale
+    x_sales_train = np.log1p(
+        np.clip(X_train[:, x_sales_idx].astype(np.float32), 0, None)
+    )
+    x_cyc_train = X_train[:, x_cyc_idx].astype(np.float32)
+    y_train = np.log1p(np.clip(y_train.astype(np.float32), 0, None))
 
-        # Create datasets and loaders
-        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-        val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+    x_sales_val = np.log1p(np.clip(X_val[:, x_sales_idx].astype(np.float32), 0, None))
+    x_cyc_val = X_val[:, x_cyc_idx].astype(np.float32)
+    y_val = np.log1p(np.clip(y_val.astype(np.float32), 0, None))
 
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            persistent_workers=True,
-        )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            persistent_workers=True,
-        )
+    x_sales_scaler = MinMaxScaler().fit(x_sales_train)
+    x_cyc_scaler = MinMaxScaler().fit(x_cyc_train)
+    y_scaler = MinMaxScaler().fit(y_train)
 
-        # Save loaders and scalers
-        suffix = f"{today_str}_idx{i}"
-        torch.save(train_loader, dataloader_dir / f"{suffix}_train_loader.pt")
-        torch.save(val_loader, dataloader_dir / f"{suffix}_val_loader.pt")
-        del train_loader, val_loader
+    X_train_scaled = np.hstack(
+        [
+            x_sales_scaler.transform(x_sales_train).astype(np.float32),
+            x_cyc_scaler.transform(x_cyc_train).astype(np.float32),
+        ]
+    )
+    X_val_scaled = np.hstack(
+        [
+            x_sales_scaler.transform(x_sales_val).astype(np.float32),
+            x_cyc_scaler.transform(x_cyc_val).astype(np.float32),
+        ]
+    )
+    y_train_scaled = y_scaler.transform(y_train).astype(np.float32)
+    y_val_scaled = y_scaler.transform(y_val).astype(np.float32)
 
-        pickle.dump(
-            x_sales_scaler, open(scalers_dir / f"{suffix}_x_sales_scaler.pkl", "wb")
-        )
-        pickle.dump(
-            x_cyc_scaler, open(scalers_dir / f"{suffix}_x_cyc_scaler.pkl", "wb")
-        )
-        pickle.dump(y_scaler, open(scalers_dir / f"{suffix}_y_scaler.pkl", "wb"))
-        del x_sales_scaler, x_cyc_scaler, y_scaler
+    train_loader = DataLoader(
+        TensorDataset(
+            torch.tensor(X_train_scaled),
+            torch.tensor(y_train_scaled),
+        ),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=True,
+    )
+    val_loader = DataLoader(
+        TensorDataset(
+            torch.tensor(X_val_scaled),
+            torch.tensor(y_val_scaled),
+        ),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=True,
+    )
 
-        logger.debug(f"Saved scalers and dataloaders for window {suffix}")
-        i += window_size + 1
+    suffix = today_str
+    path = Path(dataloader_dir / f"{suffix}_train_loader.pt")
+    logger.info(f"Saving train loader to {path}")
+    torch.save(train_loader, path)
+    path = Path(dataloader_dir / f"{suffix}_val_loader.pt")
+    logger.info(f"Saving val loader to {path}")
+    torch.save(val_loader, path)
 
-    logger.info(f"Total windows processed: {i}")
-    logger.info("Finished generating loaders")
+    path = Path(scalers_dir / f"{suffix}_x_sales_scaler.pkl")
+    logger.info(f"Saving x_sales_scaler to {path}")
+    pickle.dump(x_sales_scaler, open(path, "wb"))
+    path = Path(scalers_dir / f"{suffix}_x_cyc_scaler.pkl")
+    logger.info(f"Saving x_cyc_scaler to {path}")
+    pickle.dump(x_cyc_scaler, open(path, "wb"))
+    path = Path(scalers_dir / f"{suffix}_y_scaler.pkl")
+    logger.info(f"Saving y_scaler to {path}")
+    pickle.dump(y_scaler, open(path, "wb"))
+
+    path = Path(dataloader_dir / f"{suffix}_train_meta.parquet")
+    logger.info(f"Saving train meta to {path}")
+    meta_train_df.to_parquet(path)
+    path = Path(dataloader_dir / f"{suffix}_val_meta.parquet")
+    logger.info(f"Saving val meta to {path}")
+    meta_val_df.to_parquet(path)
+
+    logger.info(
+        f"Saved loaders: {len(train_loader)} train, {len(val_loader)} val samples"
+    )
+    return train_loader, val_loader
 
 
 # ─────────────────────────────────────────────────────────────────────
