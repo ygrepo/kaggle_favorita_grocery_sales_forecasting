@@ -94,7 +94,7 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
                 "item": "uint32",
                 "store_item": "string",  # allow NaNs as <NA>
                 "unit_sales": "float32",
-                "id": "Int64",  # nullable integer
+                #"id": "Int64",  # nullable integer
                 "onpromotion": "boolean",  # if you want True/False with nulls
             }
             df = pd.read_csv(
@@ -118,6 +118,7 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
             df["onpromotion"].astype(object).where(df["onpromotion"].notna(), np.nan)
         )
         df["date"] = pd.to_datetime(df["date"])
+        df.sort_values(["store_item", "date"], inplace=True)
         logger.info(f"Loaded data with shape {df.shape}")
         df.fillna(0, inplace=True)
         logger.info(f"Filled NaN values with 0")
@@ -129,7 +130,7 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         raise
 
 
-def load_clusteed_data(
+def load_full_data(
     data_fn: Path,
     window_size: int,
     output_fn: Path,
@@ -207,7 +208,7 @@ def load_clusteed_data(
         )
         df = df[meta_cols + x_feature_cols]
         df["start_date"] = pd.to_datetime(df["start_date"])
-        df.sort_values("start_date", inplace=True)
+        df.sort_values(["store_item", "start_date"], inplace=True)
         df.reset_index(drop=True, inplace=True)
         if output_fn:
             logger.info(f"Saving final_df to {output_fn}")
