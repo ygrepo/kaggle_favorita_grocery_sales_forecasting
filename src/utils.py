@@ -33,8 +33,11 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
         "start_date",
         # "id",
         "store_item",
+        "store",
+        "item",
         "store_cluster",
         "item_cluster",
+        "weight",
     ]
     x_cyclical_features = [
         f"{feat}_{trig}_{i}"
@@ -46,19 +49,23 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     x_sales_features = [
         f"{name}_{i}"
         for name in [
-            "sales_day",
             "store_med_day",
             "item_med_day",
             "store_med_change",
             "item_med_change",
-            "store_cluster_logpct_change",
-            "item_cluster_logpct_change",
+            "store_med_logpct_change",
+            "item_med_logpct_change",
+            "sales_day",
         ]
         for i in range(1, window_size + 1)
     ]
 
     x_feature_cols = x_sales_features + x_cyclical_features
-    label_cols = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
+    label_cols = (
+        [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
+        + [f"y_store_med_logpct_change_{i}" for i in range(1, window_size + 1)]
+        + [f"y_item_med_logpct_change_{i}" for i in range(1, window_size + 1)]
+    )
     # label_cols = [f"y_{c}" for c in x_feature_cols]
     # y_sales_features = [f"y_{c}" for c in x_sales_features]
     # y_cyclical_features = [f"y_{c}" for c in x_cyclical_features]
@@ -94,7 +101,7 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
                 "item": "uint32",
                 "store_item": "string",  # allow NaNs as <NA>
                 "unit_sales": "float32",
-                #"id": "Int64",  # nullable integer
+                # "id": "Int64",  # nullable integer
                 "onpromotion": "boolean",  # if you want True/False with nulls
             }
             df = pd.read_csv(
