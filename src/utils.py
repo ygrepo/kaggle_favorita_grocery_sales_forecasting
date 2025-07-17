@@ -110,8 +110,27 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
                 na_values=[""],
             )
         # Convert nullable Int64 or boolean to float64 with NaN
-        cols = ["date", "store_item", "store", "item"] + [
-            c for c in df.columns if c not in ("date", "store_item", "store", "item")
+        cols = [
+            "date",
+            "store_item",
+            "store",
+            "item",
+            "unit_sales",
+            "onpromotion",
+            "weight",
+        ] + [
+            c
+            for c in df.columns
+            if c
+            not in (
+                "date",
+                "store_item",
+                "store",
+                "item",
+                "unit_sales",
+                "onpromotion",
+                "weight",
+            )
         ]
         df = df[cols]
         # df["id"] = df["id"].astype("float64")  # <NA> → np.nan
@@ -138,8 +157,9 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
 def load_full_data(
     data_fn: Path,
     window_size: int,
-    output_fn: Path,
-    log_level: str,
+    *,
+    output_fn: Path | None = None,
+    log_level: str = "INFO",
 ) -> pd.DataFrame:
     """Load and preprocess training data.
 
@@ -161,6 +181,7 @@ def load_full_data(
                 "store_cluster": np.uint8,
                 "item_cluster": np.uint8,
                 "unit_sales": np.float32,
+                "weight": np.float32,
                 **{f"store_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
                 **{f"item_med_day_{i}": np.float32 for i in range(1, window_size + 1)},
                 **{
@@ -172,11 +193,11 @@ def load_full_data(
                     for i in range(1, window_size + 1)
                 },
                 **{
-                    f"store_cluster_logpct_change_{i}": np.float32
+                    f"store_med_logpct_change_{i}": np.float32
                     for i in range(1, window_size + 1)
                 },
                 **{
-                    f"item_cluster_logpct_change_{i}": np.float32
+                    f"item_med_logpct_change_{i}": np.float32
                     for i in range(1, window_size + 1)
                 },
                 **{

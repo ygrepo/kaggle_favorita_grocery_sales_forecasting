@@ -17,7 +17,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import load_data
+from src.utils import load_full_data
 from src.utils import create_y_targets_from_shift
 
 
@@ -31,7 +31,7 @@ def add_y_targets(
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
     logger.info("Starting adding data")
-    df = load_data(
+    df = load_full_data(
         data_fn=data_fn,
         window_size=window_size,
         output_fn=output_data_fn,
@@ -41,7 +41,11 @@ def add_y_targets(
         df,
         window_size=window_size,
         log_level=log_level,
-        feature_prefixes=["sales_day_"],
+        feature_prefixes=[
+            "sales_day_",
+            "store_med_logpct_change_",
+            "item_med_logpct_change_",
+        ],
     )
     if output_fn:
         logger.info(f"Saving final_df to {output_fn}")
