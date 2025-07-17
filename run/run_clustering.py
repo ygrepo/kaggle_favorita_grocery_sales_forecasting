@@ -65,23 +65,24 @@ def load_data(data_fn: Path) -> pd.DataFrame:
     logger.info(f"Loading data from {data_fn}")
 
     try:
-        df = pd.read_parquet(data_fn)
-
-        # dtype_dict = {
-        #     "store": "uint16",
-        #     "item": "uint32",
-        #     "store_item": "string",  # allow NaNs as <NA>
-        #     "unit_sales": "float32",
-        #     "id": "Int64",  # nullable integer
-        #     "onpromotion": "boolean",  # if you want True/False with nulls
-        # }
-        # df = pd.read_csv(
-        #     data_fn,
-        #     dtype=dtype_dict,
-        #     parse_dates=["date"],
-        #     keep_default_na=True,
-        #     na_values=[""],
-        # )
+        if data_fn.suffix == ".parquet":
+            df = pd.read_parquet(data_fn)
+        else:
+            dtype_dict = {
+                "store": "uint16",
+                "item": "uint32",
+                "store_item": "string",  # allow NaNs as <NA>
+                "unit_sales": "float32",
+                "id": "Int64",  # nullable integer
+                "onpromotion": "boolean",  # if you want True/False with nulls
+            }
+            df = pd.read_csv(
+                data_fn,
+                dtype=dtype_dict,
+                parse_dates=["date"],
+                keep_default_na=True,
+                na_values=[""],
+            )
         # Convert nullable Int64 or boolean to float64 with NaN
         cols = ["date", "store_item", "store", "item"] + [
             c for c in df.columns if c not in ("date", "store_item", "store", "item")

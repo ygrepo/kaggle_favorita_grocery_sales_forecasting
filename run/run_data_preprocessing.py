@@ -343,7 +343,6 @@ def main():
         # Create features
         df = prepare_data(
             df,
-            w_df,
             group_store_column=args.group_store_column,
             group_item_column=args.group_item_column,
             value_column=args.value_column,
