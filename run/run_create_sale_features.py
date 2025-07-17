@@ -23,52 +23,6 @@ sys.path.insert(0, str(project_root))
 from src.utils import load_raw_data, create_sale_features
 
 
-# def load_data(data_fn: Path) -> pd.DataFrame:
-#     """Load and preprocess training data.
-
-#     Args:
-#         data_fn: Path to the training data file
-
-#     Returns:
-#         Preprocessed DataFrame
-#     """
-#     logger = logging.getLogger(__name__)
-#     logger.info(f"Loading data from {data_fn}")
-
-#     try:
-#         if data_fn.suffix == ".parquet":
-#             df = pd.read_parquet(data_fn)
-#         else:
-#             dtype_dict = {
-#                 "date": str,
-#                 # "id": np.uint32,
-#                 "store": np.uint8,
-#                 "item": np.uint32,
-#                 "unit_sales": np.float32,
-#                 "onpromotion": np.bool_,
-#                 "store_item": str,
-#                 "weight": np.float32,
-#             }
-#             df = pd.read_csv(
-#                 data_fn, dtype=dtype_dict, parse_dates=["date"], low_memory=False
-#             )
-#         df.rename(columns={"store": "store", "item": "item"}, inplace=True)
-#         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-#         cols = ["date", "store_item", "store", "item"] + [
-#             c for c in df.columns if c not in ("date", "store_item", "store", "item")
-#         ]
-#         df = df[cols]
-#         df["date"] = pd.to_datetime(df["date"])
-#         df.sort_values(["date", "store_item"], inplace=True)
-#         df.reset_index(drop=True, inplace=True)
-
-#         logger.info(f"Loaded data with shape {df.shape}")
-#         return df
-#     except Exception as e:
-#         logger.error(f"Error loading data: {e}")
-#         raise
-
-
 def create_features(
     df: pd.DataFrame,
     window_size: int,
