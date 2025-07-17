@@ -173,7 +173,8 @@ def select_extreme_and_median_neighbors(
 
 
 def prepare_data(
-    df,
+    df: pd.DataFrame,
+    w_df: pd.DataFrame,
     group_store_column="store",
     group_item_column="item",
     value_column="unit_sales",
@@ -271,6 +272,11 @@ def prepare_data(
         [valid_stores, valid_items, sorted(unique_dates)],
         names=["store", "item", "date"],
     ).to_frame(index=False)
+
+    # Merge with weights
+    w_df = w_df[["item", "weight"]]
+    df = pd.merge(df, w_df, on=["item"], how="left")
+    df["weight"] = df["weight"].fillna(1)
 
     # Merge with filtered data
     df = pd.merge(grid, df, on=["store", "item", "date"], how="left")

@@ -63,6 +63,12 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
+        "--weights-fn",
+        type=str,
+        default="",
+        help="Path to weights file (relative to project root)",
+    )
+    parser.add_argument(
         "--filtered-data-fn",
         type=str,
         default="",
@@ -250,6 +256,35 @@ def load_data(
         raise
 
 
+def load_weights(
+    weights_fn: Path,
+) -> pd.DataFrame:
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading weights from {weights_fn}")
+
+    try:
+        dtype_dict = {
+            "item_nbr": np.uint32,
+            "family": str,
+            "class": str,
+            "perishable": np.float32,
+        }
+        df = pd.read_csv(
+            weights_fn,
+            dtype=dtype_dict,
+            low_memory=False,
+            parse_dates=["date"],
+        )
+        df.rename(columns={"item_nbr": "item", "perishable": "weight"}, inplace=True)
+        df = df[["item", "weight"]]
+        df["weight"] = df["weight"].fillna(1)
+
+        return df
+    except Exception as e:
+        logger.error(f"Error loading weights: {e}")
+        raise
+
+
 def main():
     """Main training function."""
     # Parse command line arguments
@@ -258,7 +293,8 @@ def main():
     data_fn = Path(args.data_fn).resolve()
     log_dir = Path(args.log_dir).resolve()
     output_fn = Path(args.output_fn).resolve()
-    filtered_data_fn = Path(args.filtered_data_fn).resolve()
+    # filtered_data_fn = Path(args.filtered_data_fn).resolve()
+    weights_fn = Path(args.weights_fn).resolve()
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
 
@@ -266,6 +302,7 @@ def main():
         # Log configuration
         logger.info("Starting data preprocessing with configuration:")
         logger.info(f"  Data fn: {data_fn}")
+        logger.info(f"  Weights fn: {weights_fn}")
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Nrows: {args.nrows}")
@@ -293,14 +330,16 @@ def main():
             end_date=args.end_date,
             fn=None,
         )
+        w_df = load_weights(weights_fn)
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
         # df = df[df["store_item"] == store_item]
         # df.to_csv("./output/data/20250711_train_44_1503844.csv", index=False)
 
         # Create features
-        df = prepare_data(  
+        df = prepare_data(
             df,
+            w_df,
             group_store_column=args.group_store_column,
             group_item_column=args.group_item_column,
             value_column=args.value_column,

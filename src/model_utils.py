@@ -26,7 +26,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime
-
+import gc
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -217,6 +217,7 @@ def set_seed(seed: int = 42):
 # ─────────────────────────────────────────────────────────────────────
 def generate_loaders(
     df: pd.DataFrame,
+    w_df: pd.DataFrame,
     meta_cols: List[str],
     x_feature_cols: List[str],
     x_sales_features: List[str],
@@ -225,6 +226,8 @@ def generate_loaders(
     scalers_dir: Path,
     dataloader_dir: Path,
     *,
+    item_col: str = "item",  # key column in w_df
+    weight_col: str = "weight",
     window_size: int = 16,
     batch_size: int = 32,
     num_workers: int = 5,
@@ -235,13 +238,17 @@ def generate_loaders(
     scalers_dir.mkdir(parents=True, exist_ok=True)
     dataloader_dir.mkdir(parents=True, exist_ok=True)
 
+    # Merge weight column
+    df = df.merge(w_df[[item_col, weight_col]], on=item_col, how="left")
+    df[weight_col] = df[weight_col].fillna(1.0)  # Default to 1 if missing
+
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
     num_samples = len(df)
     logger.info(f"Preparing global loaders from {num_samples} samples")
 
     all_cols = meta_cols + x_feature_cols
-    X_train_raw, y_train_raw = [], []
-    X_val_raw, y_val_raw = [], []
+    X_train_raw, y_train_raw, W_train_raw = [], [], []
+    X_val_raw, y_val_raw, W_val_raw = [], [], []
     meta_train_raw, meta_val_raw = [], []
 
     num_windows = num_samples - window_size
@@ -257,31 +264,47 @@ def generate_loaders(
 
         all_train = df_train[all_cols].values
         y_train = df_train[label_cols].values
+        w_train = df_train[[weight_col]].values
+
         all_val = df_val[all_cols].values
         y_val = df_val[label_cols].values
+        w_val = df_val[[weight_col]].values
 
         X_train_raw.append(all_train)
         y_train_raw.append(y_train)
+        W_train_raw.append(w_train)
         X_val_raw.append(all_val)
         y_val_raw.append(y_val)
+        W_val_raw.append(w_val)
 
         meta_train_raw.append(df_train[meta_cols].reset_index(drop=True))
         meta_val_raw.append(df_val[meta_cols].reset_index(drop=True))
 
     X_train = np.vstack(X_train_raw)
+    del X_train_raw
     y_train = np.vstack(y_train_raw)
+    del y_train_raw
+    W_train = np.vstack(W_train_raw)
+    del W_train_raw
     X_val = np.vstack(X_val_raw)
+    del X_val_raw
     y_val = np.vstack(y_val_raw)
+    del y_val_raw
+    W_val = np.vstack(W_val_raw)
+    del W_val_raw
+    gc.collect()
 
     meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
+    del meta_train_raw
     meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
+    del meta_val_raw
+    gc.collect()
 
     combined_cols = meta_cols + x_feature_cols
     col_index_map = {col: idx for idx, col in enumerate(combined_cols)}
     x_sales_idx = [col_index_map[c] for c in x_sales_features]
     x_cyc_idx = [col_index_map[c] for c in x_cyclical_features]
 
-    # Transform + scale
     x_sales_train = np.log1p(
         np.clip(X_train[:, x_sales_idx].astype(np.float32), 0, None)
     )
@@ -315,6 +338,7 @@ def generate_loaders(
         TensorDataset(
             torch.tensor(X_train_scaled),
             torch.tensor(y_train_scaled),
+            torch.tensor(W_train.astype(np.float32)),
         ),
         batch_size=batch_size,
         shuffle=False,
@@ -325,6 +349,7 @@ def generate_loaders(
         TensorDataset(
             torch.tensor(X_val_scaled),
             torch.tensor(y_val_scaled),
+            torch.tensor(W_val.astype(np.float32)),
         ),
         batch_size=batch_size,
         shuffle=False,
@@ -332,35 +357,172 @@ def generate_loaders(
         persistent_workers=True,
     )
 
+    # Save loaders and scalers
     suffix = today_str
-    path = Path(dataloader_dir / f"{suffix}_train_loader.pt")
-    logger.info(f"Saving train loader to {path}")
-    torch.save(train_loader, path)
-    path = Path(dataloader_dir / f"{suffix}_val_loader.pt")
-    logger.info(f"Saving val loader to {path}")
-    torch.save(val_loader, path)
+    torch.save(train_loader, dataloader_dir / f"{suffix}_train_loader.pt")
+    torch.save(val_loader, dataloader_dir / f"{suffix}_val_loader.pt")
 
-    path = Path(scalers_dir / f"{suffix}_x_sales_scaler.pkl")
-    logger.info(f"Saving x_sales_scaler to {path}")
-    pickle.dump(x_sales_scaler, open(path, "wb"))
-    path = Path(scalers_dir / f"{suffix}_x_cyc_scaler.pkl")
-    logger.info(f"Saving x_cyc_scaler to {path}")
-    pickle.dump(x_cyc_scaler, open(path, "wb"))
-    path = Path(scalers_dir / f"{suffix}_y_scaler.pkl")
-    logger.info(f"Saving y_scaler to {path}")
-    pickle.dump(y_scaler, open(path, "wb"))
+    pickle.dump(
+        x_sales_scaler, open(scalers_dir / f"{suffix}_x_sales_scaler.pkl", "wb")
+    )
+    pickle.dump(x_cyc_scaler, open(scalers_dir / f"{suffix}_x_cyc_scaler.pkl", "wb"))
+    pickle.dump(y_scaler, open(scalers_dir / f"{suffix}_y_scaler.pkl", "wb"))
 
-    path = Path(dataloader_dir / f"{suffix}_train_meta.parquet")
-    logger.info(f"Saving train meta to {path}")
-    meta_train_df.to_parquet(path)
-    path = Path(dataloader_dir / f"{suffix}_val_meta.parquet")
-    logger.info(f"Saving val meta to {path}")
-    meta_val_df.to_parquet(path)
+    meta_train_df.to_parquet(dataloader_dir / f"{suffix}_train_meta.parquet")
+    meta_val_df.to_parquet(dataloader_dir / f"{suffix}_val_meta.parquet")
 
     logger.info(
         f"Saved loaders: {len(train_loader)} train, {len(val_loader)} val samples"
     )
     return train_loader, val_loader
+
+
+# def generate_loaders(
+#     df: pd.DataFrame,
+#     meta_cols: List[str],
+#     x_feature_cols: List[str],
+#     x_sales_features: List[str],
+#     x_cyclical_features: List[str],
+#     label_cols: List[str],
+#     scalers_dir: Path,
+#     dataloader_dir: Path,
+#     *,
+#     window_size: int = 16,
+#     batch_size: int = 32,
+#     num_workers: int = 5,
+#     log_level: str = "INFO",
+# ):
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     today_str = datetime.today().strftime("%Y-%m-%d")
+#     scalers_dir.mkdir(parents=True, exist_ok=True)
+#     dataloader_dir.mkdir(parents=True, exist_ok=True)
+
+#     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+#     num_samples = len(df)
+#     logger.info(f"Preparing global loaders from {num_samples} samples")
+
+#     all_cols = meta_cols + x_feature_cols
+#     X_train_raw, y_train_raw = [], []
+#     X_val_raw, y_val_raw = [], []
+#     meta_train_raw, meta_val_raw = [], []
+
+#     num_windows = num_samples - window_size
+#     logger.info(f"Processing {num_windows} windows")
+
+#     for i in tqdm(range(num_windows), desc="Processing windows", unit="window"):
+#         train_start = i
+#         train_end = i + window_size
+#         val_idx = train_end
+
+#         df_train = df.iloc[train_start:train_end].fillna(0)
+#         df_val = df.iloc[[val_idx]].fillna(0)
+
+#         all_train = df_train[all_cols].values
+#         y_train = df_train[label_cols].values
+#         all_val = df_val[all_cols].values
+#         y_val = df_val[label_cols].values
+
+#         X_train_raw.append(all_train)
+#         y_train_raw.append(y_train)
+#         X_val_raw.append(all_val)
+#         y_val_raw.append(y_val)
+
+#         meta_train_raw.append(df_train[meta_cols].reset_index(drop=True))
+#         meta_val_raw.append(df_val[meta_cols].reset_index(drop=True))
+
+#     X_train = np.vstack(X_train_raw)
+#     y_train = np.vstack(y_train_raw)
+#     X_val = np.vstack(X_val_raw)
+#     y_val = np.vstack(y_val_raw)
+
+#     meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
+#     meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
+
+#     combined_cols = meta_cols + x_feature_cols
+#     col_index_map = {col: idx for idx, col in enumerate(combined_cols)}
+#     x_sales_idx = [col_index_map[c] for c in x_sales_features]
+#     x_cyc_idx = [col_index_map[c] for c in x_cyclical_features]
+
+#     # Transform + scale
+#     x_sales_train = np.log1p(
+#         np.clip(X_train[:, x_sales_idx].astype(np.float32), 0, None)
+#     )
+#     x_cyc_train = X_train[:, x_cyc_idx].astype(np.float32)
+#     y_train = np.log1p(np.clip(y_train.astype(np.float32), 0, None))
+
+#     x_sales_val = np.log1p(np.clip(X_val[:, x_sales_idx].astype(np.float32), 0, None))
+#     x_cyc_val = X_val[:, x_cyc_idx].astype(np.float32)
+#     y_val = np.log1p(np.clip(y_val.astype(np.float32), 0, None))
+
+#     x_sales_scaler = MinMaxScaler().fit(x_sales_train)
+#     x_cyc_scaler = MinMaxScaler().fit(x_cyc_train)
+#     y_scaler = MinMaxScaler().fit(y_train)
+
+#     X_train_scaled = np.hstack(
+#         [
+#             x_sales_scaler.transform(x_sales_train).astype(np.float32),
+#             x_cyc_scaler.transform(x_cyc_train).astype(np.float32),
+#         ]
+#     )
+#     X_val_scaled = np.hstack(
+#         [
+#             x_sales_scaler.transform(x_sales_val).astype(np.float32),
+#             x_cyc_scaler.transform(x_cyc_val).astype(np.float32),
+#         ]
+#     )
+#     y_train_scaled = y_scaler.transform(y_train).astype(np.float32)
+#     y_val_scaled = y_scaler.transform(y_val).astype(np.float32)
+
+#     train_loader = DataLoader(
+#         TensorDataset(
+#             torch.tensor(X_train_scaled),
+#             torch.tensor(y_train_scaled),
+#         ),
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=num_workers,
+#         persistent_workers=True,
+#     )
+#     val_loader = DataLoader(
+#         TensorDataset(
+#             torch.tensor(X_val_scaled),
+#             torch.tensor(y_val_scaled),
+#         ),
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=num_workers,
+#         persistent_workers=True,
+#     )
+
+#     suffix = today_str
+#     path = Path(dataloader_dir / f"{suffix}_train_loader.pt")
+#     logger.info(f"Saving train loader to {path}")
+#     torch.save(train_loader, path)
+#     path = Path(dataloader_dir / f"{suffix}_val_loader.pt")
+#     logger.info(f"Saving val loader to {path}")
+#     torch.save(val_loader, path)
+
+#     path = Path(scalers_dir / f"{suffix}_x_sales_scaler.pkl")
+#     logger.info(f"Saving x_sales_scaler to {path}")
+#     pickle.dump(x_sales_scaler, open(path, "wb"))
+#     path = Path(scalers_dir / f"{suffix}_x_cyc_scaler.pkl")
+#     logger.info(f"Saving x_cyc_scaler to {path}")
+#     pickle.dump(x_cyc_scaler, open(path, "wb"))
+#     path = Path(scalers_dir / f"{suffix}_y_scaler.pkl")
+#     logger.info(f"Saving y_scaler to {path}")
+#     pickle.dump(y_scaler, open(path, "wb"))
+
+#     path = Path(dataloader_dir / f"{suffix}_train_meta.parquet")
+#     logger.info(f"Saving train meta to {path}")
+#     meta_train_df.to_parquet(path)
+#     path = Path(dataloader_dir / f"{suffix}_val_meta.parquet")
+#     logger.info(f"Saving val meta to {path}")
+#     meta_val_df.to_parquet(path)
+
+#     logger.info(
+#         f"Saved loaders: {len(train_loader)} train, {len(val_loader)} val samples"
+#     )
+#     return train_loader, val_loader
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -619,6 +781,100 @@ def compute_mae(
         )  # MAE for this batch
 
     return batch_mae
+
+
+def train_with_saved_loaders(
+    today_str: str,
+    weights_df: pd.DataFrame,
+    model_dir: Path,
+    model_type: ModelType,
+    data_dir: Path,
+    *,
+    lr: float = 3e-4,
+    epochs: int = 5,
+    seed: int = 2025,
+    enable_progress_bar: bool = True,
+    train_logger: bool = False,
+) -> pd.DataFrame:
+    # Set seed
+    pl.seed_everything(seed)
+
+    # Setup paths
+    scalers_dir = data_dir / "scalers"
+    dataloader_dir = data_dir / "dataloader"
+    checkpoints_dir = model_dir / "checkpoints"
+    history_dir = model_dir / "history"
+    for d in [checkpoints_dir, history_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    today_str = datetime.today().strftime("%Y-%m-%d")
+
+    # Load loaders and scalers
+    train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
+    val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
+    y_scaler = pickle.load(open(scalers_dir / f"{today_str}_y_scaler.pkl", "rb"))
+
+    # Infer input/output dimensions
+    input_dim = next(iter(train_loader))[0].shape[1]
+    sales_idx = list(range(y_scaler.n_features_in_))  # assume all outputs are sales
+
+    # Compute scaling stats
+    train_mav = compute_mav(train_loader, y_scaler, sales_idx)
+    val_mav = compute_mav(val_loader, y_scaler, sales_idx)
+
+    # Build model
+    model_name = f"{today_str}_model_global_{model_type.value}"
+    base_model = model_factory(model_type, input_dim)
+    base_model.apply(init_weights)
+
+    lightning_model = LightningWrapper(
+        base_model,
+        model_name=model_name,
+        lr=lr,
+        y_sales_scaler=y_scaler,
+        sales_idx=sales_idx,
+        train_mav=train_mav,
+        val_mav=val_mav,
+    )
+
+    # Callbacks
+    checkpoint_callback = ModelCheckpoint(
+        monitor="best_train_avg_mae",
+        mode="min",
+        save_top_k=1,
+        dirpath=checkpoints_dir,
+        filename=model_name,
+    )
+
+    # Trainer
+    trainer = pl.Trainer(
+        deterministic=True,
+        max_epochs=epochs,
+        logger=train_logger,
+        enable_progress_bar=enable_progress_bar,
+        callbacks=[checkpoint_callback],
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+    )
+
+    # Train
+    trainer.fit(lightning_model, train_loader, val_loader)
+
+    # Save training history
+    history = pd.DataFrame(
+        [
+            {
+                "model_name": model_name,
+                "best_train_avg_mae": lightning_model.best_train_avg_mae,
+                "best_val_avg_mae": lightning_model.best_val_avg_mae,
+                "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+                "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
+                "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+                "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+            }
+        ]
+    )
+    history.to_excel(history_dir / f"{today_str}_history.xlsx", index=False)
+    return history
 
 
 def train(
