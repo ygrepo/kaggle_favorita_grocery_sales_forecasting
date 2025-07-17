@@ -73,7 +73,63 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     )
 
 
-def load_data(
+def load_raw_data(data_fn: Path) -> pd.DataFrame:
+    """Load and preprocess training data.
+
+    Args:
+        data_fn: Path to the training data file
+
+    Returns:
+        Preprocessed DataFrame
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data from {data_fn}")
+
+    try:
+        if data_fn.suffix == ".parquet":
+            df = pd.read_parquet(data_fn)
+        else:
+            dtype_dict = {
+                "store": "uint16",
+                "item": "uint32",
+                "store_item": "string",  # allow NaNs as <NA>
+                "unit_sales": "float32",
+                "id": "Int64",  # nullable integer
+                "onpromotion": "boolean",  # if you want True/False with nulls
+            }
+            df = pd.read_csv(
+                data_fn,
+                dtype=dtype_dict,
+                parse_dates=["date"],
+                keep_default_na=True,
+                na_values=[""],
+            )
+        # Convert nullable Int64 or boolean to float64 with NaN
+        cols = ["date", "store_item", "store", "item"] + [
+            c for c in df.columns if c not in ("date", "store_item", "store", "item")
+        ]
+        df = df[cols]
+        # df["id"] = df["id"].astype("float64")  # <NA> → np.nan
+        # df["id"] = df["id"].astype(object).where(df["id"].notna(), np.nan)
+        df["store_item"] = (
+            df["store_item"].astype(object).where(df["store_item"].notna(), np.nan)
+        )
+        df["onpromotion"] = (
+            df["onpromotion"].astype(object).where(df["onpromotion"].notna(), np.nan)
+        )
+        df["date"] = pd.to_datetime(df["date"])
+        logger.info(f"Loaded data with shape {df.shape}")
+        df.fillna(0, inplace=True)
+        logger.info(f"Filled NaN values with 0")
+        # df = df[df["unit_sales"].notna()]
+        # logger.info(f"Dropped rows with NaN unit_sales, new shape: {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+
+def load_clusteed_data(
     data_fn: Path,
     window_size: int,
     output_fn: Path,
@@ -542,13 +598,27 @@ def generate_sales_features(
             i_cl = store_item_to_item_cluster.get((store, item), "ALL_ITEMS")
 
             row = {
+                "start_date": window_dates[0],
                 "store_item": f"{store}_{item}",
                 "store": store,
                 "item": item,
                 "store_cluster": s_cl,
                 "item_cluster": i_cl,
-                "start_date": window_dates[0],
             }
+            # Keep original weight if available
+            if "weight" in df.columns:
+                weight_val = (
+                    df.loc[(df["store"] == store) & (df["item"] == item), "weight"]
+                    .dropna()
+                    .iloc[0]
+                    if not df.loc[
+                        (df["store"] == store) & (df["item"] == item), "weight"
+                    ]
+                    .dropna()
+                    .empty
+                    else np.nan
+                )
+                row["weight"] = weight_val
 
             for i in range(1, window_size + 1):
                 d = window_dates[i - 1] if i - 1 < len(window_dates) else None
@@ -613,17 +683,18 @@ def generate_sales_features(
         "item",
         "store_cluster",
         "item_cluster",
+        "weight",
     ]
     cols += [
         f"{prefix}{i}"
         for prefix in (
-            "sales_day_",
             "store_med_day_",
             "item_med_day_",
             "store_med_change_",
             "item_med_change_",
             "store_med_logpct_change_",
             "item_med_logpct_change_",
+            "sales_day_",
         )
         for i in range(1, window_size + 1)
     ]

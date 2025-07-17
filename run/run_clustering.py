@@ -13,13 +13,11 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-import numpy as np
-
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.utils import load_raw_data
 from src.cluster_util import cluster_data
 
 
@@ -50,62 +48,6 @@ def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
     logger = logging.getLogger(__name__)
     logger.info(f"Logging to {log_file}")
     return logger
-
-
-def load_data(data_fn: Path) -> pd.DataFrame:
-    """Load and preprocess training data.
-
-    Args:
-        data_fn: Path to the training data file
-
-    Returns:
-        Preprocessed DataFrame
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Loading data from {data_fn}")
-
-    try:
-        if data_fn.suffix == ".parquet":
-            df = pd.read_parquet(data_fn)
-        else:
-            dtype_dict = {
-                "store": "uint16",
-                "item": "uint32",
-                "store_item": "string",  # allow NaNs as <NA>
-                "unit_sales": "float32",
-                "id": "Int64",  # nullable integer
-                "onpromotion": "boolean",  # if you want True/False with nulls
-            }
-            df = pd.read_csv(
-                data_fn,
-                dtype=dtype_dict,
-                parse_dates=["date"],
-                keep_default_na=True,
-                na_values=[""],
-            )
-        # Convert nullable Int64 or boolean to float64 with NaN
-        cols = ["date", "store_item", "store", "item"] + [
-            c for c in df.columns if c not in ("date", "store_item", "store", "item")
-        ]
-        df = df[cols]
-        # df["id"] = df["id"].astype("float64")  # <NA> → np.nan
-        # df["id"] = df["id"].astype(object).where(df["id"].notna(), np.nan)
-        df["store_item"] = (
-            df["store_item"].astype(object).where(df["store_item"].notna(), np.nan)
-        )
-        df["onpromotion"] = (
-            df["onpromotion"].astype(object).where(df["onpromotion"].notna(), np.nan)
-        )
-        df["date"] = pd.to_datetime(df["date"])
-        logger.info(f"Loaded data with shape {df.shape}")
-        df.fillna(0, inplace=True)
-        logger.info(f"Filled NaN values with 0")
-        # df = df[df["unit_sales"].notna()]
-        # logger.info(f"Dropped rows with NaN unit_sales, new shape: {df.shape}")
-        return df
-    except Exception as e:
-        logger.error(f"Error loading data: {e}")
-        raise
 
 
 def parse_range(range_str):
@@ -200,7 +142,7 @@ def main():
         logger.info(f"  Output fn: {output_fn}")
 
         # Load and preprocess data
-        df = load_data(data_fn)
+        df = load_raw_data(data_fn)
         cluster_data(
             df,
             store_item_matrix_fn=store_item_matrix_fn,

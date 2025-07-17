@@ -40,20 +40,26 @@ def load_data(data_fn: Path) -> pd.DataFrame:
             df = pd.read_parquet(data_fn)
         else:
             dtype_dict = {
-                "id": np.uint32,
-                "store_nbr": np.uint8,
-                "item_nbr": np.uint32,
+                "date": str,
+                # "id": np.uint32,
+                "store": np.uint8,
+                "item": np.uint32,
                 "unit_sales": np.float32,
+                "onpromotion": np.bool_,
+                "store_item": str,
+                "weight": np.float32,
             }
-            df = pd.read_csv(data_fn, dtype=dtype_dict, low_memory=False)
-        df.rename(columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True)
+            df = pd.read_csv(
+                data_fn, dtype=dtype_dict, parse_dates=["date"], low_memory=False
+            )
+        df.rename(columns={"store": "store", "item": "item"}, inplace=True)
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
         cols = ["date", "store_item", "store", "item"] + [
             c for c in df.columns if c not in ("date", "store_item", "store", "item")
         ]
         df = df[cols]
         df["date"] = pd.to_datetime(df["date"])
-        df.sort_values("date", inplace=True)
+        df.sort_values(["date", "store_item"], inplace=True)
         df.reset_index(drop=True, inplace=True)
 
         logger.info(f"Loaded data with shape {df.shape}")
