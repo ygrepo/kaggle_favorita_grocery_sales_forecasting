@@ -33,8 +33,6 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
         "start_date",
         # "id",
         "store_item",
-        "store",
-        "item",
         "store_cluster",
         "item_cluster",
         "weight",
