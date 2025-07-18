@@ -17,6 +17,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SALE_FEATURES = [
+    "store_med_day",
+    "item_med_day",
+    "store_med_change",
+    "item_med_change",
+    "store_med_logpct_change",
+    "item_med_logpct_change",
+    "sales_day",
+]
+
 CYCLICAL_FEATURES = [
     "dayofweek",
     "weekofmonth",
@@ -27,7 +37,9 @@ CYCLICAL_FEATURES = [
 TRIGS = ["sin", "cos"]
 
 
-def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]]:
+def build_feature_and_label_cols(
+    window_size: int,
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
     """Return feature and label column names for a given window size."""
     meta_cols = [
         "start_date",
@@ -45,17 +57,20 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
     ]
 
     x_sales_features = [
+        f"{name}_{i}" for name in SALE_FEATURES for i in range(1, window_size + 1)
+    ]
+
+    x_to_log_features = [
         f"{name}_{i}"
-        for name in [
-            "store_med_day",
-            "item_med_day",
-            "store_med_change",
-            "item_med_change",
-            "store_med_logpct_change",
-            "item_med_logpct_change",
-            "sales_day",
-        ]
+        for name in SALE_FEATURES
         for i in range(1, window_size + 1)
+        if name not in ["store_med_logpct_change", "item_med_logpct_change"]
+    ]
+    x_log_features = [
+        f"{name}_{i}"
+        for name in SALE_FEATURES
+        for i in range(1, window_size + 1)
+        if name in ["store_med_logpct_change", "item_med_logpct_change"]
     ]
 
     x_feature_cols = x_sales_features + x_cyclical_features
@@ -64,17 +79,21 @@ def build_feature_and_label_cols(window_size: int) -> tuple[list[str], list[str]
         + [f"y_store_med_logpct_change_{i}" for i in range(1, window_size + 1)]
         + [f"y_item_med_logpct_change_{i}" for i in range(1, window_size + 1)]
     )
-    # label_cols = [f"y_{c}" for c in x_feature_cols]
-    # y_sales_features = [f"y_{c}" for c in x_sales_features]
-    # y_cyclical_features = [f"y_{c}" for c in x_cyclical_features]
+    y_log_features = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
+    y_to_log_features = [
+        f"y_store_med_logpct_change_{i}" for i in range(1, window_size + 1)
+    ] + [f"y_item_med_logpct_change_{i}" for i in range(1, window_size + 1)]
+
     return (
         meta_cols,
         x_sales_features,
         x_cyclical_features,
         x_feature_cols,
+        x_to_log_features,
+        x_log_features,
         label_cols,
-        # y_sales_features,
-        # y_cyclical_features,
+        y_log_features,
+        y_to_log_features,
     )
 
 
@@ -323,9 +342,19 @@ def load_X_y_data(
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
             )
-        (meta_cols, _, _, x_feature_cols, label_cols) = build_feature_and_label_cols(
-            window_size=window_size
-        )
+
+        (
+            meta_cols,
+            _,
+            _,
+            x_feature_cols,
+            _,
+            _,
+            label_cols,
+            _,
+            _,
+        ) = build_feature_and_label_cols(window_size=window_size)
+
         df = df[meta_cols + x_feature_cols + label_cols]
         df["start_date"] = pd.to_datetime(df["start_date"])
         df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
