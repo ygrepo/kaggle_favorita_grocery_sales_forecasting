@@ -517,7 +517,7 @@ class LightningWrapper(pl.LightningModule):
         if torch.any(torch.isinf(xb)):
             logger.warning(f"Inf in input (xb) at batch {batch_idx}")
         preds = self.model(xb)
-        logger.info(f"Training Batch {batch_idx} preds:\n", preds)
+        logger.debug(f"Training Batch {batch_idx} preds:\n", preds)
         if torch.any(torch.isinf(preds)):
             logger.warning(f"Inf in raw preds at batch {batch_idx}")
         preds = torch.clamp(preds, min=1e-6)
@@ -575,10 +575,10 @@ class LightningWrapper(pl.LightningModule):
         return loss
 
     def on_epoch_start(self) -> None:
-        print(f"\nModel: {self.model_name}-Epoch {self.current_epoch} started!")
+        logger.info(f"\nModel: {self.model_name}-Epoch {self.current_epoch} started!")
 
     def on_train_epoch_end(self) -> None:
-        print(f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!")
+        logger.info(f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!")
         # Compute average metrics for the epoch
         avg_train_mae = np.mean(self.train_mae_history)
         avg_train_rmse = np.mean(self.train_rmse_history)
