@@ -823,223 +823,140 @@ def train(
     return history
 
 
-# def train(
-#     df: pd.DataFrame,
-#     weights_df: pd.DataFrame,
-#     x_feature_cols: List[str],
-#     x_sales_features: List[str],
-#     x_cyclical_features: List[str],
-#     label_cols: List[str],
-#     y_sales_features: List[str],
-#     y_cyclical_features: List[str],
-#     item_col: str,
-#     train_frac: float = 0.8,
-#     batch_size: int = 32,
-#     lr: float = 3e-4,
-#     epochs: int = 5,
-#     seed: int = 2025,
-#     model_type: ModelType = ModelType.SHALLOW_NN,
-#     num_workers: int = 5,
-#     enable_progress_bar: bool = True,
-#     train_logger: bool = False,
-#     model_dir: str = "../output/models/",
-# ) -> pd.DataFrame:
+def train_per_cluster_pair(
+    today_str: str,
+    model_dir: Path,
+    model_type: ModelType,
+    data_dir: Path,
+    label_cols: list[str],
+    y_log_features: list[str],
+    *,
+    lr: float = 3e-4,
+    epochs: int = 5,
+    seed: int = 2025,
+    enable_progress_bar: bool = True,
+    train_logger: bool = False,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    pl.seed_everything(seed)
 
-#     pl.seed_everything(seed)
+    # Setup paths
+    dataloader_dir = data_dir / "dataloader"
+    checkpoints_dir = model_dir / "checkpoints"
+    history_dir = model_dir / "history"
+    for d in [checkpoints_dir, history_dir]:
+        d.mkdir(parents=True, exist_ok=True)
 
-#     # Ensure directories exist
-#     model_dir_path = Path(model_dir)
-#     model_dir_path.mkdir(parents=True, exist_ok=True)
-#     scalers_dir = model_dir_path / "scalers"
-#     scalers_dir.mkdir(parents=True, exist_ok=True)
-#     checkpoints_dir = model_dir_path / "checkpoints"
-#     checkpoints_dir.mkdir(parents=True, exist_ok=True)
-#     history_dir = model_dir_path / "history"
-#     history_dir.mkdir(parents=True, exist_ok=True)
+    today_str = datetime.today().strftime("%Y-%m-%d")
 
-#     history = []
+    # Load the full metadata to split by cluster pair
+    meta_df = pd.read_parquet(dataloader_dir / f"{today_str}_train_meta.parquet")
+    unique_pairs = meta_df[["store_cluster", "item_cluster"]].drop_duplicates()
 
-#     today_str = datetime.today().strftime("%Y-%m-%d")
-#     for sid in df["store_item"].unique():
-#         sub = (
-#             df[df["store_item"] == sid].sort_values("start_date").reset_index(drop=True)
-#         )
-#         sub = sub.merge(weights_df, on=item_col, how="left")
+    full_train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
+    full_val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
 
-#         train_size = int(len(sub) * train_frac)
+    all_histories = []
 
-#         # SPLIT
-#         X_train_df = sub.loc[: train_size - 1, x_feature_cols]
-#         X_test_df = sub.loc[train_size:, x_feature_cols]
+    for _, pair in unique_pairs.iterrows():
+        store_cluster, item_cluster = pair["store_cluster"], pair["item_cluster"]
+        logger.info(f"Training model for pair: ({store_cluster}, {item_cluster})")
 
-#         # Prepare input features (cyclical, sales)
-#         x_sales_idx = [x_feature_cols.index(c) for c in x_sales_features]
-#         x_cyc_idx = [x_feature_cols.index(c) for c in x_cyclical_features]
+        # Filter indices for this pair
+        train_indices = meta_df.query(
+            "store_cluster == @store_cluster and item_cluster == @item_cluster"
+        ).index.tolist()
 
-#         # Prepare sales data
-#         x_sales_train = np.clip(X_train_df.iloc[:, x_sales_idx].to_numpy(), 0, None)
-#         x_sales_test = np.clip(X_test_df.iloc[:, x_sales_idx].to_numpy(), 0, None)
-#         x_sales_train_log = np.log1p(x_sales_train)
-#         x_sales_test_log = np.log1p(x_sales_test)
+        # Filter data from loaders
+        X_train = full_train_loader.dataset.tensors[0][train_indices]
+        y_train = full_train_loader.dataset.tensors[1][train_indices]
+        w_train = full_train_loader.dataset.tensors[2][train_indices]
 
-#         x_sales_scaler = MinMaxScaler().fit(x_sales_train_log)
-#         x_cyc_train = X_train_df.iloc[:, x_cyc_idx].to_numpy()  # cyclical features
-#         x_cyc_scaler = MinMaxScaler(feature_range=(0, 1)).fit(x_cyc_train)
+        val_meta_df = pd.read_parquet(dataloader_dir / f"{today_str}_val_meta.parquet")
+        val_indices = val_meta_df.query(
+            "store_cluster == @store_cluster and item_cluster == @item_cluster"
+        ).index.tolist()
+        X_val = full_val_loader.dataset.tensors[0][val_indices]
+        y_val = full_val_loader.dataset.tensors[1][val_indices]
+        w_val = full_val_loader.dataset.tensors[2][val_indices]
 
-#         # Stack sales and cyclical features for training
-#         X_train_full = np.hstack(
-#             [
-#                 x_sales_scaler.transform(x_sales_train_log),
-#                 x_cyc_scaler.transform(x_cyc_train),
-#             ]
-#         )
-#         X_test_full = np.hstack(
-#             [
-#                 x_sales_scaler.transform(x_sales_test_log),
-#                 x_cyc_scaler.transform(X_test_df.iloc[:, x_cyc_idx].to_numpy()),
-#             ]
-#         )
+        if len(train_indices) == 0 or len(val_indices) == 0:
+            logger.warning(
+                f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
+            )
+            continue
 
-#         # Save scalers
-#         pickle.dump(
-#             x_sales_scaler,
-#             open(scalers_dir / f"{today_str}_x_sales_scaler_{sid}.pkl", "wb"),
-#         )
-#         pickle.dump(
-#             x_cyc_scaler,
-#             open(scalers_dir / f"{today_str}_x_cyc_scaler_{sid}.pkl", "wb"),
-#         )
+        # Prepare loaders
+        train_loader = DataLoader(
+            TensorDataset(X_train, y_train, w_train), batch_size=32
+        )
+        val_loader = DataLoader(TensorDataset(X_val, y_val, w_val), batch_size=32)
 
-#         # Prepare output features
-#         y_sales_train = np.clip(
-#             sub.loc[: train_size - 1, y_sales_features].to_numpy(), 0, None
-#         )
-#         y_sales_test = np.clip(
-#             sub.loc[train_size:, y_sales_features].to_numpy(), 0, None
-#         )
-#         y_sales_train_log = np.log1p(y_sales_train)
-#         y_sales_test_log = np.log1p(y_sales_test)
+        # Infer dimensions
+        input_dim = X_train.shape[1]
+        output_dim = len(label_cols)
 
-#         y_sales_scaler = MinMaxScaler().fit(y_sales_train_log)
-#         y_cyc_train = sub.loc[: train_size - 1, y_cyclical_features].to_numpy()
-#         y_cyc_scaler = MinMaxScaler(feature_range=(0, 1)).fit(y_cyc_train)
+        # Compute MAVs
+        col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+        y_log_idx = [col_y_index_map[c] for c in y_log_features]
+        train_mav = compute_mav(train_loader, y_log_idx)
+        val_mav = compute_mav(val_loader, y_log_idx)
 
-#         # Stack output features for training
-#         y_train_full = np.hstack(
-#             [
-#                 y_sales_scaler.transform(y_sales_train_log),
-#                 y_cyc_scaler.transform(y_cyc_train),
-#             ]
-#         )
-#         y_test_full = np.hstack(
-#             [
-#                 y_sales_scaler.transform(y_sales_test_log),
-#                 y_cyc_scaler.transform(
-#                     sub.loc[train_size:, y_cyclical_features].to_numpy()
-#                 ),
-#             ]
-#         )
+        model_name = (
+            f"{today_str}_model_sc{store_cluster}_ic{item_cluster}_{model_type.value}"
+        )
+        base_model = model_factory(model_type, input_dim, output_dim)
+        base_model.apply(init_weights)
 
-#         # Save scalers for output
-#         pickle.dump(
-#             y_sales_scaler,
-#             open(scalers_dir / f"{today_str}_y_sales_scaler_{sid}.pkl", "wb"),
-#         )
-#         pickle.dump(
-#             y_cyc_scaler,
-#             open(scalers_dir / f"{today_str}_y_cyc_scaler_{sid}.pkl", "wb"),
-#         )
+        lightning_model = LightningWrapper(
+            base_model,
+            model_name=model_name,
+            lr=lr,
+            sales_idx=y_log_idx,
+            train_mav=train_mav,
+            val_mav=val_mav,
+        )
 
-#         # Prepare dataset and dataloaders
-#         w = sub["weight"].to_numpy(float).reshape(-1, 1)
-#         w_train, w_test = w[:train_size], w[train_size:]
+        checkpoint_callback = ModelCheckpoint(
+            monitor="best_train_avg_mae",
+            mode="min",
+            save_top_k=1,
+            dirpath=checkpoints_dir,
+            filename=model_name,
+        )
 
-#         ds_train = TensorDataset(
-#             torch.from_numpy(X_train_full).float(),
-#             torch.from_numpy(y_train_full).float(),
-#             torch.from_numpy(w_train).float(),
-#         )
-#         ld_train = DataLoader(
-#             ds_train,
-#             batch_size=batch_size,
-#             shuffle=True,
-#             num_workers=num_workers,
-#             persistent_workers=True,
-#         )
+        trainer = pl.Trainer(
+            deterministic=True,
+            max_epochs=epochs,
+            logger=train_logger,
+            enable_progress_bar=enable_progress_bar,
+            callbacks=[checkpoint_callback],
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        )
 
-#         ds_test = TensorDataset(
-#             torch.from_numpy(X_test_full).float(),
-#             torch.from_numpy(y_test_full).float(),
-#             torch.from_numpy(w_test).float(),
-#         )
-#         ld_test = DataLoader(
-#             ds_test,
-#             batch_size=batch_size,
-#             shuffle=False,
-#             num_workers=num_workers,
-#             persistent_workers=True,
-#         )
+        trainer.fit(lightning_model, train_loader, val_loader)
 
-#         # Initialize model
-#         base_model = model_factory(model_type, X_train_full.shape[1])
-#         base_model.apply(init_weights)
+        # Log history for this model
+        history = {
+            "model_name": model_name,
+            "store_cluster": store_cluster,
+            "item_cluster": item_cluster,
+            "best_train_avg_mae": lightning_model.best_train_avg_mae,
+            "best_val_avg_mae": lightning_model.best_val_avg_mae,
+            "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+            "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
+            "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+            "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+        }
+        all_histories.append(history)
 
-#         # Compute MAV (Mean Absolute Value)
-#         sales_idx = [label_cols.index(c) for c in y_sales_features]
-#         train_mav = compute_mav(ld_train, y_sales_scaler, sales_idx)
-#         val_mav = compute_mav(ld_test, y_sales_scaler, sales_idx)
-
-#         # Initialize Lightning model
-#         model_name = f"{today_str}_model_{sid}_{model_type.value}"
-#         lightning_model = LightningWrapper(
-#             base_model,
-#             model_name=model_name,
-#             lr=lr,
-#             y_sales_scaler=y_sales_scaler,
-#             sales_idx=sales_idx,
-#             train_mav=train_mav,
-#             val_mav=val_mav,
-#         )
-
-#         # ModelCheckpoint to monitor best_train_avg_mae
-#         checkpoint_callback = ModelCheckpoint(
-#             monitor="best_train_avg_mae",  # Monitor the best training MAE
-#             mode="min",  # Save the model with the lowest train MAE
-#             save_top_k=1,
-#             dirpath=checkpoints_dir,
-#             filename=f"{today_str}_model_{model_name}",  # Model file naming pattern
-#         )
-
-#         trainer = pl.Trainer(
-#             deterministic=True,
-#             max_epochs=epochs,
-#             logger=train_logger,
-#             enable_progress_bar=enable_progress_bar,
-#             callbacks=[checkpoint_callback],
-#             accelerator="gpu" if torch.cuda.is_available() else "cpu",
-#         )
-
-#         # Train the model
-#         trainer.fit(lightning_model, ld_train, ld_test)
-
-#         # Save training history for the model
-#         history.append(
-#             {
-#                 "model_name": model_name,
-#                 "best_train_avg_mae": lightning_model.best_train_avg_mae,
-#                 "best_val_avg_mae": lightning_model.best_val_avg_mae,
-#                 "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
-#                 "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
-#                 "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
-#                 "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
-#             }
-#         )
-
-#     # Save history to file
-#     history_save_path = history_dir / f"{today_str}_history.xlsx"
-#     history = pd.DataFrame(history)
-#     history.to_excel(history_save_path, index=False)
-#     return history
+    # Save full history
+    history_df = pd.DataFrame(all_histories)
+    history_df.to_excel(
+        history_dir / f"{today_str}_history_all_pairs.xlsx", index=False
+    )
+    return history_df
 
 
 def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
