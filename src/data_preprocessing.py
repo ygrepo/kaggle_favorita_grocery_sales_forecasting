@@ -274,6 +274,9 @@ def prepare_data(
 
     # Merge with filtered data
     df = pd.merge(grid, df, on=["store", "item", "date"], how="left")
+    df["weight"] = df["weight"].fillna(1)
+    df["weight"] = df[df["weight"] == 0]["weight"] = 1
+    df["unit_sales"] = df["unit_sales"].fillna(0)
 
     # Fill missing unit_sales with NaN
     missing_mask = df[value_column].isna()
