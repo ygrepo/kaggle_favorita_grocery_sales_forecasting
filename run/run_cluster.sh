@@ -21,21 +21,25 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_100_item.csv" 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_20_item.csv" 
 #DATA_FN="${OUTPUT_DATA_DIR}/20250711_train_top_store_2000_item_cluster.csv"
-DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.parquet"
+#DATA_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 
 # STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_matrix.csv"
 # CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster_result.csv"
 # OUTPUT_FN="${OUTPUT_DATA_DIR}/20250711_train_top_20_item_cluster.csv"
 
-STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_matrix.parquet"
-CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.parquet"
+#STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_matrix.parquet"
+#CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster_result.parquet"
+#OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.parquet"
 
+#STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_matrix.parquet"
+CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_result.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 
-ROW_RANGE="2:5"
-COL_RANGE="2:5"
-# ROW_RANGE="10:20"
-# COL_RANGE="10:20"
+# ROW_RANGE="2:5"
+# COL_RANGE="2:5"
+ROW_RANGE="10:20"
+COL_RANGE="10:20"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
@@ -47,7 +51,7 @@ while [[ $# -gt 0 ]]; do
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --data-fn) DATA_FN="$2"; shift 2 ;;
     --output-data-dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    --store-item-matrix-fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
+    #--store-item-matrix-fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
     --cluster-output-fn) CLUSTER_OUTPUT_FN="$2"; shift 2 ;;
     --output-fn) OUTPUT_FN="$2"; shift 2 ;;
     --row-range) ROW_RANGE="$2"; shift 2 ;;
@@ -69,7 +73,7 @@ echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Data dir: $DATA_DIR" | tee -a "$LOG_FILE"
 echo "Output data dir: $OUTPUT_DATA_DIR" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
-echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
+#echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
 echo "Cluster output fn: $CLUSTER_OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
@@ -80,7 +84,6 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_clustering.py" \
   --data-fn "$DATA_FN" \
-  --store-item-matrix-fn "$STORE_ITEM_MATRIX_FN" \
   --cluster-output-fn "$CLUSTER_OUTPUT_FN" \
   --output-fn "$OUTPUT_FN" \
   --row-range "$ROW_RANGE" \
