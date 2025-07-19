@@ -1170,14 +1170,13 @@ def preprocess_sales_matrix(
 
 
 def zscore_with_axis(
-    df: pd.DataFrame, axis: int = 0, nan_policy: str = "omit"
+    df: pd.DataFrame, axis: int = 0, nan_policy: str = "omit", epsilon: float = 1e-8
 ) -> pd.DataFrame:
     """
     Compute z-score along rows (axis=1) or columns (axis=0), optionally ignoring NaNs.
     Avoids division by zero by adding epsilon to zero std values.
     """
     values = df.values.astype(float)
-    epsilon = 1e-8  # Small constant to avoid division by zero
 
     if nan_policy == "omit":
         mean = np.nanmean(values, axis=axis, keepdims=True)
