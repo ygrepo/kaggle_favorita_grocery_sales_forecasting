@@ -33,6 +33,7 @@ DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_top_store_15_item_cluster.parquet"
 
 #STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_matrix.parquet"
+STORE_ITEM_MATRIX_FN=""
 CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_result.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --data-fn) DATA_FN="$2"; shift 2 ;;
     --output-data-dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    #--store-item-matrix-fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
+    --store-item-matrix-fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
     --cluster-output-fn) CLUSTER_OUTPUT_FN="$2"; shift 2 ;;
     --output-fn) OUTPUT_FN="$2"; shift 2 ;;
     --row-range) ROW_RANGE="$2"; shift 2 ;;
@@ -73,7 +74,7 @@ echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Data dir: $DATA_DIR" | tee -a "$LOG_FILE"
 echo "Output data dir: $OUTPUT_DATA_DIR" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
-#echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
+echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
 echo "Cluster output fn: $CLUSTER_OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
@@ -84,6 +85,7 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_clustering.py" \
   --data-fn "$DATA_FN" \
+  --store-item-matrix-fn "$STORE_ITEM_MATRIX_FN" \
   --cluster-output-fn "$CLUSTER_OUTPUT_FN" \
   --output-fn "$OUTPUT_FN" \
   --row-range "$ROW_RANGE" \
