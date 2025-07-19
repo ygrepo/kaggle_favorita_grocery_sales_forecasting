@@ -711,12 +711,11 @@ def generate_sales_features(
                     row[f"store_med_change_{i}"] = sales_val / store_med_val
                     row[f"item_med_change_{i}"] = sales_val / item_med_val
 
-                    row[f"store_med_logpct_change_{i}"] = np.log(
-                        sales_val / store_med_val
-                    )
-                    row[f"item_med_logpct_change_{i}"] = np.log(
-                        sales_val / item_med_val
-                    )
+                    ratio_store = max(sales_val / store_med_val, epsilon)
+                    ratio_item = max(sales_val / item_med_val, epsilon)
+
+                    row[f"store_med_logpct_change_{i}"] = np.log(ratio_store)
+                    row[f"item_med_logpct_change_{i}"] = np.log(ratio_item)
                 else:
                     continue
 
@@ -1175,8 +1174,10 @@ def zscore_with_axis(
 ) -> pd.DataFrame:
     """
     Compute z-score along rows (axis=1) or columns (axis=0), optionally ignoring NaNs.
+    Avoids division by zero by adding epsilon to zero std values.
     """
     values = df.values.astype(float)
+    epsilon = 1e-8  # Small constant to avoid division by zero
 
     if nan_policy == "omit":
         mean = np.nanmean(values, axis=axis, keepdims=True)
@@ -1187,7 +1188,8 @@ def zscore_with_axis(
     else:
         raise ValueError("nan_policy must be 'omit' or 'propagate'")
 
-    z = (values - mean) / std
+    std_safe = np.where(std == 0, epsilon, std)
+    z = (values - mean) / std_safe
     return pd.DataFrame(z, index=df.index, columns=df.columns)
 
 
