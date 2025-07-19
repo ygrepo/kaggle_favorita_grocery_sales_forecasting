@@ -15,7 +15,7 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${DATA_DIR}/20250711_train_top_100_item_cluster.csv"
 #DATA_FN="${DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
 #DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_cluster.csv"
-DATA_FN="${DATA_DIR}/train_top_store_15_item_cluster.parquet"
+#DATA_FN="${DATA_DIR}/train_top_store_15_item_cluster.parquet"
 DATA_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 
 #DATA_FN="${DATA_DIR}/20250707_500_train_top_51_store_9000_item_cluster.csv"

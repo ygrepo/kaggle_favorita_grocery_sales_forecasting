@@ -139,6 +139,7 @@ def main():
         logger.info(f"  Row range: {row_range}")
         logger.info(f"  Col range: {col_range}")
         logger.info(f"  Cluster output fn: {cluster_output_fn}")
+        logger.info(f"  Store item matrix fn: {store_item_matrix_fn}")
         logger.info(f"  Output fn: {output_fn}")
 
         # Load and preprocess data

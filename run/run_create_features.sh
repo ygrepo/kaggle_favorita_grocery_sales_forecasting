@@ -18,7 +18,10 @@ OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features.
 #SALES_FN="${DATA_DIR}/20250711_train_top_20_item_sale_cluster.csv"
 # OUTPUT_FN="${DATA_DIR}/20250711_train_top_51_store_100_item_clusters_sales_cyclical_features_1_days_X_y.csv"
 SALES_FN="${DATA_DIR}/train_top_store_15_item_sale_cluster.parquet"
-CYC_FN="${DATA_DIR}/train_top_store_15_item_cyc_cluster.parquet"
+#CYC_FN="${DATA_DIR}/train_top_store_15_item_cyc_cluster.parquet"
+SALES_FN="${DATA_DIR}/train_top_store_15_item_sale_cluster.parquet"
+CYC_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cyc_cluster.parquet"
+
 # SALES_FN="${DATA_DIR}/20150209_10_train_top_20_item_sale_cluster.csv"
 # CYC_FN="${DATA_DIR}/20150209_10_train_top_20_item_cyc_cluster.csv"
 #CYC_FN="${DATA_DIR}/20250711_train_top_20_item_cyc_cluster.csv"
