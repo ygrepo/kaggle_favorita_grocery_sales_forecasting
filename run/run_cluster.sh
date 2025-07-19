@@ -34,7 +34,7 @@ DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 
 #STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_matrix.parquet"
 CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_result.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet
 
 # ROW_RANGE="2:5"
 # COL_RANGE="2:5"
