@@ -477,6 +477,8 @@ class LightningWrapper(pl.LightningModule):
         self,
         model: nn.Module,
         model_name: str,
+        store: int,
+        item: int,
         sales_idx: list[int],
         train_mav: float,
         val_mav: float,
@@ -588,9 +590,11 @@ class LightningWrapper(pl.LightningModule):
         avg_val_rmse = np.mean(self.val_rmse_history)
 
         # Log epoch-level metrics
+        self.log("avg_train_mav", self.train_mav, prog_bar=False)
         self.log("avg_train_mae", avg_train_mae, prog_bar=False)
         self.log("avg_train_percent_mav", avg_train_percent_mav, prog_bar=False)
         self.log("avg_train_rmse", avg_train_rmse, prog_bar=False)
+        self.log("avg_val_mav", self.val_mav, prog_bar=False)
         self.log("avg_val_mae", avg_val_mae, prog_bar=False)
         self.log("avg_val_percent_mav", avg_val_percent_mav, prog_bar=False)
         self.log("avg_val_rmse", avg_val_rmse, prog_bar=False)
@@ -658,6 +662,7 @@ def compute_mav(
     with torch.no_grad():
         for _, yb, _ in loader:
             y_np = yb.cpu().numpy()
+
             sales = y_np[:, sales_idx]  # directly select the relevant y columns
 
             # Undo log1p
@@ -751,8 +756,6 @@ def train(
     for d in [checkpoints_dir, history_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    today_str = datetime.today().strftime("%Y-%m-%d")
-
     # Load loaders and scalers
     train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
     val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
@@ -772,7 +775,7 @@ def train(
     output_dim = len(label_cols)
     base_model = model_factory(model_type, input_dim, output_dim)
     base_model.apply(init_weights)
-    logger.info(f"Built model: {base_model}")
+    logger.info(f"Built model: {base_model}, epochs={epochs}, lr={lr}")
 
     lightning_model = LightningWrapper(
         base_model,
@@ -810,6 +813,8 @@ def train(
         [
             {
                 "model_name": model_name,
+                "train_mav": train_mav,
+                "val_mav": val_mav,
                 "best_train_avg_mae": lightning_model.best_train_avg_mae,
                 "best_val_avg_mae": lightning_model.best_val_avg_mae,
                 "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
@@ -834,6 +839,7 @@ def train_per_cluster_pair(
     lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
+    num_workers: int = 15,
     enable_progress_bar: bool = True,
     train_logger: bool = False,
     log_level: str = "INFO",
@@ -848,14 +854,14 @@ def train_per_cluster_pair(
     for d in [checkpoints_dir, history_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    today_str = datetime.today().strftime("%Y-%m-%d")
-
     # Load the full metadata to split by cluster pair
     meta_df = pd.read_parquet(dataloader_dir / f"{today_str}_train_meta.parquet")
     unique_pairs = meta_df[["store_cluster", "item_cluster"]].drop_duplicates()
 
     full_train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
     full_val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
+    inferred_batch_size = full_train_loader.batch_size or 32  # fallback if somehow None
+    logger.info(f"Inferred batch size: {inferred_batch_size}")
 
     all_histories = []
 
@@ -889,9 +895,17 @@ def train_per_cluster_pair(
 
         # Prepare loaders
         train_loader = DataLoader(
-            TensorDataset(X_train, y_train, w_train), batch_size=32
+            TensorDataset(X_train, y_train, w_train),
+            batch_size=inferred_batch_size,
+            num_workers=num_workers,
+            persistent_workers=True,
         )
-        val_loader = DataLoader(TensorDataset(X_val, y_val, w_val), batch_size=32)
+        val_loader = DataLoader(
+            TensorDataset(X_val, y_val, w_val),
+            batch_size=inferred_batch_size,
+            num_workers=num_workers,
+            persistent_workers=True,
+        )
 
         # Infer dimensions
         input_dim = X_train.shape[1]
@@ -901,7 +915,9 @@ def train_per_cluster_pair(
         col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
         y_log_idx = [col_y_index_map[c] for c in y_log_features]
         train_mav = compute_mav(train_loader, y_log_idx)
+        logger.info(f"{store_cluster}_{item_cluster} Train MAV: {train_mav}")
         val_mav = compute_mav(val_loader, y_log_idx)
+        logger.info(f"{store_cluster}_{item_cluster} Val MAV: {val_mav}")
 
         model_name = (
             f"{today_str}_model_sc{store_cluster}_ic{item_cluster}_{model_type.value}"
@@ -942,6 +958,8 @@ def train_per_cluster_pair(
             "model_name": model_name,
             "store_cluster": store_cluster,
             "item_cluster": item_cluster,
+            "train_mav": train_mav,
+            "val_mav": val_mav,
             "best_train_avg_mae": lightning_model.best_train_avg_mae,
             "best_val_avg_mae": lightning_model.best_val_avg_mae,
             "best_train_avg_rmse": lightning_model.best_train_avg_rmse,

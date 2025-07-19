@@ -248,9 +248,10 @@ def load_full_data(
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
             )
-        (meta_cols, _, _, x_feature_cols, _) = build_feature_and_label_cols(
+        (meta_cols, _, _, x_feature_cols, _, _, _, _, _) = build_feature_and_label_cols(
             window_size=window_size
         )
+
         df = df[meta_cols + x_feature_cols]
         df["start_date"] = pd.to_datetime(df["start_date"])
         df.sort_values(["store_item", "start_date"], inplace=True)
@@ -566,6 +567,7 @@ def generate_sales_features(
     calendar_aligned: bool = True,
     log_level: str = "INFO",
     output_path: Optional[Path] = None,
+    epsilon: float = 1e-3,
 ) -> pd.DataFrame:
     """
     Generate rolling window sales features for pre-aggregated store-item-date sales rows.
@@ -696,26 +698,24 @@ def generate_sales_features(
                     row[f"store_med_day_{i}"] = store_med_val
                     row[f"item_med_day_{i}"] = item_med_val
 
-                    row[f"store_med_change_{i}"] = (
-                        sales_val / store_med_val
+                    store_med_val = (
+                        store_med_val
                         if pd.notna(store_med_val) and store_med_val > 0
-                        else np.nan
+                        else epsilon
                     )
-                    row[f"item_med_change_{i}"] = (
-                        sales_val / item_med_val
+                    item_med_val = (
+                        item_med_val
                         if pd.notna(item_med_val) and item_med_val > 0
-                        else np.nan
+                        else epsilon
                     )
+                    row[f"store_med_change_{i}"] = sales_val / store_med_val
+                    row[f"item_med_change_{i}"] = sales_val / item_med_val
 
-                    row[f"store_med_logpct_change_{i}"] = (
-                        np.log(sales_val / store_med_val)
-                        if store_med_val and store_med_val > 0
-                        else np.nan
+                    row[f"store_med_logpct_change_{i}"] = np.log(
+                        sales_val / store_med_val
                     )
-                    row[f"item_med_logpct_change_{i}"] = (
-                        np.log(sales_val / item_med_val)
-                        if item_med_val and item_med_val > 0
-                        else np.nan
+                    row[f"item_med_logpct_change_{i}"] = np.log(
+                        sales_val / item_med_val
                     )
                 else:
                     continue
