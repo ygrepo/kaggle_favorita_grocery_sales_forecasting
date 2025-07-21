@@ -96,13 +96,13 @@ def parse_args():
         help="Size of the lookback window",
     )
     parser.add_argument(
-        "--log-dir",
+        "--log_dir",
         type=str,
         default="../output/logs",
         help="Directory to save script outputs (relative to project root)",
     )
     parser.add_argument(
-        "--log-level",
+        "--log_level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
