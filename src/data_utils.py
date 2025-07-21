@@ -1254,6 +1254,7 @@ def save_parquets_by_cluster_pairs(
     *,
     to_parquet: bool = True,
     to_csv: bool = False,
+    log_level: str = "INFO",
 ) -> None:
     """
     Splits the dataframe by (store_cluster, item_cluster) pairs and saves each to a compressed Parquet file.
@@ -1265,6 +1266,7 @@ def save_parquets_by_cluster_pairs(
     output_dir : Path
         Directory where the Parquet files will be saved.
     """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     grouped = df.groupby(["store_cluster", "item_cluster"])
@@ -1274,13 +1276,14 @@ def save_parquets_by_cluster_pairs(
         iterator = tqdm(iterator, desc="Generating cluster parquets")
 
     for (store_cluster, item_cluster), group in iterator:
+        logger.info(f"Saving cluster {store_cluster}_{item_cluster}")
         if to_parquet:
             filename = f"cluster_{store_cluster}_{item_cluster}.parquet"
             group.to_parquet(
                 output_dir / filename,
                 index=False,
                 compression="snappy",
-                engine="pyarrow",  # optional, but preferred for speed and compatibility
+                engine="pyarrow",
             )
         if to_csv:
             filename = f"cluster_{store_cluster}_{item_cluster}.csv"

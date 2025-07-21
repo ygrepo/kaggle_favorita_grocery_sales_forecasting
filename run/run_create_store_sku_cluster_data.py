@@ -67,7 +67,6 @@ if __name__ == "__main__":
 
         df = load_raw_data(
             data_fn=data_fn,
-            log_level=args.log_level,
         )
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         save_parquets_by_cluster_pairs(
