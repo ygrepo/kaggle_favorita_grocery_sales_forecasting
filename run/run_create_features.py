@@ -66,8 +66,11 @@ def create_sale_cyc_features(
 
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
+        logger.info(f"File stem: {file_path.stem}")
         store_cluster = file_path.stem.split("_")[0]
         item_cluster = file_path.stem.split("_")[1]
+        logger.info(f"Store cluster: {store_cluster}")
+        logger.info(f"Item cluster: {item_cluster}")
         sales_fn = (
             sales_dir / f"sale_features_cluster_{store_cluster}_{item_cluster}.parquet"
         )
