@@ -1010,7 +1010,8 @@ def create_features(
         df = df[meta_cols + x_feature_cols + label_cols]
     else:
         logger.info("Not adding y targets")
-        (meta_cols, _, _, x_feature_cols, _) = build_feature_and_label_cols(
+
+        (meta_cols, _, _, x_feature_cols, _, _, _, _, _) = build_feature_and_label_cols(
             window_size=window_size
         )
         df = df[meta_cols + x_feature_cols]

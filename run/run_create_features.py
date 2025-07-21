@@ -66,7 +66,6 @@ def create_sale_cyc_features(
 
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
-        logger.info(f"File stem: {file_path.stem}")
         parts = file_path.stem.split("_")
         store_cluster = int(parts[-2])
         item_cluster = int(parts[-1])
