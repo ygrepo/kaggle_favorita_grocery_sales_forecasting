@@ -24,25 +24,6 @@ from src.data_utils import load_raw_data, create_sale_features
 from src.utils import setup_logging
 
 
-# def create_features(
-#     df: pd.DataFrame,
-#     window_size: int,
-#     log_level: str,
-#     fn: Path,
-# ):
-#     """Create features for training the model."""
-#     logger = logging.getLogger(__name__)
-#     logger.info("Starting creating features")
-#     df = create_sale_features(
-#         df,
-#         window_size=window_size,
-#         calendar_aligned=True,
-#         fn=fn,
-#         log_level=log_level,
-#     )
-#     return df
-
-
 def create_features(
     data_fn: Path,
     window_size: int,
@@ -79,9 +60,10 @@ def create_features(
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         df = load_raw_data(Path(file_path))
+        logger.info(f"{df['store_item'].unique()}")
 
         out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
-        df = create_sale_features(
+        create_sale_features(
             df,
             window_size=window_size,
             calendar_aligned=True,
