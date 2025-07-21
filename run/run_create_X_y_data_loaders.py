@@ -10,7 +10,6 @@ This script handles the complete training pipeline including:
 import sys
 import logging
 import argparse
-from datetime import datetime
 from pathlib import Path
 
 # Add project root to path to allow importing from src
@@ -18,7 +17,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.model_utils import generate_loaders
-from src.utils import load_X_y_data, build_feature_and_label_cols
+from src.data_utils import load_X_y_data, load_X_y_data
+from src.utils import setup_logging
 
 
 def create_data_loaders(
@@ -50,35 +50,6 @@ def create_data_loaders(
         scalers_dir=scalers_dir,
         dataloader_dir=dataloader_dir,
     )
-
-
-def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
-    """Set up logging configuration.
-
-    Args:
-        log_dir: Directory to save log files
-        log_level: Logging level (e.g., 'INFO', 'DEBUG')
-
-    Returns:
-        Configured logger instance
-    """
-    # Create output directory if it doesn't exist
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Set up log file path with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"create_features_{timestamp}.log"
-
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
-    )
-
-    logger = logging.getLogger(__name__)
-    logger.info(f"Logging to {log_file}")
-    return logger
 
 
 def parse_args():
@@ -137,8 +108,8 @@ def main():
     window_size = args.window_size
 
     # Set up logging
-    print(f"Log dir: {log_dir}")
     logger = setup_logging(log_dir, args.log_level)
+    logger.info(f"Log dir: {log_dir}")
 
     try:
         # Log configuration

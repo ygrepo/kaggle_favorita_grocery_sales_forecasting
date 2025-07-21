@@ -7,6 +7,7 @@ import lightning.pytorch as pl
 import random
 import logging
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch import LightningModule
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
@@ -15,6 +16,10 @@ import pickle
 from pathlib import Path
 from enum import Enum
 from tqdm import tqdm
+
+import re
+from collections import defaultdict
+
 import gc
 
 # Set up logger
@@ -37,33 +42,6 @@ class StoreItemDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx], self.w[idx]
-
-
-# class ShallowNN(nn.Module):
-#     def __init__(self, input_dim, hidden_dim=128, output_dim=None, dropout=0.0):
-#         """Simple feed forward network used in unit tests.
-
-#         The default ``dropout`` is set to ``0.0`` so that the forward pass is
-#         deterministic unless a different value is explicitly requested.  This
-#         avoids stochastic behaviour in the tests which call ``model(x)`` twice
-#         in a row to check reproducibility.
-#         """
-
-#         super().__init__()
-#         output_dim = output_dim or input_dim
-
-#         dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-
-#         self.net = nn.Sequential(
-#             nn.Linear(input_dim, hidden_dim),
-#             nn.LeakyReLU(),
-#             dropout_layer,
-#             nn.Linear(hidden_dim, output_dim),
-#             nn.Hardtanh(),  # clips to [0,1]
-#         )
-
-#     def forward(self, x):
-#         return self.net(x)
 
 
 class ShallowNN(nn.Module):
@@ -89,7 +67,7 @@ class ShallowNN(nn.Module):
 
 
 class TwoLayerNN(nn.Module):
-    def __init__(self, input_dim, output_dim=3, h1=128, h2=64, dropout=0.0):
+    def __init__(self, input_dim, output_dim=3, h1=128, h2=64, dropout=0.2):
         """
         Two-layer feedforward NN for log-transformed targets.
         All outputs are unbounded real values, no final activation.
@@ -113,40 +91,6 @@ class TwoLayerNN(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-
-
-# class TwoLayerNN(nn.Module):
-#     def __init__(self, input_dim, h1=128, h2=64, dropout=0.0):
-#         """Two layer feed forward network used in unit tests.
-
-#         ``dropout`` defaults to ``0.0`` so that the forward pass is
-#         deterministic by default (matching :class:`ShallowNN`).  Tests that
-#         require stochastic behaviour can pass a different value.
-#         """
-
-#         super().__init__()
-
-#         dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-
-#         self.net = nn.Sequential(
-#             nn.Linear(input_dim, h1),
-#             nn.BatchNorm1d(h1),
-#             nn.LeakyReLU(),
-#             dropout_layer,
-#             nn.Linear(h1, h2),
-#             nn.BatchNorm1d(h2),
-#             nn.LeakyReLU(),
-#             dropout_layer,
-#             nn.Linear(h2, input_dim),
-#             nn.Sigmoid(),  # already in (0,1)
-#         )
-
-#     def forward(self, x):
-#         out = self.net(x)
-#         # optional extra safety, **not in-place**
-#         # Limit outputs strictly to the [0, 1] range for testing
-#         return torch.clamp(out, 1e-6, 1.0)
-#         # or simply: return out
 
 
 class ResidualMLP(nn.Module):
@@ -216,8 +160,6 @@ def model_factory(model_type: ModelType, input_dim: int, output_dim: int) -> nn.
         return TwoLayerNN(input_dim, output_dim)
     elif model_type == ModelType.RESIDUAL_MLP:
         return ResidualMLP(input_dim, output_dim)
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
 
 
 # ----- initialise every nn.Linear in the network ----------
@@ -1027,6 +969,45 @@ def load_scalers(
     return x_scalers, y_scalers
 
 
+def load_latest_models_from_checkpoints(
+    date: str,
+    checkpoints_dir: Path,
+    model_type: type[LightningModule],
+    input_dim: int,
+    output_dim: int,
+) -> dict[tuple[int, int], LightningWrapper]:
+    """
+    Load the latest checkpoint per (store_cluster, item_cluster).
+    Prioritizes -v3 > -v2 > -v1 > base.
+    """
+    # Group all matching checkpoints by (sc, ic)
+    candidates = defaultdict(list)
+    pattern = re.compile(rf"{date}_model_sc(\d+)_ic(\d+)_.*?(?:-v(\d+))?\.ckpt")
+
+    for ckpt_path in checkpoints_dir.glob(f"{date}_model_sc*_ic*_*.ckpt"):
+        match = pattern.match(ckpt_path.name)
+        if not match:
+            continue
+        sc, ic, version = int(match[1]), int(match[2]), match[3]
+        version = int(version) if version is not None else 0
+        candidates[(sc, ic)].append((version, ckpt_path))
+
+    model_dict = {}
+    for (sc, ic), versioned_paths in candidates.items():
+        # Sort versions descending, take the highest
+        best_ckpt = max(versioned_paths, key=lambda x: x[0])[1]
+        try:
+            model = model_factory(model_type, input_dim, output_dim)
+            wrapper = LightningWrapper.load_from_checkpoint(
+                best_ckpt, model=model, strict=False
+            )
+            model_dict[(sc, ic)] = wrapper
+        except Exception as e:
+            print(f"Skipping {best_ckpt.name}: {e}")
+
+    return model_dict
+
+
 def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
     """
     Loads models from the specified directory, optionally filtering by date_str.
@@ -1048,6 +1029,63 @@ def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
             sid, model, feature_cols = load_model(model_path)
             models[sid] = (model, feature_cols)
     return models
+
+
+def batch_predict_all_store_items(
+    meta_df: pd.DataFrame,
+    input_df: pd.DataFrame,
+    model_dict: dict[tuple[int, int], LightningWrapper],
+    input_feature_cols: list[str],
+    store_col: str = "store",
+    item_col: str = "item",
+    store_cluster_col: str = "store_cluster",
+    item_cluster_col: str = "item_cluster",
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+) -> pd.DataFrame:
+    predictions = []
+
+    for (store, item), row in meta_df.groupby([store_col, item_col]):
+        try:
+            store_cluster = row[store_cluster_col].iloc[0]
+            item_cluster = row[item_cluster_col].iloc[0]
+            model_key = (store_cluster, item_cluster)
+
+            if model_key not in model_dict:
+                continue
+
+            model = model_dict[model_key].model
+            model.eval()
+            model.to(device)
+
+            # Filter rows for this store-item pair
+            rows = input_df.query(f"{store_col} == @store and {item_col} == @item")
+            if rows.empty:
+                continue
+
+            X = torch.tensor(rows[input_feature_cols].values, dtype=torch.float32).to(
+                device
+            )
+            with torch.no_grad():
+                preds_log = model(X)
+                preds_log = torch.clamp(preds_log, min=1e-6)
+                preds_pct = torch.expm1(preds_log).cpu().numpy()
+
+            preds_df = pd.DataFrame(
+                {
+                    "store": store,
+                    "item": item,
+                    "log_pct_change": preds_log.cpu().numpy().squeeze(),
+                    "pct_change": preds_pct.squeeze(),
+                    "index": rows.index,
+                }
+            )
+
+            predictions.append(preds_df)
+
+        except Exception as e:
+            print(f"Error predicting for store {store}, item {item}: {e}")
+
+    return pd.concat(predictions, ignore_index=True)
 
 
 def predict_next_days_for_sid(

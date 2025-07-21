@@ -20,7 +20,8 @@ import numpy as np
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import load_raw_data, create_cyc_features
+from src.data_utils import create_cyc_features, load_raw_data
+from src.utils import setup_logging
 
 
 def create_features(
@@ -40,35 +41,6 @@ def create_features(
         log_level=log_level,
     )
     return df
-
-
-def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
-    """Set up logging configuration.
-
-    Args:
-        log_dir: Directory to save log files
-        log_level: Logging level (e.g., 'INFO', 'DEBUG')
-
-    Returns:
-        Configured logger instance
-    """
-    # Create output directory if it doesn't exist
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Set up log file path with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"create_features_{timestamp}.log"
-
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
-    )
-
-    logger = logging.getLogger(__name__)
-    logger.info(f"Logging to {log_file}")
-    return logger
 
 
 def parse_args():
