@@ -25,85 +25,63 @@ from src.data_utils import create_features
 from src.utils import setup_logging, str2bool
 
 
-# def create_features(
-#     sales_dir: Path,
-#     cyc_dir: Path,
-#     window_size: int,
-#     *,
-#     output_dir: Path,
-#     prefix: str = "sale_cyc_features",
-#     log_level: str = "INFO",
-# ):
-#     """
-#     Process each Parquet file in a directory, apply feature creation,
-#     and save the output with a prefix.
-
-#     Parameters
-#     ----------
-#     sales_dir : Path
-#         Path to a directory containing parquet files or a single parquet file.
-#     cyc_dir : Path
-#         Path to a directory containing parquet files or a single parquet file.
-#     window_size : int
-#         Rolling window size for feature creation.
-#     log_level : str
-#         Logging level (e.g., "INFO", "DEBUG").
-#     prefix : str
-#         Prefix to use when saving processed files.
-#     """
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-#     if sales_dir.is_file() and sales_dir.suffix == ".parquet":
-#         files = [sales_dir]
-#     else:
-#         files = list(sales_dir.glob("*.parquet"))
-
-#     logger.info(f"Processing {len(files)} Parquet files...")
-
-#     for file_path in files:
-#         logger.info(f"Processing {file_path.name}")
-#         create_features(
-#         window_size=window_size,
-#         add_y_targets=add_y_targets,
-#         sales_fn=sales_fn,
-#         cyc_fn=cyc_fn,
-#         log_level=log_level,
-#         output_fn=fn,
-#     )
-
-#         df = load_raw_data(Path(file_path))
-#         logger.info(f"{df['store_item'].unique()}")
-
-#         out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
-#         create_sale_features(
-#             df,
-#             window_size=window_size,
-#             calendar_aligned=True,
-#             fn=out_path,
-#             log_level=log_level,
-#         )
-
-
 def create_sale_cyc_features(
-    window_size: int,
-    add_y_targets: bool,
-    log_level: str,
     sales_dir: Path,
     cyc_dir: Path,
-    fn: Path,
+    window_size: int,
+    *,
+    output_dir: Path,
+    add_y_targets: bool = False,
+    prefix: str = "sale_cyc_features",
+    log_level: str = "INFO",
 ):
-    """Create features for training the model."""
+    """
+    Process each Parquet file in a directory, apply feature creation,
+    and save the output with a prefix.
+
+    Parameters
+    ----------
+    sales_dir : Path
+        Path to a directory containing parquet files or a single parquet file.
+    cyc_dir : Path
+        Path to a directory containing parquet files or a single parquet file.
+    window_size : int
+        Rolling window size for feature creation.
+    log_level : str
+        Logging level (e.g., "INFO", "DEBUG").
+    prefix : str
+        Prefix to use when saving processed files.
+    """
     logger = logging.getLogger(__name__)
-    logger.info("Starting creating features")
-    create_features(
-        window_size=window_size,
-        add_y_targets=add_y_targets,
-        sales_fn=sales_fn,
-        cyc_fn=cyc_fn,
-        log_level=log_level,
-        output_fn=fn,
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    if sales_dir.is_file() and sales_dir.suffix == ".parquet":
+        files = [sales_dir]
+    else:
+        files = list(sales_dir.glob("*.parquet"))
+
+    logger.info(
+        f"Processing sales (store cluster, SKU cluster) {len(files)} Parquet files..."
     )
+
+    for file_path in files:
+        logger.info(f"Processing {file_path.name}")
+        store_cluster = file_path.stem.split("_")[0]
+        item_cluster = file_path.stem.split("_")[1]
+        sales_fn = sales_dir / f"sale_features_{store_cluster}_{item_cluster}.parquet"
+        cyc_fn = cyc_dir / f"cyc_features_{store_cluster}_{item_cluster}.parquet"
+        output_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
+        logger.info(f"Sales fn: {sales_fn}")
+        logger.info(f"Cyc fn: {cyc_fn}")
+        logger.info(f"Output path: {output_path}")
+        # create_features(
+        #     window_size=window_size,
+        #     add_y_targets=add_y_targets,
+        #     sales_fn=sales_fn,
+        #     cyc_fn=cyc_fn,
+        #     log_level=log_level,
+        #     output_fn=output_path,
+        # )
     logger.info("Features created successfully")
 
 
