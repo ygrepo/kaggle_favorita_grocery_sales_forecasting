@@ -60,7 +60,6 @@ def create_features(
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         df = load_raw_data(Path(file_path))
-        logger.info(f"{df['store_item'].unique()}")
         store_cluster = df["store_cluster"].unique()
         item_cluster = df["item_cluster"].unique()
 
