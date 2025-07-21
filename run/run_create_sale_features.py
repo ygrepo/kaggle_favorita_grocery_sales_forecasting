@@ -61,6 +61,17 @@ def create_features(
         logger.info(f"Processing {file_path.name}")
         df = load_raw_data(Path(file_path))
         logger.info(f"{df['store_item'].unique()}")
+        store_cluster = df["store_cluster"].unique()
+        item_cluster = df["item_cluster"].unique()
+
+        if len(store_cluster) == 1 and len(item_cluster) == 1:
+            logger.info(
+                f"Store Cluster: {store_cluster[0]}, SKU Cluster: {item_cluster[0]}"
+            )
+        else:
+            logger.warning(
+                f"Multiple clusters found: Store Clusters {store_cluster}, SKU Clusters {item_cluster}"
+            )
 
         out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
         create_sale_features(
