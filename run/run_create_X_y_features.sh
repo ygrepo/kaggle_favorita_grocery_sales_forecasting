@@ -10,16 +10,19 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-DATA_DIR="${PROJECT_ROOT}/output/data"
+#DATA_DIR="${PROJECT_ROOT}/output/data"
 
-DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features.parquet"
+#DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features.parquet"
 #DATA_FN="${DATA_DIR}/20250711_train_top_store_300_item_clusters_sales_cyclical_features.csv"
 #DATA_FN="${DATA_DIR}/20250711_train_top_store_15_item_clusters_sales_cyclical_features.csv"
 
 #OUTPUT_DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_new.csv"
 #OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
 #OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.csv"
-OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
+#OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
+
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -28,9 +31,9 @@ WINDOW_SIZE=1
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data_fn) DATA_FN="$2"; shift 2 ;;
+    --data_dir) DATA_DIR="$2"; shift 2 ;;
     #--output-data-fn) OUTPUT_DATA_FN="$2"; shift 2 ;;
-    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
+    --output_dir) OUTPUT_FN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
@@ -40,10 +43,11 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
+mkdir -p "$OUTPUT_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/create_X_y_features_${TIMESTAMP}.log"
+LOG_FILE="${LOG_DIR}/create_X_1_day_y_features_${TIMESTAMP}.log"
 
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
@@ -54,15 +58,14 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 # Run the script
 set +e  # Disable exit on error to handle the error message
 echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
-echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
-# echo "  Output data fn: ${OUTPUT_DATA_FN}" | tee -a "$LOG_FILE"
-echo "  Output fn: ${OUTPUT_FN}" | tee -a "$LOG_FILE"
+echo "  Data dir: ${DATA_DIR}" | tee -a "$LOG_FILE"
+echo "  Output dir: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_create_X_y_features.py" \
-  --data_fn "$DATA_FN" \
-  --output_fn "$OUTPUT_FN" \
+  --data_dir "$DATA_DIR" \
+  --output_dir "$OUTPUT_DIR" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
   --window_size "$WINDOW_SIZE" \
