@@ -134,7 +134,7 @@ def main():
         logger.info(f"  Window size: {window_size}")
 
         # Load and preprocess data
-        df = load_raw_data(data_fn)
+        # df = load_raw_data(data_fn)
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
         # df = df[df["store_item"] == store_item]
