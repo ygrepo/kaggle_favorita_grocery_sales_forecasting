@@ -78,7 +78,7 @@ def create_features(
 
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
-        df = pd.read_parquet(file_path)
+        df = load_raw_data(Path(file_path))
 
         df = create_sale_features(
             df,
