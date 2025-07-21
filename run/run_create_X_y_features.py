@@ -187,8 +187,8 @@ def main():
         logger.info(f"  Window size: {window_size}")
 
         add_y_targets(
+            sale_cyc_dir=data_dir,
             window_size=window_size,
-            data_dir=data_dir,
             output_dir=output_dir,
             log_level=args.log_level,
         )
