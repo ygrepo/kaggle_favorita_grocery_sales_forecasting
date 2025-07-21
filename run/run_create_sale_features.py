@@ -24,23 +24,73 @@ from src.data_utils import load_raw_data, create_sale_features
 from src.utils import setup_logging
 
 
+# def create_features(
+#     df: pd.DataFrame,
+#     window_size: int,
+#     log_level: str,
+#     fn: Path,
+# ):
+#     """Create features for training the model."""
+#     logger = logging.getLogger(__name__)
+#     logger.info("Starting creating features")
+#     df = create_sale_features(
+#         df,
+#         window_size=window_size,
+#         calendar_aligned=True,
+#         fn=fn,
+#         log_level=log_level,
+#     )
+#     return df
+
+
 def create_features(
-    df: pd.DataFrame,
+    data_fn: Path,
     window_size: int,
-    log_level: str,
-    fn: Path,
+    *,
+    output_dir: Path,
+    prefix: str = "sale_features",
+    log_level: str = "INFO",
 ):
-    """Create features for training the model."""
+    """
+    Process each Parquet file in a directory, apply feature creation,
+    and save the output with a prefix.
+
+    Parameters
+    ----------
+    data_fn : Path
+        Path to a directory containing parquet files or a single parquet file.
+    window_size : int
+        Rolling window size for feature creation.
+    log_level : str
+        Logging level (e.g., "INFO", "DEBUG").
+    prefix : str
+        Prefix to use when saving processed files.
+    """
     logger = logging.getLogger(__name__)
-    logger.info("Starting creating features")
-    df = create_sale_features(
-        df,
-        window_size=window_size,
-        calendar_aligned=True,
-        fn=fn,
-        log_level=log_level,
-    )
-    return df
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    if data_fn.is_file() and data_fn.suffix == ".parquet":
+        files = [data_fn]
+    else:
+        files = list(data_fn.glob("*.parquet"))
+
+    logger.info(f"Processing {len(files)} Parquet files...")
+
+    for file_path in files:
+        logger.info(f"Processing {file_path.name}")
+        df = pd.read_parquet(file_path)
+
+        df = create_sale_features(
+            df,
+            window_size=window_size,
+            calendar_aligned=True,
+            fn=file_path,
+            log_level=log_level,
+        )
+
+        out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
+        df.to_parquet(out_path, index=False)
+        logger.info(f"Saved: {out_path}")
 
 
 def parse_args():
@@ -49,16 +99,16 @@ def parse_args():
         description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--data-fn",
+        "--data_fn",
         type=str,
         default="",
-        help="Path to training data file (relative to project root)",
+        help="Path to training data directory (relative to project root)",
     )
     parser.add_argument(
-        "--fn",
+        "--output_dir",
         type=str,
         default="",
-        help="Path to sales file (relative to project root)",
+        help="Path to sales files directory (relative to project root)",
     )
     parser.add_argument(
         "--window-size",
@@ -88,7 +138,7 @@ def main():
     args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
-    fn = Path(args.fn).resolve()
+    output_dir = Path(args.output_dir).resolve()
     log_dir = Path(args.log_dir).resolve()
     window_size = args.window_size
 
@@ -100,21 +150,21 @@ def main():
         # Log configuration
         logger.info("Starting creating training features with configuration:")
         logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Output fn: {fn}")
+        logger.info(f"  Output dir: {output_dir}")
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Window size: {window_size}")
 
         # Load and preprocess data
-        df = load_raw_data(data_fn)
+        # df = load_raw_data(data_fn)
         # store_item = "44_1503844"
         # logger.info(f"Selected store_item: {store_item}")
         # df = df[df["store_item"] == store_item]
 
-        df = create_features(
-            df,
+        create_features(
+            data_fn,
             window_size=window_size,
             log_level=args.log_level,
-            fn=fn,
+            output_dir=output_dir,
         )
 
     except Exception as e:
