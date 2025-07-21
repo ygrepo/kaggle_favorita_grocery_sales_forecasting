@@ -74,14 +74,14 @@ def create_sale_cyc_features(
         logger.info(f"Sales fn: {sales_fn}")
         logger.info(f"Cyc fn: {cyc_fn}")
         logger.info(f"Output path: {output_path}")
-        # create_features(
-        #     window_size=window_size,
-        #     add_y_targets=add_y_targets,
-        #     sales_fn=sales_fn,
-        #     cyc_fn=cyc_fn,
-        #     log_level=log_level,
-        #     output_fn=output_path,
-        # )
+        create_features(
+            window_size=window_size,
+            add_y_targets=add_y_targets,
+            sales_fn=sales_fn,
+            cyc_fn=cyc_fn,
+            log_level=log_level,
+            output_fn=output_path,
+        )
     logger.info("Features created successfully")
 
 
