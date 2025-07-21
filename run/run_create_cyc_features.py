@@ -60,7 +60,9 @@ def create_features(
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         df = load_raw_data(Path(file_path))
-        logger.info(f"{df['store_item'].unique()}")
+        logger.info(
+            f"Store Cluster: {df['store_cluster'].unique()}, SKU Cluster: {df["item_cluster"]}"
+        )
 
         out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
         create_cyc_features(
