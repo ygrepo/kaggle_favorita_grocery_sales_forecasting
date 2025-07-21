@@ -1248,10 +1248,13 @@ def reorder_data(data, row_labels, col_labels):
     return data[np.ix_(row_order, col_order)], row_order, col_order
 
 
-def save_parquets_by_cluster_pairs(df: pd.DataFrame,
-                                   to_parquet: bool = True,
-                                   to_csv: bool = False,
-                                   output_dir: Path) -> None:
+def save_parquets_by_cluster_pairs(
+    df: pd.DataFrame,
+    output_dir: Path,
+    *,
+    to_parquet: bool = True,
+    to_csv: bool = False,
+) -> None:
     """
     Splits the dataframe by (store_cluster, item_cluster) pairs and saves each to a compressed Parquet file.
 
@@ -1277,8 +1280,8 @@ def save_parquets_by_cluster_pairs(df: pd.DataFrame,
                 output_dir / filename,
                 index=False,
                 compression="snappy",
-            engine="pyarrow",  # optional, but preferred for speed and compatibility
-        )
+                engine="pyarrow",  # optional, but preferred for speed and compatibility
+            )
         if to_csv:
             filename = f"cluster_{store_cluster}_{item_cluster}.csv"
             group.to_csv(output_dir / filename, index=False)
