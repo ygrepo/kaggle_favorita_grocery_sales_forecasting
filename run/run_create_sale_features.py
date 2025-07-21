@@ -80,17 +80,14 @@ def create_features(
         logger.info(f"Processing {file_path.name}")
         df = load_raw_data(Path(file_path))
 
+        out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
         df = create_sale_features(
             df,
             window_size=window_size,
             calendar_aligned=True,
-            fn=file_path,
+            fn=out_path,
             log_level=log_level,
         )
-
-        out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
-        df.to_parquet(out_path, index=False)
-        logger.info(f"Saved: {out_path}")
 
 
 def parse_args():
