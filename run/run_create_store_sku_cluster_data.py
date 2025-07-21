@@ -54,7 +54,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
-    output_fn = Path(args.output_fn).resolve()
+    output_dir = Path(args.output_dir).resolve()
     log_dir = Path(args.log_dir).resolve()
 
     try:
@@ -69,9 +69,10 @@ if __name__ == "__main__":
             data_fn=data_fn,
             log_level=args.log_level,
         )
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         save_parquets_by_cluster_pairs(
             df,
-            output_fn=output_fn,
+            output_dir=output_dir,
             log_level=args.log_level,
         )
         logger.info(f"Finished create_store_sku_cluster_data")
