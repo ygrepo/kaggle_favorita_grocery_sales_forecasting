@@ -28,7 +28,7 @@ cd "$PROJECT_ROOT"
 # WINDOW_SIZE=1
 
 DATA_FN="${PROJECT_ROOT}/output/data/clustered_data/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/clustered_data/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/cyc_data/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -48,6 +48,7 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
+mkdir -p "$OUTPUT_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
