@@ -68,9 +68,13 @@ def create_sale_cyc_features(
         logger.info(f"Processing {file_path.name}")
         store_cluster = file_path.stem.split("_")[0]
         item_cluster = file_path.stem.split("_")[1]
-        sales_fn = sales_dir / f"sale_features_{store_cluster}_{item_cluster}.parquet"
-        cyc_fn = cyc_dir / f"cyc_features_{store_cluster}_{item_cluster}.parquet"
-        output_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
+        sales_fn = (
+            sales_dir / f"sale_features_cluster_{store_cluster}_{item_cluster}.parquet"
+        )
+        cyc_fn = (
+            cyc_dir / f"cyc_features_cluster_{store_cluster}_{item_cluster}.parquet"
+        )
+        output_path = output_dir / f"{prefix}_{store_cluster}_{item_cluster}.parquet"
         logger.info(f"Sales fn: {sales_fn}")
         logger.info(f"Cyc fn: {cyc_fn}")
         logger.info(f"Output path: {output_path}")
