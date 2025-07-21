@@ -67,7 +67,7 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 # Run the training script
 set +e  # Disable exit on error to handle the error message
 echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
-echo "  Sales dir: ${SALES_DIR}" | tee -a "$LOG_FILE"
+echo "  Sales dir: ${SALE_DIR}" | tee -a "$LOG_FILE"
 echo "  Cyc dir: ${CYC_DIR}" | tee -a "$LOG_FILE"
 echo "  Output dir: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
@@ -75,7 +75,7 @@ echo "  Add y targets: ${ADD_Y_TARGETS}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_create_features.py" \
-  --sales_dir "$SALES_DIR" \
+  --sales_dir "$SALE_DIR" \
   --cyc_dir "$CYC_DIR" \
   --output_dir "$OUTPUT_DIR" \
   --log_dir "$LOG_DIR" \
