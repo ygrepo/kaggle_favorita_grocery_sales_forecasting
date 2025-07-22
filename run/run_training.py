@@ -65,7 +65,7 @@ def train(
     if dataloader_dir.is_file() and dataloader_dir.suffix == ".parquet":
         files = [dataloader_dir]
     else:
-        files = list(dataloader_dir.glob("*.parquet"))
+        files = list(dataloader_dir.glob("*_train_meta.parquet"))
 
     logger.info(
         f"Processing sales (store cluster, SKU cluster) {len(files)} Parquet files..."
@@ -86,8 +86,8 @@ def train(
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         parts = file_path.stem.split("_")
-        store_cluster = int(parts[-2])
-        item_cluster = int(parts[-1])
+        store_cluster = int(parts[0])
+        item_cluster = int(parts[1])
         logger.info(f"Store cluster: {store_cluster}")
         logger.info(f"Item cluster: {item_cluster}")
         # train_all_models_for_cluster_pair(
