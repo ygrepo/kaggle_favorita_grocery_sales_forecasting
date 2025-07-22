@@ -911,12 +911,14 @@ def train_per_cluster_pair(
     logger.info(f"GPU available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         accelerator = "gpu"
+        devices = 1
     else:
         accelerator = "cpu"
+        devices = 1
 
     trainer = pl.Trainer(
         accelerator=accelerator,
-        # devices=devices,
+        devices=devices,
         # strategy="single_device",  # ✅ explicitly safe for 1-GPU training
         deterministic=True,
         max_epochs=epochs,
