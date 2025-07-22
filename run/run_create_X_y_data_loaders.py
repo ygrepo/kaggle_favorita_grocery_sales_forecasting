@@ -57,16 +57,16 @@ def create_data_loaders(
         (_, x_sales_features, x_cyclical_features, x_feature_cols, _, _, _, _, _) = (
             build_feature_and_label_cols(window_size=window_size)
         )
-        generate_loaders(
-            df,
-            x_feature_cols,
-            x_sales_features,
-            x_cyclical_features,
-            window_size=window_size,
-            log_level=log_level,
-            scalers_dir=scalers_dir,
-            dataloader_dir=dataloader_dir,
-        )
+        # generate_loaders(
+        #     df,
+        #     x_feature_cols,
+        #     x_sales_features,
+        #     x_cyclical_features,
+        #     window_size=window_size,
+        #     log_level=log_level,
+        #     scalers_dir=scalers_dir,
+        #     dataloader_dir=dataloader_dir,
+        # )
         logger.info("Data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
 
 
@@ -138,13 +138,13 @@ def main():
         logger.info(f"  Window size: {window_size}")
         logger.info(f"  Log dir: {log_dir}")
 
-        # create_data_loaders(
-        #     window_size=window_size,
-        #     data_dir=data_dir,
-        #     scalers_dir=scalers_dir,
-        #     dataloader_dir=dataloader_dir,
-        #     log_level=args.log_level,
-        # )
+        create_data_loaders(
+            window_size=window_size,
+            data_dir=data_dir,
+            scalers_dir=scalers_dir,
+            dataloader_dir=dataloader_dir,
+            log_level=args.log_level,
+        )
 
     except Exception as e:
         logger.error(f"Error creating data loaders: {e}")
