@@ -246,7 +246,9 @@ def generate_loaders(
 
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
     num_samples = len(df)
-    logger.info(f"Preparing global loaders from {num_samples} samples")
+    logger.info(
+        f"Preparing loaders from {num_samples} samples: {store_cluster}, {item_cluster}"
+    )
 
     all_cols = meta_cols + x_feature_cols
     X_train_raw, y_train_raw, W_train_raw = [], [], []
@@ -300,13 +302,11 @@ def generate_loaders(
     del y_val_raw
     W_val = np.vstack(W_val_raw)
     del W_val_raw
-    gc.collect()
 
     meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
     del meta_train_raw
     meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
     del meta_val_raw
-    gc.collect()
 
     combined_cols = meta_cols + x_feature_cols
     col_x_index_map = {col: idx for idx, col in enumerate(combined_cols)}
