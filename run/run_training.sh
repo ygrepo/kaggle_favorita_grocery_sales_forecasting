@@ -19,7 +19,7 @@ HISTORY_FN="${HISTORY_DIR}/${TIMESTAMP}_training_history.csv"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 WINDOW_SIZE=1
-EPOCHS=5
+EPOCHS=1
 LOG_LEVEL="DEBUG"
 
 # Parse command line arguments
@@ -42,7 +42,7 @@ mkdir -p "$LOG_DIR"
 touch "$HISTORY_FN"
 
 # Optional: add header if needed
-#echo "model_name,store_cluster,item_cluster,train_mav,val_mav,best_train_avg_mae,best_val_avg_mae,best_train_avg_rmse,best_val_avg_rmse,best_train_avg_mae_percent_mav,best_val_avg_mae_percent_mav" > "$HISTORY_FN"
+echo "model_name,store_cluster,item_cluster,train_mav,val_mav,best_train_avg_mae,best_val_avg_mae,best_train_avg_rmse,best_val_avg_rmse,best_train_avg_mae_percent_mav,best_val_avg_mae_percent_mav" > "$HISTORY_FN"
 
 # Set up log file with timestamp
 LOG_FILE="${LOG_DIR}/training_${TIMESTAMP}.log"
