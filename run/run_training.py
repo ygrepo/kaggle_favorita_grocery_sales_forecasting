@@ -164,8 +164,6 @@ def main():
     # Parse command line arguments
     args = parse_args()
 
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
     # Convert paths to absolute paths relative to project root
     project_root = Path(__file__).parent.parent
     dataloader_dir = (project_root / args.dataloader_dir).resolve()

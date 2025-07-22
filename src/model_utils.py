@@ -857,10 +857,12 @@ def train_per_cluster_pair(
 
     # Load pre-filtered dataloaders
     train_loader = torch.load(
-        dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
+        dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
+        weights_only=False,
     )
     val_loader = torch.load(
-        dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+        dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
+        weights_only=False,
     )
 
     inferred_batch_size = train_loader.batch_size or 32
