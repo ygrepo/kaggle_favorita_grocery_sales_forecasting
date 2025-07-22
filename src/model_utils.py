@@ -39,6 +39,55 @@ def _to_float(x):
     return float(x)
 
 
+def safe_append_to_history(history_fn: Path, new_history: pd.DataFrame) -> pd.DataFrame:
+    """
+    Safely appends new training history to an existing CSV file if it exists and is valid.
+
+    Parameters
+    ----------
+    history_fn : Path
+        Path to the CSV history file.
+    new_history : pd.DataFrame
+        New training history to append.
+
+    Returns
+    -------
+    pd.DataFrame
+        The combined history DataFrame.
+    """
+    if (
+        history_fn is not None
+        and history_fn.exists()
+        and os.path.getsize(history_fn) > 0
+    ):
+        try:
+            previous_history = pd.read_csv(history_fn)
+
+            # Check for valid structure
+            if not previous_history.empty and set(new_history.columns).issubset(
+                previous_history.columns
+            ):
+                combined_history = pd.concat(
+                    [previous_history, new_history], ignore_index=True
+                )
+            else:
+                combined_history = new_history
+
+        except Exception as e:
+            print(
+                f"Warning: Failed to read or validate {history_fn}. Using new history only. Reason: {e}"
+            )
+            combined_history = new_history
+    else:
+        combined_history = new_history
+
+    # Save combined history
+    if history_fn is not None:
+        combined_history.to_csv(history_fn, index=False)
+
+    return combined_history
+
+
 class StoreItemDataset(Dataset):
     def __init__(self, df, store_item_id, feature_cols, target_col, weight_col):
         self.store_df = df[df["store_item"] == store_item_id].reset_index(drop=True)
@@ -880,15 +929,7 @@ def train_per_cluster_pair(
         ]
     )
 
-    # Load existing history CSV if provided and exists
-    if history_fn is not None and history_fn.exists():
-        previous_history = pd.read_csv(history_fn)
-        history = pd.concat([previous_history, history], ignore_index=True)
-
-    # Save updated history
-    if history_fn is not None:
-        history.to_csv(history_fn, index=False)
-
+    history = safe_append_to_history(history_fn, history)
     return history
 
 
