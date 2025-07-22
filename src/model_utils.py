@@ -11,7 +11,6 @@ from lightning.pytorch import LightningModule
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
-from datetime import datetime
 import pickle
 from pathlib import Path
 from enum import Enum
@@ -19,8 +18,8 @@ from tqdm import tqdm
 
 import re
 from collections import defaultdict
+from typing import Optional
 
-import gc
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -116,39 +115,14 @@ class ResidualMLP(nn.Module):
         return self.out_proj(out)  # raw outputs, unbounded
 
 
-# class ResidualMLP(nn.Module):
-#     def __init__(self, input_dim, hidden=128, depth=3, dropout=0.2):
-#         super().__init__()
-#         layers = []
-#         for _ in range(depth):
-#             layers += [
-#                 nn.Linear(input_dim, hidden),
-#                 nn.BatchNorm1d(hidden),
-#                 nn.ReLU(),
-#                 nn.Dropout(dropout),
-#                 nn.Linear(hidden, input_dim),
-#             ]
-#         self.blocks = nn.ModuleList(layers)
-
-#     def forward(self, x):
-#         out = x
-#         for i in range(0, len(self.blocks), 5):
-#             h = self.blocks[i + 0](out)
-#             h = self.blocks[i + 1](h)
-#             h = self.blocks[i + 2](h)
-#             h = self.blocks[i + 3](h)
-#             h = self.blocks[i + 4](h)
-#             out = out + h  # residual add (not in‑place)
-#         # Sigmoid ensures values lie in ``(0, 1)``.  Clamp for numerical
-#         # stability and to guarantee the upper bound used in tests.
-#         return torch.clamp(torch.sigmoid(out), 1e-6, 1.0)
-
-
 # Enum for model types
 class ModelType(Enum):
     SHALLOW_NN = "ShallowNN"
     TWO_LAYER_NN = "TwoLayerNN"
     RESIDUAL_MLP = "ResidualMLP"
+
+
+MODEL_TYPES = list(ModelType)
 
 
 # Model Factory Function
@@ -392,40 +366,24 @@ def generate_loaders(
     logger.info(f"Weight shape: {w_shape}")
 
     # Save loaders and scalers
-    torch.save(
-        train_loader,
-        dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
-    )
-    torch.save(
-        val_loader,
-        dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
-    )
-
-    pickle.dump(
-        x_sales_scaler,
-        open(
-            scalers_dir / f"{store_cluster}_{item_cluster}_x_sales_scaler.pkl",
-            "wb",
-        ),
-    )
-    pickle.dump(
-        x_cyc_scaler,
-        open(
-            scalers_dir / f"{store_cluster}_{item_cluster}_x_cyc_scaler.pkl",
-            "wb",
-        ),
-    )
-
-    meta_train_df.to_parquet(
-        dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
-    )
-    meta_val_df.to_parquet(
-        dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
-    )
-
-    logger.info(
-        f"Saved loaders: {len(train_loader)} train, {len(val_loader)} val samples"
-    )
+    fn = dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
+    torch.save(train_loader, fn)
+    logger.info(f"Saved train_loader: {fn}")
+    fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+    torch.save(val_loader, fn)
+    logger.info(f"Saved val_loader: {fn}")
+    fn = scalers_dir / f"{store_cluster}_{item_cluster}_x_sales_scaler.pkl"
+    pickle.dump(x_sales_scaler, open(fn, "wb"))
+    logger.info(f"Saved x_sales_scaler: {fn}")
+    fn = scalers_dir / f"{store_cluster}_{item_cluster}_x_cyc_scaler.pkl"
+    pickle.dump(x_cyc_scaler, open(fn, "wb"))
+    logger.info(f"Saved x_cyc_scaler: {fn}")
+    fn = dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+    meta_train_df.to_parquet(fn)
+    logger.info(f"Saved meta_train_df: {fn}")
+    fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+    meta_val_df.to_parquet(fn)
+    logger.info(f"Saved meta_val_df: {fn}")
     return train_loader, val_loader
 
 
@@ -790,14 +748,71 @@ def train(
     return history
 
 
-def train_per_cluster_pair(
-    today_str: str,
+def train_all_models_for_cluster_pair(
+    model_types: List[ModelType],
     model_dir: Path,
-    model_type: ModelType,
-    data_dir: Path,
+    dataloader_dir: Path,
     label_cols: list[str],
     y_log_features: list[str],
+    store_cluster: int,
+    item_cluster: int,
     *,
+    history_fn: Optional[Path] = None,
+    lr: float = 3e-4,
+    epochs: int = 5,
+    seed: int = 2025,
+    num_workers: int = 15,
+    enable_progress_bar: bool = True,
+    train_logger: bool = False,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    """
+    Train multiple model types for a single (store_cluster, item_cluster) pair,
+    appending results to the same history CSV.
+    """
+    all_histories = []
+
+    for model_type in model_types:
+        try:
+            history = train_per_cluster_pair(
+                model_dir=model_dir,
+                model_type=model_type,
+                dataloader_dir=dataloader_dir,
+                label_cols=label_cols,
+                y_log_features=y_log_features,
+                store_cluster=store_cluster,
+                item_cluster=item_cluster,
+                history_fn=history_fn,
+                lr=lr,
+                epochs=epochs,
+                seed=seed,
+                num_workers=num_workers,
+                enable_progress_bar=enable_progress_bar,
+                train_logger=train_logger,
+                log_level=log_level,
+            )
+            all_histories.append(history)
+        except Exception as e:
+            logger.exception(
+                f"Failed to train {model_type.value} for ({store_cluster}, {item_cluster}): {e}"
+            )
+
+    if all_histories:
+        return pd.concat(all_histories, ignore_index=True)
+    else:
+        return pd.DataFrame()
+
+
+def train_per_cluster_pair(
+    model_dir: Path,
+    model_type: ModelType,
+    dataloader_dir: Path,
+    label_cols: list[str],
+    y_log_features: list[str],
+    store_cluster: int,
+    item_cluster: int,
+    *,
+    history_fn: Optional[Path] = None,
     lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
@@ -808,135 +823,266 @@ def train_per_cluster_pair(
 ) -> pd.DataFrame:
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     pl.seed_everything(seed)
+    logger.info(
+        f"Training model: {model_type.value} for cluster pair: ({store_cluster}, {item_cluster})"
+    )
 
     # Setup paths
-    dataloader_dir = data_dir / "dataloader"
     checkpoints_dir = model_dir / "checkpoints"
     history_dir = model_dir / "history"
     for d in [checkpoints_dir, history_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    # Load the full metadata to split by cluster pair
-    meta_df = pd.read_parquet(dataloader_dir / f"{today_str}_train_meta.parquet")
-    unique_pairs = meta_df[["store_cluster", "item_cluster"]].drop_duplicates()
+    # Load pre-saved metadata
+    train_meta_fn = (
+        dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+    )
+    val_meta_fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+    meta_df = pd.read_parquet(train_meta_fn)
+    val_meta_df = pd.read_parquet(val_meta_fn)
 
-    full_train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
-    full_val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
-    inferred_batch_size = full_train_loader.batch_size or 32  # fallback if somehow None
+    if meta_df.empty or val_meta_df.empty:
+        logger.warning(
+            f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
+        )
+        return pd.DataFrame()
+
+    # Load pre-filtered dataloaders
+    train_loader = torch.load(
+        dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
+    )
+    val_loader = torch.load(
+        dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+    )
+
+    inferred_batch_size = train_loader.batch_size or 32
     logger.info(f"Inferred batch size: {inferred_batch_size}")
 
-    all_histories = []
+    train_dataset = train_loader.dataset
+    val_dataset = val_loader.dataset
 
-    for _, pair in unique_pairs.iterrows():
-        store_cluster, item_cluster = pair["store_cluster"], pair["item_cluster"]
-        logger.info(f"Training model for pair: ({store_cluster}, {item_cluster})")
-
-        # Filter indices for this pair
-        train_indices = meta_df.query(
-            "store_cluster == @store_cluster and item_cluster == @item_cluster"
-        ).index.tolist()
-
-        # Filter data from loaders
-        X_train = full_train_loader.dataset.tensors[0][train_indices]
-        y_train = full_train_loader.dataset.tensors[1][train_indices]
-        w_train = full_train_loader.dataset.tensors[2][train_indices]
-
-        val_meta_df = pd.read_parquet(dataloader_dir / f"{today_str}_val_meta.parquet")
-        val_indices = val_meta_df.query(
-            "store_cluster == @store_cluster and item_cluster == @item_cluster"
-        ).index.tolist()
-        X_val = full_val_loader.dataset.tensors[0][val_indices]
-        y_val = full_val_loader.dataset.tensors[1][val_indices]
-        w_val = full_val_loader.dataset.tensors[2][val_indices]
-
-        if len(train_indices) == 0 or len(val_indices) == 0:
-            logger.warning(
-                f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
-            )
-            continue
-
-        # Prepare loaders
-        train_loader = DataLoader(
-            TensorDataset(X_train, y_train, w_train),
-            batch_size=inferred_batch_size,
-            num_workers=num_workers,
-            persistent_workers=True,
-        )
-        val_loader = DataLoader(
-            TensorDataset(X_val, y_val, w_val),
-            batch_size=inferred_batch_size,
-            num_workers=num_workers,
-            persistent_workers=True,
-        )
-
-        # Infer dimensions
-        input_dim = X_train.shape[1]
-        output_dim = len(label_cols)
-
-        # Compute MAVs
-        col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-        y_log_idx = [col_y_index_map[c] for c in y_log_features]
-        train_mav = compute_mav(train_loader, y_log_idx)
-        logger.info(f"{store_cluster}_{item_cluster} Train MAV: {train_mav}")
-        val_mav = compute_mav(val_loader, y_log_idx)
-        logger.info(f"{store_cluster}_{item_cluster} Val MAV: {val_mav}")
-
-        model_name = (
-            f"{today_str}_model_sc{store_cluster}_ic{item_cluster}_{model_type.value}"
-        )
-        base_model = model_factory(model_type, input_dim, output_dim)
-        base_model.apply(init_weights)
-
-        lightning_model = LightningWrapper(
-            base_model,
-            model_name=model_name,
-            lr=lr,
-            sales_idx=y_log_idx,
-            train_mav=train_mav,
-            val_mav=val_mav,
-        )
-
-        checkpoint_callback = ModelCheckpoint(
-            monitor="best_train_avg_mae",
-            mode="min",
-            save_top_k=1,
-            dirpath=checkpoints_dir,
-            filename=model_name,
-        )
-
-        trainer = pl.Trainer(
-            deterministic=True,
-            max_epochs=epochs,
-            logger=train_logger,
-            enable_progress_bar=enable_progress_bar,
-            callbacks=[checkpoint_callback],
-            accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        )
-
-        trainer.fit(lightning_model, train_loader, val_loader)
-
-        # Log history for this model
-        history = {
-            "model_name": model_name,
-            "store_cluster": store_cluster,
-            "item_cluster": item_cluster,
-            "train_mav": train_mav,
-            "val_mav": val_mav,
-            "best_train_avg_mae": lightning_model.best_train_avg_mae,
-            "best_val_avg_mae": lightning_model.best_val_avg_mae,
-            "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
-            "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
-            "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
-            "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
-        }
-        all_histories.append(history)
-
-    # Save full history
-    history_df = pd.DataFrame(all_histories)
-    history_df.to_excel(
-        history_dir / f"{today_str}_history_all_pairs.xlsx", index=False
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=inferred_batch_size,
+        num_workers=num_workers,
+        persistent_workers=True,
     )
-    return history_df
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=inferred_batch_size,
+        num_workers=num_workers,
+        persistent_workers=True,
+    )
+
+    input_dim = train_dataset.tensors[0].shape[1]
+    output_dim = len(label_cols)
+
+    col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+    y_log_idx = [col_y_index_map[c] for c in y_log_features]
+    train_mav = compute_mav(train_loader, y_log_idx)
+    val_mav = compute_mav(val_loader, y_log_idx)
+
+    model_name = f"model_{store_cluster}_{item_cluster}_{model_type.value}"
+    base_model = model_factory(model_type, input_dim, output_dim)
+    base_model.apply(init_weights)
+
+    lightning_model = LightningWrapper(
+        base_model,
+        model_name=model_name,
+        lr=lr,
+        sales_idx=y_log_idx,
+        train_mav=train_mav,
+        val_mav=val_mav,
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor="best_train_avg_mae",
+        mode="min",
+        save_top_k=1,
+        dirpath=checkpoints_dir,
+        filename=model_name,
+    )
+
+    trainer = pl.Trainer(
+        deterministic=True,
+        max_epochs=epochs,
+        logger=train_logger,
+        enable_progress_bar=enable_progress_bar,
+        callbacks=[checkpoint_callback],
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+    )
+
+    trainer.fit(lightning_model, train_loader, val_loader)
+
+    # Collect history
+    history = pd.DataFrame(
+        [
+            {
+                "model_name": model_name,
+                "store_cluster": store_cluster,
+                "item_cluster": item_cluster,
+                "train_mav": train_mav,
+                "val_mav": val_mav,
+                "best_train_avg_mae": lightning_model.best_train_avg_mae,
+                "best_val_avg_mae": lightning_model.best_val_avg_mae,
+                "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+                "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
+                "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+                "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+            }
+        ]
+    )
+
+    # Load existing history CSV if provided and exists
+    if history_fn is not None and history_fn.exists():
+        previous_history = pd.read_csv(history_fn)
+        history = pd.concat([previous_history, history], ignore_index=True)
+
+    # Save updated history
+    if history_fn is not None:
+        history.to_csv(history_fn, index=False)
+
+    return history
+
+
+# def train_per_cluster_pair(
+#     model_dir: Path,
+#     model_type: ModelType,
+#     dataloader_dir: Path,
+#     label_cols: list[str],
+#     y_log_features: list[str],
+#     store_cluster: int,
+#     item_cluster: int,
+#     *,
+#     lr: float = 3e-4,
+#     epochs: int = 5,
+#     seed: int = 2025,
+#     num_workers: int = 15,
+#     enable_progress_bar: bool = True,
+#     train_logger: bool = False,
+#     log_level: str = "INFO",
+# ) -> pd.DataFrame:
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     pl.seed_everything(seed)
+#     logger.info(f"Training model for cluster pair: ({store_cluster}, {item_cluster})")
+
+#     # Setup paths
+#     # dataloader_dir = data_dir / "dataloader"
+#     checkpoints_dir = model_dir / "checkpoints"
+#     history_dir = model_dir / "history"
+#     for d in [checkpoints_dir, history_dir]:
+#         d.mkdir(parents=True, exist_ok=True)
+
+#     # Load pre-saved metadata (optional, for logging or inspection)
+#     train_meta_fn = (
+#         dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+#     )
+#     val_meta_fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+
+#     meta_df = pd.read_parquet(train_meta_fn)
+#     val_meta_df = pd.read_parquet(val_meta_fn)
+
+#     # Skip if metadata is empty
+#     if meta_df.empty or val_meta_df.empty:
+#         logger.warning(
+#             f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
+#         )
+#         return pd.DataFrame()  # or `continue` if inside a loop
+
+#     # Load pre-filtered dataloaders
+#     train_loader_path = (
+#         dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
+#     )
+#     val_loader_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+
+#     train_loader = torch.load(train_loader_path)
+#     val_loader = torch.load(val_loader_path)
+
+#     inferred_batch_size = train_loader.batch_size or 32
+#     logger.info(f"Inferred batch size: {inferred_batch_size}")
+
+#     # Re-wrap into new loaders if necessary (e.g., to control num_workers)
+#     train_dataset = train_loader.dataset
+#     val_dataset = val_loader.dataset
+
+#     train_loader = DataLoader(
+#         train_dataset,
+#         batch_size=inferred_batch_size,
+#         num_workers=num_workers,
+#         persistent_workers=True,
+#     )
+#     val_loader = DataLoader(
+#         val_dataset,
+#         batch_size=inferred_batch_size,
+#         num_workers=num_workers,
+#         persistent_workers=True,
+#     )
+
+#     # Infer dimensions
+#     input_dim = train_dataset.tensors[0].shape[1]
+#     output_dim = len(label_cols)
+
+#     # Compute MAVs
+#     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+#     y_log_idx = [col_y_index_map[c] for c in y_log_features]
+#     train_mav = compute_mav(train_loader, y_log_idx)
+#     logger.info(f"{store_cluster}_{item_cluster} Train MAV: {train_mav}")
+#     val_mav = compute_mav(val_loader, y_log_idx)
+#     logger.info(f"{store_cluster}_{item_cluster} Val MAV: {val_mav}")
+
+#     model_name = f"model_{store_cluster}_{item_cluster}_{model_type.value}"
+#     base_model = model_factory(model_type, input_dim, output_dim)
+#     base_model.apply(init_weights)
+
+#     lightning_model = LightningWrapper(
+#         base_model,
+#         model_name=model_name,
+#         lr=lr,
+#         sales_idx=y_log_idx,
+#         train_mav=train_mav,
+#         val_mav=val_mav,
+#     )
+
+#     checkpoint_callback = ModelCheckpoint(
+#         monitor="best_train_avg_mae",
+#         mode="min",
+#         save_top_k=1,
+#         dirpath=checkpoints_dir,
+#         filename=model_name,
+#     )
+
+#     trainer = pl.Trainer(
+#         deterministic=True,
+#         max_epochs=epochs,
+#         logger=train_logger,
+#         enable_progress_bar=enable_progress_bar,
+#         callbacks=[checkpoint_callback],
+#         accelerator="gpu" if torch.cuda.is_available() else "cpu",
+#     )
+
+#     trainer.fit(lightning_model, train_loader, val_loader)
+
+#     # Log history for this model
+#     history = {
+#         "model_name": model_name,
+#         "store_cluster": store_cluster,
+#         "item_cluster": item_cluster,
+#         "train_mav": train_mav,
+#         "val_mav": val_mav,
+#         "best_train_avg_mae": lightning_model.best_train_avg_mae,
+#         "best_val_avg_mae": lightning_model.best_val_avg_mae,
+#         "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+#         "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
+#         "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+#         "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+#     }
+#     all_histories.append(history)
+
+#     # Save full history
+#     history_df = pd.DataFrame(all_histories)
+#     fn = history_dir / f"{store_cluster}_{item_cluster}_xls"
+#     history_df.to_excel(fn, index=False)
+#     return history_df
 
 
 def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
