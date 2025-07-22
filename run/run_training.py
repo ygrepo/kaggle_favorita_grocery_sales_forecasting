@@ -189,7 +189,7 @@ def main():
         else:
             logger.info("✅ CUDA is available. Proceeding with GPU training.")
 
-    mp.set_sharing_strategy('file_system')
+        mp.set_sharing_strategy("file_system")
 
         # Train model
         train(
