@@ -918,8 +918,7 @@ def train_per_cluster_pair(
 
     trainer = pl.Trainer(
         accelerator=accelerator,
-        devices=devices,
-        # strategy="single_device",  # ✅ explicitly safe for 1-GPU training
+        #devices=devices,
         deterministic=True,
         max_epochs=epochs,
         logger=train_logger,
