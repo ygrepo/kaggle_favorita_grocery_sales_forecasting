@@ -10,6 +10,8 @@ This script handles the complete training pipeline including:
 - Logging
 """
 
+import os
+
 import sys
 import logging
 import argparse
@@ -161,6 +163,8 @@ def main():
     """Main training function."""
     # Parse command line arguments
     args = parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # Convert paths to absolute paths relative to project root
     project_root = Path(__file__).parent.parent
