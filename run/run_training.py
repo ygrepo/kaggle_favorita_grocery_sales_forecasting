@@ -90,18 +90,18 @@ def train(
         item_cluster = int(parts[1])
         logger.info(f"Store cluster: {store_cluster}")
         logger.info(f"Item cluster: {item_cluster}")
-        # train_all_models_for_cluster_pair(
-        #     model_types=MODEL_TYPES,
-        #     epochs=epochs,
-        #     model_dir=model_dir,
-        #     dataloader_dir=dataloader_dir,
-        #     label_cols=label_cols,
-        #     y_log_features=y_log_features,
-        #     store_cluster=store_cluster,
-        #     item_cluster=item_cluster,
-        #     history_fn=history_fn,
-        #     log_level=log_level,
-        # )
+        train_all_models_for_cluster_pair(
+            model_types=MODEL_TYPES,
+            epochs=epochs,
+            model_dir=model_dir,
+            dataloader_dir=dataloader_dir,
+            label_cols=label_cols,
+            y_log_features=y_log_features,
+            store_cluster=store_cluster,
+            item_cluster=item_cluster,
+            history_fn=history_fn,
+            log_level=log_level,
+        )
 
 
 def parse_args():
