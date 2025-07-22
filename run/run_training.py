@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import torch
+import gc
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -180,6 +181,14 @@ def main():
         logger.info(f"  History fn: {history_fn}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        print(f"Device count: {torch.cuda.device_count()}")
+        print(f"Current device: {torch.cuda.current_device()}")
+        print(f"Device name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+
         # Train model
         train(
             dataloader_dir=dataloader_dir,
