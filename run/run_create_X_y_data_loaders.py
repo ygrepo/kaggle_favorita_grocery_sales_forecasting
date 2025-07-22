@@ -71,15 +71,16 @@ def create_data_loaders(
             x_feature_cols,
             x_to_log_features,
             x_log_features,
-            x_sales_features,
             x_cyclical_features,
             label_cols,
             y_log_features,
             y_to_log_features,
-            window_size=window_size,
-            log_level=log_level,
             scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,
+            store_cluster=store_cluster,
+            item_cluster=item_cluster,
+            window_size=window_size,
+            log_level=log_level,
         )
         logger.info("Data loaded")
 
