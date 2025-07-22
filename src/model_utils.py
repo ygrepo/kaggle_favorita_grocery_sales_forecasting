@@ -231,14 +231,13 @@ def generate_loaders(
     y_to_log_features: List[str],
     scalers_dir: Path,
     dataloader_dir: Path,
-    prefix: str,
     store_cluster: int,
     item_cluster: int,
     *,
     weight_col: str = "weight",
     window_size: int = 16,
     batch_size: int = 32,
-    num_workers: int = 5,
+    num_workers: int = 15,
     log_level: str = "INFO",
 ):
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))

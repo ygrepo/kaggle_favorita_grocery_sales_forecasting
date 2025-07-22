@@ -54,20 +54,34 @@ def create_data_loaders(
             log_level=log_level,
         )
         logger.info(f"Data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
-        (_, x_sales_features, x_cyclical_features, x_feature_cols, _, _, _, _, _) = (
-            build_feature_and_label_cols(window_size=window_size)
+        (
+            meta_cols,
+            x_sales_features,
+            x_cyclical_features,
+            x_feature_cols,
+            x_to_log_features,
+            x_log_features,
+            label_cols,
+            y_log_features,
+            y_to_log_features,
+        ) = build_feature_and_label_cols(window_size=window_size)
+        generate_loaders(
+            df,
+            meta_cols,
+            x_feature_cols,
+            x_to_log_features,
+            x_log_features,
+            x_sales_features,
+            x_cyclical_features,
+            label_cols,
+            y_log_features,
+            y_to_log_features,
+            window_size=window_size,
+            log_level=log_level,
+            scalers_dir=scalers_dir,
+            dataloader_dir=dataloader_dir,
         )
-        # generate_loaders(
-        #     df,
-        #     x_feature_cols,
-        #     x_sales_features,
-        #     x_cyclical_features,
-        #     window_size=window_size,
-        #     log_level=log_level,
-        #     scalers_dir=scalers_dir,
-        #     dataloader_dir=dataloader_dir,
-        # )
-        logger.info("Data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
+        logger.info("Data loaded")
 
 
 def parse_args():
