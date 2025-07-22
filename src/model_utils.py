@@ -914,7 +914,6 @@ def train_per_cluster_pair(
         enable_progress_bar=enable_progress_bar,
         callbacks=[checkpoint_callback],
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=[0],  # or [1]
     )
 
     trainer.fit(lightning_model, train_loader, val_loader)

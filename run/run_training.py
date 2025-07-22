@@ -185,16 +185,9 @@ def main():
         gc.collect()
 
         if not torch.cuda.is_available():
-            logger.warning("⚠️ CUDA not available. Training will not use GPU.")
+            logger.warning("⚠️ CUDA not available. Training will run on CPU.")
         else:
-            try:
-                device_id = torch.cuda.current_device()
-                logger.info(f"✅ Current CUDA device: {device_id}")
-                logger.info(f"GPU Name: {torch.cuda.get_device_name(device_id)}")
-            except RuntimeError as e:
-                logger.warning("❌ CUDA error occurred while querying device:")
-                logger.warning(e)
-                logger.warning("Will try to fall back to CPU.")
+            logger.info("✅ CUDA is available. Proceeding with GPU training.")
 
         # Train model
         train(
