@@ -63,6 +63,9 @@ echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
+nvidia-smi | tee -a "$LOG_FILE"
+
+
 python "${SCRIPT_DIR}/run_training.py" \
   --dataloader_dir "$DATALOADER_DIR" \
   --model_dir "$MODEL_DIR" \
