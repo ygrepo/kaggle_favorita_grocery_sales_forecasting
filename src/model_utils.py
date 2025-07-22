@@ -155,33 +155,6 @@ class TwoLayerNN(nn.Module):
         return self.net(x)
 
 
-# class TwoLayerNN(nn.Module):
-#     def __init__(self, input_dim, output_dim=3, h1=128, h2=64, dropout=0.2):
-#         """
-#         Two-layer feedforward NN for log-transformed targets.
-#         All outputs are unbounded real values, no final activation.
-#         """
-#         super().__init__()
-
-#         dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-
-#         self.net = nn.Sequential(
-#             nn.Linear(input_dim, h1),
-#             nn.BatchNorm1d(h1),
-#             nn.LeakyReLU(),
-#             dropout_layer,
-#             nn.Linear(h1, h2),
-#             nn.BatchNorm1d(h2),
-#             nn.LeakyReLU(),
-#             dropout_layer,
-#             nn.Linear(h2, output_dim),
-#             nn.Identity(),  # no activation
-#         )
-
-#     def forward(self, x):
-#         return self.net(x)
-
-
 class ResidualMLP(nn.Module):
     def __init__(self, input_dim, output_dim=3, hidden=128, depth=3, dropout=0.2):
         super().__init__()
@@ -203,29 +176,6 @@ class ResidualMLP(nn.Module):
         for block in self.blocks:
             out = out + block(out)
         return self.out_proj(out)
-
-
-# class ResidualMLP(nn.Module):
-#     def __init__(self, input_dim, output_dim=3, hidden=128, depth=3, dropout=0.2):
-#         super().__init__()
-#         self.blocks = nn.ModuleList()
-#         for _ in range(depth):
-#             self.blocks.append(
-#                 nn.Sequential(
-#                     nn.Linear(input_dim, hidden),
-#                     nn.BatchNorm1d(hidden),
-#                     nn.ReLU(),
-#                     nn.Dropout(dropout),
-#                     nn.Linear(hidden, input_dim),  # residual matches input_dim
-#                 )
-#             )
-#         self.out_proj = nn.Linear(input_dim, output_dim)  # final projection
-
-#     def forward(self, x):
-#         out = x
-#         for block in self.blocks:
-#             out = out + block(out)  # residual connection
-#         return self.out_proj(out)  # raw outputs, unbounded
 
 
 # Enum for model types

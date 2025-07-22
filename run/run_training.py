@@ -15,13 +15,11 @@ import os
 import sys
 import logging
 import argparse
-from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-import numpy as np
 import torch
 import gc
+import torch.multiprocessing as mp
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -190,6 +188,8 @@ def main():
             logger.warning("⚠️ CUDA not available. Training will run on CPU.")
         else:
             logger.info("✅ CUDA is available. Proceeding with GPU training.")
+
+    mp.set_sharing_strategy('file_system')
 
         # Train model
         train(
