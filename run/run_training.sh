@@ -3,6 +3,8 @@
 # Set strict error handling
 set -euo pipefail
 
+export CUDA_VISIBLE_DEVICES=0
+
 # Get the directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
