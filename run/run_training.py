@@ -98,6 +98,7 @@ def train(
             model_types=MODEL_TYPES,
             epochs=epochs,
             num_workers=num_workers,
+            persistent_workers=num_workers > 0,
             model_dir=model_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,

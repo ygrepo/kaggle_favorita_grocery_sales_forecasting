@@ -751,6 +751,7 @@ def train_all_models_for_cluster_pair(
     epochs: int = 5,
     seed: int = 2025,
     num_workers: int = 15,
+    persistent_workers: bool = True,
     enable_progress_bar: bool = True,
     train_logger: bool = False,
     log_level: str = "INFO",
@@ -806,6 +807,7 @@ def train_per_cluster_pair(
     epochs: int = 5,
     seed: int = 2025,
     num_workers: int = 15,
+    persistent_workers: bool = True,
     enable_progress_bar: bool = True,
     train_logger: bool = False,
     log_level: str = "INFO",
@@ -856,13 +858,13 @@ def train_per_cluster_pair(
         train_dataset,
         batch_size=inferred_batch_size,
         num_workers=num_workers,
-        persistent_workers=True,
+        persistent_workers=persistent_workers,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=inferred_batch_size,
         num_workers=num_workers,
-        persistent_workers=True,
+        persistent_workers=persistent_workers,
     )
 
     input_dim = train_dataset.tensors[0].shape[1]
