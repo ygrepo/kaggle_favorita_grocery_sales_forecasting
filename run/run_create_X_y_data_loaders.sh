@@ -10,12 +10,12 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-DATA_DIR="${PROJECT_ROOT}/output/data"
-
-DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
+#DATA_DIR="${PROJECT_ROOT}/output/data"
+#DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
 #DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
-SCALERS_DIR="${DATA_DIR}/scalers"
-DATALOADER_DIR="${DATA_DIR}/dataloader"
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader/"
+SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -24,7 +24,7 @@ WINDOW_SIZE=1
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data_fn) DATA_FN="$2"; shift 2 ;;
+    --data_dir) DATA_DIR="$2"; shift 2 ;;
     --scalers_dir) SCALERS_DIR="$2"; shift 2 ;;
     --dataloader_dir) DATALOADER_DIR="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
@@ -36,6 +36,8 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
+mkdir -p "$SCALERS_DIR"
+mkdir -p "$DATALOADER_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -50,14 +52,14 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 # Run the script
 set +e  # Disable exit on error to handle the error message
 echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
-echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
+echo "  Data dir: ${DATA_DIR}" | tee -a "$LOG_FILE"
 echo "  Scalers dir: ${SCALERS_DIR}" | tee -a "$LOG_FILE"
 echo "  Dataloader dir: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_create_X_y_data_loaders.py" \
-  --data_fn "$DATA_FN" \
+  --data_dir "$DATA_DIR" \
   --scalers_dir "$SCALERS_DIR" \
   --dataloader_dir "$DATALOADER_DIR" \
   --log_dir "$LOG_DIR" \

@@ -231,6 +231,9 @@ def generate_loaders(
     y_to_log_features: List[str],
     scalers_dir: Path,
     dataloader_dir: Path,
+    prefix: str,
+    store_cluster: int,
+    item_cluster: int,
     *,
     weight_col: str = "weight",
     window_size: int = 16,
@@ -239,7 +242,6 @@ def generate_loaders(
     log_level: str = "INFO",
 ):
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    today_str = datetime.today().strftime("%Y-%m-%d")
     scalers_dir.mkdir(parents=True, exist_ok=True)
     dataloader_dir.mkdir(parents=True, exist_ok=True)
 
@@ -391,17 +393,36 @@ def generate_loaders(
     logger.info(f"Weight shape: {w_shape}")
 
     # Save loaders and scalers
-    suffix = today_str
-    torch.save(train_loader, dataloader_dir / f"{suffix}_train_loader.pt")
-    torch.save(val_loader, dataloader_dir / f"{suffix}_val_loader.pt")
+    torch.save(
+        train_loader,
+        dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
+    )
+    torch.save(
+        val_loader,
+        dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
+    )
 
     pickle.dump(
-        x_sales_scaler, open(scalers_dir / f"{suffix}_x_sales_scaler.pkl", "wb")
+        x_sales_scaler,
+        open(
+            scalers_dir / f"{store_cluster}_{item_cluster}_x_sales_scaler.pkl",
+            "wb",
+        ),
     )
-    pickle.dump(x_cyc_scaler, open(scalers_dir / f"{suffix}_x_cyc_scaler.pkl", "wb"))
+    pickle.dump(
+        x_cyc_scaler,
+        open(
+            scalers_dir / f"{store_cluster}_{item_cluster}_x_cyc_scaler.pkl",
+            "wb",
+        ),
+    )
 
-    meta_train_df.to_parquet(dataloader_dir / f"{suffix}_train_meta.parquet")
-    meta_val_df.to_parquet(dataloader_dir / f"{suffix}_val_meta.parquet")
+    meta_train_df.to_parquet(
+        dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+    )
+    meta_val_df.to_parquet(
+        dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+    )
 
     logger.info(
         f"Saved loaders: {len(train_loader)} train, {len(val_loader)} val samples"
