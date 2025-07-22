@@ -908,13 +908,14 @@ def train_per_cluster_pair(
     )
 
     trainer = pl.Trainer(
-        strategy="auto",  # or "ddp_spawn" for CPU training
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        strategy="single_device",  # ✅ explicitly safe for 1-GPU training
         deterministic=True,
         max_epochs=epochs,
         logger=train_logger,
         enable_progress_bar=enable_progress_bar,
         callbacks=[checkpoint_callback],
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
     )
 
     trainer.fit(lightning_model, train_loader, val_loader)
