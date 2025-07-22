@@ -889,17 +889,21 @@ def train_per_cluster_pair(
     lightning_model = LightningWrapper(
         base_model,
         model_name=model_name,
-        lr=lr,
+        store_cluster=store_cluster,
+        item_cluster=item_cluster,
         sales_idx=y_log_idx,
         train_mav=train_mav,
         val_mav=val_mav,
+        lr=lr,
+        log_level=log_level,
     )
-
+    checkpoint_dir = checkpoints_dir / model_name
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = ModelCheckpoint(
         monitor="best_train_avg_mae",
         mode="min",
         save_top_k=1,
-        dirpath=checkpoints_dir,
+        dirpath=checkpoint_dir,
         filename=model_name,
     )
 
