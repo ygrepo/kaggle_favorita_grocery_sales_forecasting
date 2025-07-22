@@ -224,6 +224,7 @@ def main():
             history_fn=history_fn,
             log_level=args.log_level,
             num_workers=num_workers,
+            persistent_workers=persistent_workers,
         )
         logger.info("Training completed successfully!")
 
