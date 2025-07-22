@@ -908,6 +908,7 @@ def train_per_cluster_pair(
     )
 
     trainer = pl.Trainer(
+        strategy="default",  # or "ddp_spawn" for CPU training
         deterministic=True,
         max_epochs=epochs,
         logger=train_logger,
