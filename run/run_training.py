@@ -38,6 +38,7 @@ def train(
     model_dir: Path,
     window_size: int,
     epochs: int,
+    num_workers: int,
     history_fn: Path,
     log_level: str,
 ):
@@ -57,6 +58,8 @@ def train(
         Path to save training history.
     epochs : int
         Number of training epochs.
+    num_workers : int
+        Number of subprocesses to use for data loading.
     log_level : str
         Logging level (e.g., "INFO", "DEBUG").
     """
@@ -94,6 +97,7 @@ def train(
         train_all_models_for_cluster_pair(
             model_types=MODEL_TYPES,
             epochs=epochs,
+            num_workers=num_workers,
             model_dir=model_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,
@@ -121,6 +125,12 @@ def parse_args():
         type=str,
         default="./output/models",
         help="Directory to save trained models (relative to project root)",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=0,
+        help="Number of subprocesses to use for data loading",
     )
     parser.add_argument(
         "--history_fn",
@@ -168,6 +178,7 @@ def main():
     model_dir = (project_root / args.model_dir).resolve()
     history_fn = (project_root / args.history_fn).resolve()
     log_dir = (project_root / args.log_dir).resolve()
+    num_workers = args.num_workers
 
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
@@ -181,6 +192,7 @@ def main():
         logger.info(f"  History fn: {history_fn}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
+        logger.info(f"  Num workers: {num_workers}")
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -189,7 +201,7 @@ def main():
         else:
             logger.info("✅ CUDA is available. Proceeding with GPU training.")
 
-        mp.set_sharing_strategy("file_system")
+        m  # p.set_sharing_strategy("file_system")
 
         # Train model
         train(
@@ -199,6 +211,7 @@ def main():
             epochs=args.epochs,
             history_fn=history_fn,
             log_level=args.log_level,
+            num_workers=num_workers,
         )
         logger.info("Training completed successfully!")
 
