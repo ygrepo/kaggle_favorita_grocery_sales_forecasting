@@ -39,6 +39,10 @@ done
 mkdir -p "$MODEL_DIR"
 mkdir -p "$HISTORY_DIR"
 mkdir -p "$LOG_DIR"
+touch "$HISTORY_FN"
+
+# Optional: add header if needed
+#echo "model_name,store_cluster,item_cluster,train_mav,val_mav,best_train_avg_mae,best_val_avg_mae,best_train_avg_rmse,best_val_avg_rmse,best_train_avg_mae_percent_mav,best_val_avg_mae_percent_mav" > "$HISTORY_FN"
 
 # Set up log file with timestamp
 LOG_FILE="${LOG_DIR}/training_${TIMESTAMP}.log"
