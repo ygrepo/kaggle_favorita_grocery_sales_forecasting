@@ -25,6 +25,14 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def get_accelerator():
+    if torch.cuda.is_available():
+        accelerator = "gpu"
+    else:
+        accelerator = "cpu"
+    return accelerator
+
+
 class StoreItemDataset(Dataset):
     def __init__(self, df, store_item_id, feature_cols, target_col, weight_col):
         self.store_df = df[df["store_item"] == store_item_id].reset_index(drop=True)
@@ -908,17 +916,8 @@ def train_per_cluster_pair(
     )
 
     logger.info("Training model...")
-    logger.info(f"GPU available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        accelerator = "gpu"
-        devices = 1
-    else:
-        accelerator = "cpu"
-        devices = 1
-
     trainer = pl.Trainer(
-        accelerator=accelerator,
-        #devices=devices,
+        accelerator=get_accelerator(),
         deterministic=True,
         max_epochs=epochs,
         logger=train_logger,

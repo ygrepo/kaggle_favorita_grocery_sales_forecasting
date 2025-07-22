@@ -164,7 +164,7 @@ def main():
     # Parse command line arguments
     args = parse_args()
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # Convert paths to absolute paths relative to project root
     project_root = Path(__file__).parent.parent
@@ -205,7 +205,7 @@ def main():
         logger.info("Training completed successfully!")
 
     except Exception as e:
-        logger.exception("Training failed")
+        logger.exception(f"Training failed: {e}")
         sys.exit(1)
 
 
