@@ -30,7 +30,7 @@ from src.model_utils import (
     train_all_models_for_cluster_pair,
 )
 from src.data_utils import build_feature_and_label_cols
-from src.utils import setup_logging
+from src.utils import setup_logging, str2bool
 
 
 def train(
@@ -39,6 +39,7 @@ def train(
     window_size: int,
     epochs: int,
     num_workers: int,
+    persistent_workers: bool,
     history_fn: Path,
     log_level: str,
 ):
@@ -60,6 +61,8 @@ def train(
         Number of training epochs.
     num_workers : int
         Number of subprocesses to use for data loading.
+    persistent_workers : bool
+        Whether to use persistent workers for data loading.s
     log_level : str
         Logging level (e.g., "INFO", "DEBUG").
     """
@@ -98,7 +101,7 @@ def train(
             model_types=MODEL_TYPES,
             epochs=epochs,
             num_workers=num_workers,
-            persistent_workers=num_workers > 0,
+            persistent_workers=persistent_workers,
             model_dir=model_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,
@@ -132,6 +135,12 @@ def parse_args():
         type=int,
         default=0,
         help="Number of subprocesses to use for data loading",
+    )
+    parser.add_argument(
+        "--persistent_workers",
+        type=str2bool,
+        default=True,
+        help="Whether to use persistent workers for data loading",
     )
     parser.add_argument(
         "--history_fn",
@@ -180,6 +189,7 @@ def main():
     history_fn = (project_root / args.history_fn).resolve()
     log_dir = (project_root / args.log_dir).resolve()
     num_workers = args.num_workers
+    persistent_workers = args.persistent_workers
 
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
@@ -194,6 +204,7 @@ def main():
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
         logger.info(f"  Num workers: {num_workers}")
+        logger.info(f"  Persistent workers: {persistent_workers}")
         torch.cuda.empty_cache()
         gc.collect()
 

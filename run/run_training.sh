@@ -21,6 +21,7 @@ LOG_DIR="${PROJECT_ROOT}/output/logs"
 WINDOW_SIZE=1
 EPOCHS=1
 NUM_WORKERS=0
+PERSISTENT_WORKERS=false
 LOG_LEVEL="DEBUG"
 
 # Parse command line arguments
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
     --epochs) EPOCHS="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
+    --persistent_workers) PERSISTENT_WORKERS="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -62,6 +64,7 @@ echo "  History fn: ${HISTORY_FN}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
 echo "  Num workers: ${NUM_WORKERS}" | tee -a "$LOG_FILE"
+echo "  Persistent workers: ${PERSISTENT_WORKERS}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 nvidia-smi | tee -a "$LOG_FILE"
@@ -74,6 +77,7 @@ python "${SCRIPT_DIR}/run_training.py" \
   --window_size "$WINDOW_SIZE" \
   --epochs "$EPOCHS" \
   --num_workers "$NUM_WORKERS" \
+  --persistent_workers "$PERSISTENT_WORKERS" \
   --log_level "$LOG_LEVEL" 2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script
