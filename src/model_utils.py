@@ -190,19 +190,42 @@ class ResidualMLP(nn.Module):
             self.blocks.append(
                 nn.Sequential(
                     nn.Linear(input_dim, hidden),
-                    nn.BatchNorm1d(hidden),
+                    nn.LayerNorm(hidden),  # changed from BatchNorm1d
                     nn.ReLU(),
                     nn.Dropout(dropout),
-                    nn.Linear(hidden, input_dim),  # residual matches input_dim
+                    nn.Linear(hidden, input_dim),  # residual connection
                 )
             )
-        self.out_proj = nn.Linear(input_dim, output_dim)  # final projection
+        self.out_proj = nn.Linear(input_dim, output_dim)
 
     def forward(self, x):
         out = x
         for block in self.blocks:
-            out = out + block(out)  # residual connection
-        return self.out_proj(out)  # raw outputs, unbounded
+            out = out + block(out)
+        return self.out_proj(out)
+
+
+# class ResidualMLP(nn.Module):
+#     def __init__(self, input_dim, output_dim=3, hidden=128, depth=3, dropout=0.2):
+#         super().__init__()
+#         self.blocks = nn.ModuleList()
+#         for _ in range(depth):
+#             self.blocks.append(
+#                 nn.Sequential(
+#                     nn.Linear(input_dim, hidden),
+#                     nn.BatchNorm1d(hidden),
+#                     nn.ReLU(),
+#                     nn.Dropout(dropout),
+#                     nn.Linear(hidden, input_dim),  # residual matches input_dim
+#                 )
+#             )
+#         self.out_proj = nn.Linear(input_dim, output_dim)  # final projection
+
+#     def forward(self, x):
+#         out = x
+#         for block in self.blocks:
+#             out = out + block(out)  # residual connection
+#         return self.out_proj(out)  # raw outputs, unbounded
 
 
 # Enum for model types
