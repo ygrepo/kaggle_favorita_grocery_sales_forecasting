@@ -33,6 +33,12 @@ def get_accelerator():
     return accelerator
 
 
+def _to_float(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().item()
+    return float(x)
+
+
 class StoreItemDataset(Dataset):
     def __init__(self, df, store_item_id, feature_cols, target_col, weight_col):
         self.store_df = df[df["store_item"] == store_item_id].reset_index(drop=True)
@@ -464,9 +470,9 @@ class LightningWrapper(pl.LightningModule):
         self.train_rmse_history.append(train_rmse)
 
         # Log the batch loss, MAE, and accuracy
-        self.log("train_loss", loss, prog_bar=True)
-        self.log("train_mae", train_mae, prog_bar=True)
-        self.log("train_rmse", train_rmse, prog_bar=True)
+        self.log("train_loss", loss, prog_bar=True, sync_dist=True)
+        self.log("train_mae", train_mae, prog_bar=True, sync_dist=True)
+        self.log("train_rmse", train_rmse, prog_bar=True, sync_dist=True)
 
         return loss
 
@@ -498,9 +504,9 @@ class LightningWrapper(pl.LightningModule):
         self.val_rmse_history.append(val_rmse)
 
         # Log the batch loss, MAE, and accuracy
-        self.log("val_loss", loss, prog_bar=True)
-        self.log("val_mae", val_mae, prog_bar=True)
-        self.log("val_rmse", val_rmse, prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True, sync_dist=True)
+        self.log("val_mae", val_mae, prog_bar=True, sync_dist=True)
+        self.log("val_rmse", val_rmse, prog_bar=True, sync_dist=True)
 
         return loss
 
@@ -510,23 +516,30 @@ class LightningWrapper(pl.LightningModule):
     def on_train_epoch_end(self) -> None:
         logger.info(f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!")
         # Compute average metrics for the epoch
-        avg_train_mae = np.mean([t.cpu().item() for t in self.train_mae_history])
-        avg_train_rmse = np.mean([t.cpu().item() for t in self.train_rmse_history])
+        avg_train_mae = np.mean([_to_float(t) for t in self.train_mae_history])
+        avg_train_rmse = np.mean([_to_float(t) for t in self.train_rmse_history])
         avg_train_percent_mav = avg_train_mae / self.train_mav * 100
 
-        avg_val_mae = np.mean([t.cpu().item() for t in self.val_mae_history])
-        avg_val_rmse = np.mean([t.cpu().item() for t in self.val_rmse_history])
+        avg_val_mae = np.mean([_to_float(t) for t in self.val_mae_history])
+        avg_val_rmse = np.mean([_to_float(t) for t in self.val_rmse_history])
         avg_val_percent_mav = avg_val_mae / self.val_mav * 100
 
         # Log epoch-level metrics
-        self.log("avg_train_mav", self.train_mav, prog_bar=False)
-        self.log("avg_train_mae", avg_train_mae, prog_bar=False)
-        self.log("avg_train_percent_mav", avg_train_percent_mav, prog_bar=False)
-        self.log("avg_train_rmse", avg_train_rmse, prog_bar=False)
-        self.log("avg_val_mav", self.val_mav, prog_bar=False)
-        self.log("avg_val_mae", avg_val_mae, prog_bar=False)
-        self.log("avg_val_percent_mav", avg_val_percent_mav, prog_bar=False)
-        self.log("avg_val_rmse", avg_val_rmse, prog_bar=False)
+        self.log("avg_train_mav", self.train_mav, prog_bar=False, sync_dist=True)
+        self.log("avg_train_mae", avg_train_mae, prog_bar=False, sync_dist=True)
+        self.log(
+            "avg_train_percent_mav",
+            avg_train_percent_mav,
+            prog_bar=False,
+            sync_dist=True,
+        )
+        self.log("avg_train_rmse", avg_train_rmse, prog_bar=False, sync_dist=True)
+        self.log("avg_val_mav", self.val_mav, prog_bar=False, sync_dist=True)
+        self.log("avg_val_mae", avg_val_mae, prog_bar=False, sync_dist=True)
+        self.log(
+            "avg_val_percent_mav", avg_val_percent_mav, prog_bar=False, sync_dist=True
+        )
+        self.log("avg_val_rmse", avg_val_rmse, prog_bar=False, sync_dist=True)
 
         # Reset accumulators for the next epoch
         self.train_mae_history = []
@@ -545,20 +558,36 @@ class LightningWrapper(pl.LightningModule):
         if avg_val_rmse < self.best_val_avg_rmse:
             self.best_val_avg_rmse = avg_val_rmse
 
-        self.log("best_train_avg_mae", self.best_train_avg_mae, prog_bar=False)
+        self.log(
+            "best_train_avg_mae",
+            self.best_train_avg_mae,
+            prog_bar=False,
+            sync_dist=True,
+        )
         self.log(
             "best_train_avg_mae_percent_mav",
             self.best_train_avg_mae_percent_mav,
             prog_bar=False,
+            sync_dist=True,
         )
-        self.log("best_train_avg_rmse", self.best_train_avg_rmse, prog_bar=False)
-        self.log("best_val_avg_mae", self.best_val_avg_mae, prog_bar=False)
+        self.log(
+            "best_train_avg_rmse",
+            self.best_train_avg_rmse,
+            prog_bar=False,
+            sync_dist=True,
+        )
+        self.log(
+            "best_val_avg_mae", self.best_val_avg_mae, prog_bar=False, sync_dist=True
+        )
         self.log(
             "best_val_avg_mae_percent_mav",
             self.best_val_avg_mae_percent_mav,
             prog_bar=False,
+            sync_dist=True,
         )
-        self.log("best_val_avg_rmse", self.best_val_avg_rmse, prog_bar=False)
+        self.log(
+            "best_val_avg_rmse", self.best_val_avg_rmse, prog_bar=False, sync_dist=True
+        )
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
