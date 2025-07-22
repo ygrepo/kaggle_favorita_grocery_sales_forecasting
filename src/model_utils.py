@@ -908,9 +908,7 @@ def train_per_cluster_pair(
     )
 
     logger.info("Training model...")
-    logger.info("GPU available: ", torch.cuda.is_available())
-    logger.info(f"Using {torch.cuda.get_device_name(0)}")
-    logger.info(f"Using {torch.cuda.get_device_name(1)}")
+    logger.info(f"GPU available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         accelerator = "gpu"
     else:
