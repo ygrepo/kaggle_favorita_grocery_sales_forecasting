@@ -650,102 +650,102 @@ def compute_mae(
     return batch_mae
 
 
-def train(
-    today_str: str,
-    model_dir: Path,
-    model_type: ModelType,
-    data_dir: Path,
-    label_cols: list[str],
-    y_log_features: list[str],
-    *,
-    lr: float = 3e-4,
-    epochs: int = 5,
-    seed: int = 2025,
-    enable_progress_bar: bool = True,
-    train_logger: bool = False,
-    log_level: str = "INFO",
-) -> pd.DataFrame:
-    # Set seed
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    pl.seed_everything(seed)
+# def train(
+#     today_str: str,
+#     model_dir: Path,
+#     model_type: ModelType,
+#     data_dir: Path,
+#     label_cols: list[str],
+#     y_log_features: list[str],
+#     *,
+#     lr: float = 3e-4,
+#     epochs: int = 5,
+#     seed: int = 2025,
+#     enable_progress_bar: bool = True,
+#     train_logger: bool = False,
+#     log_level: str = "INFO",
+# ) -> pd.DataFrame:
+#     # Set seed
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     pl.seed_everything(seed)
 
-    # Setup paths
-    dataloader_dir = data_dir / "dataloader"
-    checkpoints_dir = model_dir / "checkpoints"
-    history_dir = model_dir / "history"
-    for d in [checkpoints_dir, history_dir]:
-        d.mkdir(parents=True, exist_ok=True)
+#     # Setup paths
+#     dataloader_dir = data_dir / "dataloader"
+#     checkpoints_dir = model_dir / "checkpoints"
+#     history_dir = model_dir / "history"
+#     for d in [checkpoints_dir, history_dir]:
+#         d.mkdir(parents=True, exist_ok=True)
 
-    # Load loaders and scalers
-    train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
-    val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
+#     # Load loaders and scalers
+#     train_loader = torch.load(dataloader_dir / f"{today_str}_train_loader.pt")
+#     val_loader = torch.load(dataloader_dir / f"{today_str}_val_loader.pt")
 
-    # Infer input/output dimensions
-    input_dim = next(iter(train_loader))[0].shape[1]
+#     # Infer input/output dimensions
+#     input_dim = next(iter(train_loader))[0].shape[1]
 
-    # Compute scaling stats
-    col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-    y_log_idx = [col_y_index_map[c] for c in y_log_features]
+#     # Compute scaling stats
+#     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+#     y_log_idx = [col_y_index_map[c] for c in y_log_features]
 
-    train_mav = compute_mav(train_loader, y_log_idx)
-    val_mav = compute_mav(val_loader, y_log_idx)
+#     train_mav = compute_mav(train_loader, y_log_idx)
+#     val_mav = compute_mav(val_loader, y_log_idx)
 
-    # Build model
-    model_name = f"{today_str}_model_global_{model_type.value}"
-    output_dim = len(label_cols)
-    base_model = model_factory(model_type, input_dim, output_dim)
-    base_model.apply(init_weights)
-    logger.info(f"Built model: {base_model}, epochs={epochs}, lr={lr}")
+#     # Build model
+#     model_name = f"{today_str}_model_global_{model_type.value}"
+#     output_dim = len(label_cols)
+#     base_model = model_factory(model_type, input_dim, output_dim)
+#     base_model.apply(init_weights)
+#     logger.info(f"Built model: {base_model}, epochs={epochs}, lr={lr}")
 
-    lightning_model = LightningWrapper(
-        base_model,
-        model_name=model_name,
-        lr=lr,
-        sales_idx=y_log_idx,
-        train_mav=train_mav,
-        val_mav=val_mav,
-    )
+#     lightning_model = LightningWrapper(
+#         base_model,
+#         model_name=model_name,
+#         lr=lr,
+#         sales_idx=y_log_idx,
+#         train_mav=train_mav,
+#         val_mav=val_mav,
+#     )
 
-    # Callbacks
-    checkpoint_callback = ModelCheckpoint(
-        monitor="best_train_avg_mae",
-        mode="min",
-        save_top_k=1,
-        dirpath=checkpoints_dir,
-        filename=model_name,
-    )
+#     # Callbacks
+#     checkpoint_callback = ModelCheckpoint(
+#         monitor="best_train_avg_mae",
+#         mode="min",
+#         save_top_k=1,
+#         dirpath=checkpoints_dir,
+#         filename=model_name,
+#     )
 
-    # Trainer
-    trainer = pl.Trainer(
-        deterministic=True,
-        max_epochs=epochs,
-        logger=train_logger,
-        enable_progress_bar=enable_progress_bar,
-        callbacks=[checkpoint_callback],
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-    )
+#     # Trainer
+#     trainer = pl.Trainer(
+#         deterministic=True,
+#         max_epochs=epochs,
+#         logger=train_logger,
+#         enable_progress_bar=enable_progress_bar,
+#         callbacks=[checkpoint_callback],
+#         accelerator="gpu" if torch.cuda.is_available() else "cpu",
+#     )
 
-    # Train
-    trainer.fit(lightning_model, train_loader, val_loader)
+#     # Train
+#     trainer.fit(lightning_model, train_loader, val_loader)
 
-    # Save training history
-    history = pd.DataFrame(
-        [
-            {
-                "model_name": model_name,
-                "train_mav": train_mav,
-                "val_mav": val_mav,
-                "best_train_avg_mae": lightning_model.best_train_avg_mae,
-                "best_val_avg_mae": lightning_model.best_val_avg_mae,
-                "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
-                "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
-                "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
-                "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
-            }
-        ]
-    )
-    history.to_excel(history_dir / f"{today_str}_history.xlsx", index=False)
-    return history
+#     # Save training history
+#     history = pd.DataFrame(
+#         [
+#             {
+#                 "model_name": model_name,
+#                 "train_mav": train_mav,
+#                 "val_mav": val_mav,
+#                 "best_train_avg_mae": lightning_model.best_train_avg_mae,
+#                 "best_val_avg_mae": lightning_model.best_val_avg_mae,
+#                 "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+#                 "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
+#                 "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+#                 "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+#             }
+#         ]
+#     )
+#     history.to_excel(history_dir / f"{today_str}_history.xlsx", index=False)
+#     return history
 
 
 def train_all_models_for_cluster_pair(
@@ -889,8 +889,8 @@ def train_per_cluster_pair(
     lightning_model = LightningWrapper(
         base_model,
         model_name=model_name,
-        store_cluster=store_cluster,
-        item_cluster=item_cluster,
+        store=store_cluster,
+        item=item_cluster,
         sales_idx=y_log_idx,
         train_mav=train_mav,
         val_mav=val_mav,
