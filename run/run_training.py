@@ -184,10 +184,17 @@ def main():
         torch.cuda.empty_cache()
         gc.collect()
 
-        print(f"CUDA available: {torch.cuda.is_available()}")
-        print(f"Device count: {torch.cuda.device_count()}")
-        print(f"Current device: {torch.cuda.current_device()}")
-        print(f"Device name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+        if not torch.cuda.is_available():
+            logger.warning("⚠️ CUDA not available. Training will not use GPU.")
+        else:
+            try:
+                device_id = torch.cuda.current_device()
+                logger.info(f"✅ Current CUDA device: {device_id}")
+                logger.info(f"GPU Name: {torch.cuda.get_device_name(device_id)}")
+            except RuntimeError as e:
+                logger.warning("❌ CUDA error occurred while querying device:")
+                logger.warning(e)
+                logger.warning("Will try to fall back to CPU.")
 
         # Train model
         train(
