@@ -7,7 +7,6 @@ import lightning.pytorch as pl
 import random
 import logging
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch import LightningModule
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
@@ -16,10 +15,11 @@ from pathlib import Path
 from enum import Enum
 from tqdm import tqdm
 
-import re
 from collections import defaultdict
+from pathlib import Path
+import re
+import logging
 from typing import Optional
-
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -196,6 +196,18 @@ def model_factory(model_type: ModelType, input_dim: int, output_dim: int) -> nn.
     elif model_type == ModelType.TWO_LAYER_NN:
         return TwoLayerNN(input_dim, output_dim)
     elif model_type == ModelType.RESIDUAL_MLP:
+        return ResidualMLP(input_dim, output_dim)
+
+
+def model_factory_from_str(
+    model_type: str, input_dim: int, output_dim: int
+) -> nn.Module:
+    """Factory function to return the correct model based on the model_type."""
+    if model_type == "ShallowNN":
+        return ShallowNN(input_dim, output_dim)
+    elif model_type == "TwoLayerNN":
+        return TwoLayerNN(input_dim, output_dim)
+    elif model_type == "ResidualMLP":
         return ResidualMLP(input_dim, output_dim)
 
 
@@ -864,7 +876,7 @@ def train_per_cluster_pair(
         val_dataset,
         batch_size=inferred_batch_size,
         num_workers=num_workers,
-        persistent_workers=persistent_workers,
+        persistent_workers=True,
     )
 
     input_dim = train_dataset.tensors[0].shape[1]
@@ -959,67 +971,87 @@ def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
 
 
 def load_scalers(
-    model_dir: str = "../output/data/", date_str: str = ""
-) -> Tuple[Dict[str, MinMaxScaler], Dict[str, MinMaxScaler]]:
-    x_scalers = {}
-    y_scalers = {}
+    scalers_dir: Path, *, log_level: str = "INFO"
+) -> Dict[Tuple[int, int], Dict[str, MinMaxScaler]]:
+    """
+    Load x_cyc and x_sales scalers per (store_cluster, item_cluster)
+    from a flat directory.
 
-    for filename in os.listdir(model_dir):
-        if date_str and not filename.startswith(f"{date_str}"):
+    Returns
+    -------
+    Dict[(int, int), {"x_cyc": MinMaxScaler, "x_sales": MinMaxScaler}]
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    scaler_dict: Dict[Tuple[int, int], Dict[str, MinMaxScaler]] = {}
+
+    for filename in os.listdir(scalers_dir):
+        if not filename.endswith("_scaler.pkl"):
             continue
 
-        full_path = os.path.join(model_dir, filename)
         parts = filename.replace(".pkl", "").split("_")
+        if len(parts) != 4:
+            logger.warning(f"Unexpected filename format: {filename}")
+            continue
 
-        if filename.startswith(f"{date_str}_x_scaler_"):
-            # Join last two parts to form store_item ID
-            store_item = f"{parts[-2]}_{parts[-1]}"
-            with open(full_path, "rb") as f:
-                x_scalers[store_item] = pickle.load(f)
+        try:
+            sc, ic = int(parts[0]), int(parts[1])
+            scaler_type = f"{parts[2]}_{parts[3]}"  # "x_cyc" or "x_sales"
+            key = (sc, ic)
 
-        elif filename.startswith(f"{date_str}_y_scaler_"):
-            store_item = f"{parts[-2]}_{parts[-1]}"
-            with open(full_path, "rb") as f:
-                y_scalers[store_item] = pickle.load(f)
+            with open(scalers_dir / filename, "rb") as f:
+                scaler = pickle.load(f)
 
-    return x_scalers, y_scalers
+            if key not in scaler_dict:
+                scaler_dict[key] = {}
+
+            scaler_dict[key][scaler_type] = scaler
+
+        except Exception as e:
+            logger.warning(f"Failed to load {filename}: {e}")
+
+    return scaler_dict
 
 
 def load_latest_models_from_checkpoints(
-    date: str,
     checkpoints_dir: Path,
-    model_type: type[LightningModule],
     input_dim: int,
     output_dim: int,
+    *,
+    log_level: str = "INFO",
 ) -> dict[tuple[int, int], LightningWrapper]:
     """
     Load the latest checkpoint per (store_cluster, item_cluster).
-    Prioritizes -v3 > -v2 > -v1 > base.
+    Prioritizes -v3 > -v2 > -v1 > base (version=0).
     """
-    # Group all matching checkpoints by (sc, ic)
-    candidates = defaultdict(list)
-    pattern = re.compile(rf"{date}_model_sc(\d+)_ic(\d+)_.*?(?:-v(\d+))?\.ckpt")
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    for ckpt_path in checkpoints_dir.glob(f"{date}_model_sc*_ic*_*.ckpt"):
-        match = pattern.match(ckpt_path.name)
+    candidates = defaultdict(list)
+    pattern = re.compile(r"model_(\d+)_(\d+)_([A-Za-z0-9]+)(?:-v(\d+))?")
+
+    for ckpt_path in checkpoints_dir.rglob("*.ckpt"):
+        match = pattern.match(ckpt_path.parent.name)  # match folder name
         if not match:
             continue
-        sc, ic, version = int(match[1]), int(match[2]), match[3]
-        version = int(version) if version is not None else 0
-        candidates[(sc, ic)].append((version, ckpt_path))
+        sc, ic = int(match[1]), int(match[2])
+        model_name = match[3]
+        version = int(match[4]) if match[4] is not None else 0
+        candidates[(sc, ic)].append((version, ckpt_path, model_name))
 
     model_dict = {}
-    for (sc, ic), versioned_paths in candidates.items():
-        # Sort versions descending, take the highest
-        best_ckpt = max(versioned_paths, key=lambda x: x[0])[1]
+    for (sc, ic), versioned_ckpts in candidates.items():
+        version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
         try:
-            model = model_factory(model_type, input_dim, output_dim)
+            model = model_factory_from_str(model_name, input_dim, output_dim)
             wrapper = LightningWrapper.load_from_checkpoint(
                 best_ckpt, model=model, strict=False
             )
             model_dict[(sc, ic)] = wrapper
         except Exception as e:
-            print(f"Skipping {best_ckpt.name}: {e}")
+            logger.warning(f"Skipping {best_ckpt.name}: {e}")
 
     return model_dict
 
