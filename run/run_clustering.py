@@ -108,7 +108,10 @@ def main():
     data_fn = Path(args.data_fn).resolve()
     item_fn = Path(args.item_fn).resolve()
     store_fn = Path(args.store_fn).resolve()
-    store_item_matrix_fn = Path(args.store_item_matrix_fn).resolve()
+    if args.store_item_matrix_fn:
+        store_item_matrix_fn = Path(args.store_item_matrix_fn).resolve()
+    else:
+        store_item_matrix_fn = None
     cluster_output_fn = Path(args.cluster_output_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
     row_range = args.row_range
