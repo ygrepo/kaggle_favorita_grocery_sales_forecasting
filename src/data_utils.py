@@ -866,6 +866,15 @@ def create_y_targets_from_shift(
 
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
 
+    logger.info(f"Feature prefixes: {feature_prefixes}")
+    y_target_dfs = add_y_targets_from_shift(df, window_size, feature_prefixes)
+    if not y_target_dfs:
+        logger.warning(
+            "No valid y targets were generated. Check your input data and window size."
+        )
+        return pd.DataFrame()  # or raise an exception or return empty DataFrame
+    df = pd.concat(y_target_dfs, ignore_index=True)
+
     df = pd.concat(
         add_y_targets_from_shift(df, window_size, feature_prefixes),
         ignore_index=True,

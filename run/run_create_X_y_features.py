@@ -81,6 +81,9 @@ def add_y_targets(
                 "item_med_logpct_change_",
             ],
         )
+        if df is None or df.empty:
+            logger.error(f"No valid y targets were generated for {file_path}")
+            continue
         logger.info(f"Saving df to {output_path}")
         if output_path.suffix == ".parquet":
             df.to_parquet(output_path)

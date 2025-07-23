@@ -1079,6 +1079,21 @@ def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
     return models
 
 
+def predict_store_item(
+    store_cluster: int,
+    item_cluster: int,
+    model_dict: dict[tuple[int, int], LightningWrapper],
+    input_feature_cols: list[str],
+    input_df: pd.DataFrame,
+    store_col: str = "store",
+    item_col: str = "item",
+    store_cluster_col: str = "store_cluster",
+    item_cluster_col: str = "item_cluster",
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+) -> pd.DataFrame:
+    pass
+
+
 def batch_predict_all_store_items(
     meta_df: pd.DataFrame,
     input_df: pd.DataFrame,
