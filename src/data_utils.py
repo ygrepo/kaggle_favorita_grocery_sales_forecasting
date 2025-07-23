@@ -841,7 +841,6 @@ def create_y_targets_from_shift(
             yield matched
 
             del group, next_group, matched, shifted, date_diff, valid
-            gc.collect()
 
     if feature_prefixes is None:
         feature_prefixes = [
@@ -874,12 +873,6 @@ def create_y_targets_from_shift(
         )
         return pd.DataFrame()  # or raise an exception or return empty DataFrame
     df = pd.concat(y_target_dfs, ignore_index=True)
-
-    df = pd.concat(
-        add_y_targets_from_shift(df, window_size, feature_prefixes),
-        ignore_index=True,
-    )
-
     df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
 
     return df
