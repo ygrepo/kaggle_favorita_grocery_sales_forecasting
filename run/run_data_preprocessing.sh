@@ -28,8 +28,8 @@ NROWS=0
 START_DATE="2014-01-01"
 END_DATE="2015-12-31"
 #END_DATE="2015-12-31"
-# ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.csv"
-# STORE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_stores.csv"
+ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.csv"
+STORE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_stores.csv"
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
@@ -51,8 +51,8 @@ while [[ $# -gt 0 ]]; do
     --item-top-n) ITEM_TOP_N="$2"; shift 2 ;;
     --item-med-n) ITEM_MED_N="$2"; shift 2 ;;
     --item-bottom-n) ITEM_BOTTOM_N="$2"; shift 2 ;;
-    # --item-fn) ITEM_FN="$2"; shift 2 ;;
-    # --store-fn) STORE_FN="$2"; shift 2 ;;
+    --item-fn) ITEM_FN="$2"; shift 2 ;;
+    --store-fn) STORE_FN="$2"; shift 2 ;;
     --group-store-column) GROUP_STORE_COLUMN="$2"; shift 2 ;;
     --group-item-column) GROUP_ITEM_COLUMN="$2"; shift 2 ;;
     --value-column) VALUE_COLUMN="$2"; shift 2 ;;
@@ -73,6 +73,8 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Weights fn: $WEIGHTS_FN" | tee -a "$LOG_FILE"
+echo "Item fn: $ITEM_FN" | tee -a "$LOG_FILE"
+echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
 #echo "Filtered data fn: $FILTERED_DATA_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
@@ -90,6 +92,8 @@ python "${SCRIPT_DIR}/run_data_preprocessing.py" \
   --data-fn "$DATA_FN" \
   --weights-fn "$WEIGHTS_FN" \
   --output-fn "$OUTPUT_FN" \
+  --item-fn "$ITEM_FN" \
+  --store-fn "$STORE_FN" \
   --log-dir "$LOG_DIR" \
   --log-level "$LOG_LEVEL" \
   --nrows "$NROWS" \

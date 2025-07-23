@@ -1,3 +1,4 @@
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import logging
@@ -86,7 +87,7 @@ def select_extreme_and_median_neighbors(
     M=0,
     m=0,
     med=0,
-    fn: str = None,
+    fn: Path = None,
 ):
     """
     Returns M highest, m lowest, and 2*med around the median total sales groups.
@@ -165,7 +166,6 @@ def select_extreme_and_median_neighbors(
 
     # Combine and remove duplicates
     result = pd.concat([bottom_m, median_neighbors, top_M])
-    # .drop_duplicates()
     if fn:
         logger.info(f"Saving selected groups to {fn}")
         result.to_csv(fn, index=True)
@@ -183,9 +183,9 @@ def prepare_data(
     item_top_n=0,
     item_med_n=0,
     item_bottom_n=0,
-    item_fn: str = None,
-    store_fn: str = None,
-    fn: str = None,
+    item_fn: Path = None,
+    store_fn: Path = None,
+    fn: Path = None,
 ):
     """
     Prepares a complete daily-level (store, item, date) grid for the top-N stores and globally top-M items.

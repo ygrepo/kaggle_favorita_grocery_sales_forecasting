@@ -638,7 +638,6 @@ def generate_sales_features(
             index=["store", "item"], columns="date", values="unit_sales"
         ).fillna(0)
         del w_df
-        gc.collect()
 
         iterator = sales.iterrows()
         if logger.level == logging.DEBUG:
@@ -721,9 +720,7 @@ def generate_sales_features(
 
     # Explicitly free up memory for each window
     del store_med, item_med
-    gc.collect()
     del sales
-    gc.collect()
 
     # ------------------------------------------------------------------
     # Final column order
@@ -753,12 +750,9 @@ def generate_sales_features(
     ]
     df = pd.DataFrame(records, columns=cols) if records else pd.DataFrame(cols)
     del records
-    gc.collect()
     # df = df.merge(id_mapping, on=["store_item"], how="left")
     # cols.insert(cols.index("start_date") + 1, "id")
     df = df[cols]
-    # del id_mapping
-    gc.collect()
     if output_path is not None:
         logger.info(f"Saving sales features to {output_path}")
         if output_path.suffix == ".parquet":

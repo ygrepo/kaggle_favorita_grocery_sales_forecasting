@@ -264,6 +264,8 @@ def main():
     data_fn = Path(args.data_fn).resolve()
     log_dir = Path(args.log_dir).resolve()
     output_fn = Path(args.output_fn).resolve()
+    item_fn = Path(args.item_fn).resolve()
+    store_fn = Path(args.store_fn).resolve()
     # filtered_data_fn = Path(args.filtered_data_fn).resolve()
     weights_fn = Path(args.weights_fn).resolve()
     # Set up logging
@@ -284,11 +286,11 @@ def main():
         logger.info(f"  Store top n: {args.store_top_n}")
         logger.info(f"  Store med n: {args.store_med_n}")
         logger.info(f"  Store bottom n: {args.store_bottom_n}")
-        logger.info(f"  Store fn: {args.store_fn}")
+        logger.info(f"  Store fn: { store_fn}")
         logger.info(f"  Item top n: {args.item_top_n}")
         logger.info(f"  Item med n: {args.item_med_n}")
         logger.info(f"  Item bottom n: {args.item_bottom_n}")
-        logger.info(f"  Item fn: {args.item_fn}")
+        logger.info(f"  Item fn: {item_fn}")
         logger.info(f"  Group store column: {args.group_store_column}")
         logger.info(f"  Group item column: {args.group_item_column}")
         logger.info(f"  Value column: {args.value_column}")
@@ -324,8 +326,8 @@ def main():
             item_top_n=args.item_top_n,
             item_med_n=args.item_med_n,
             item_bottom_n=args.item_bottom_n,
-            item_fn=args.item_fn,
-            store_fn=args.store_fn,
+            item_fn=item_fn,
+            store_fn=store_fn,
             fn=output_fn,
         )
 
