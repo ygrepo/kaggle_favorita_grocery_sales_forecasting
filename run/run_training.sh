@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 
 
 # Default configuration
-DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader2/"
 MODEL_DIR="${PROJECT_ROOT}/output/models"
 HISTORY_DIR="${PROJECT_ROOT}/output/data/histories/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
