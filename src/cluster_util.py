@@ -9,7 +9,7 @@ from sklearn.cluster import (
     HDBSCAN,
 )
 from pathlib import Path
-from src.utils import normalize_store_item_matrix
+from src.data_utils import normalize_store_item_matrix
 
 import logging
 
@@ -323,6 +323,8 @@ def cluster_data(
     freq: str = "W",
     store_item_matrix_fn: Path = None,
     cluster_output_fn: Path = None,
+    store_fn: Path = None,
+    item_fn: Path = None,
     output_fn: Path = None,
     model_class=SpectralBiclustering,
     row_range: range = range(2, 5),
@@ -389,6 +391,14 @@ def cluster_data(
     df["cluster"] = df["cluster"].astype(str)
     df["onpromotion"] = df["onpromotion"].astype(bool)
 
+    if store_fn:
+        logger.info(f"Saving store_fn to {store_fn}")
+        store_df = df[["date", "store", "store_cluster"]]
+        store_df.to_csv(store_fn, index=False)
+    if item_fn:
+        logger.info(f"Saving item_fn to {item_fn}")
+        item_df = df[["date", "item", "item_cluster"]]
+        item_df.to_csv(item_fn, index=False)
     if output_fn:
         logger.info(f"Saving df to {output_fn}")
         df.to_parquet(output_fn)

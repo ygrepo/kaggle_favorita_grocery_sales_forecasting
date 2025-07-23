@@ -34,6 +34,9 @@ DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 
 #STORE_ITEM_MATRIX_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_matrix.parquet"
 STORE_ITEM_MATRIX_FN=""
+ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_item_cluster.csv"
+STORE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_store_cluster.csv"
+
 CLUSTER_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_result.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 
@@ -49,17 +52,19 @@ LOG_LEVEL="DEBUG"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data-dir) DATA_DIR="$2"; shift 2 ;;
-    --data-fn) DATA_FN="$2"; shift 2 ;;
-    --output-data-dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    --store-item-matrix-fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
-    --cluster-output-fn) CLUSTER_OUTPUT_FN="$2"; shift 2 ;;
-    --output-fn) OUTPUT_FN="$2"; shift 2 ;;
-    --row-range) ROW_RANGE="$2"; shift 2 ;;
-    --col-range) COL_RANGE="$2"; shift 2 ;;
-    --log-dir) LOG_DIR="$2"; shift 2 ;;
-    --log-file) LOG_FILE="$2"; shift 2 ;;
-    --log-level) LOG_LEVEL="$2"; shift 2 ;;
+    --data_dir) DATA_DIR="$2"; shift 2 ;;
+    --data_fn) DATA_FN="$2"; shift 2 ;;
+    --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
+    --store_item_matrix_fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
+    --cluster_output_fn) CLUSTER_OUTPUT_FN="$2"; shift 2 ;;
+    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
+    --item_fn) ITEM_FN="$2"; shift 2 ;;
+    --store_fn) STORE_FN="$2"; shift 2 ;;
+    --row_range) ROW_RANGE="$2"; shift 2 ;;
+    --col_range) COL_RANGE="$2"; shift 2 ;;
+    --log_dir) LOG_DIR="$2"; shift 2 ;;
+    --log_file) LOG_FILE="$2"; shift 2 ;;
+    --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
 done
@@ -71,10 +76,10 @@ mkdir -p "$LOG_DIR"
 # Set up log file with timestamp
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
-echo "Data dir: $DATA_DIR" | tee -a "$LOG_FILE"
-echo "Output data dir: $OUTPUT_DATA_DIR" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
+echo "Item fn: $ITEM_FN" | tee -a "$LOG_FILE"
+echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
 echo "Cluster output fn: $CLUSTER_OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
@@ -84,24 +89,26 @@ echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_clustering.py" \
-  --data-fn "$DATA_FN" \
-  --store-item-matrix-fn "$STORE_ITEM_MATRIX_FN" \
-  --cluster-output-fn "$CLUSTER_OUTPUT_FN" \
-  --output-fn "$OUTPUT_FN" \
-  --row-range "$ROW_RANGE" \
-  --col-range "$COL_RANGE" \
-  --log-dir "$LOG_DIR" \
-  --log-level "$LOG_LEVEL" \
+  --data_fn "$DATA_FN" \
+  --store_item_matrix_fn "$STORE_ITEM_MATRIX_FN" \
+  --cluster_output_fn "$CLUSTER_OUTPUT_FN" \
+  --output_fn "$OUTPUT_FN" \
+  --item_fn "$ITEM_FN" \
+  --store_fn "$STORE_FN" \
+  --row_range "$ROW_RANGE" \
+  --col_range "$COL_RANGE" \
+  --log_dir "$LOG_DIR" \
+  --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script
-CLUSTERING_EXIT_CODE=${PIPESTATUS[0]}
+EXIT_CODE=${PIPESTATUS[0]}
 
-if [ $CLUSTERING_EXIT_CODE -eq 0 ]; then
+if [ $EXIT_CODE -eq 0 ]; then
     echo "Script completed successfully at $(date)" | tee -a "$LOG_FILE"
     exit 0
 else
-    echo "Error: Script failed with exit code $CLUSTERING_EXIT_CODE" | tee -a "$LOG_FILE"
+    echo "Error: Script failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
     echo "Check the log file for details: $LOG_FILE"
-    exit $CLUSTERING_EXIT_CODE
+    exit $EXIT_CODE
 fi

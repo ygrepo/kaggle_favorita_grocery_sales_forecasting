@@ -37,53 +37,65 @@ def parse_args():
         description="Clustering for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--data-fn",
+        "--data_fn",
         type=str,
         default="",
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
-        "--log-dir",
+        "--item_fn",
         type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
+        default="",
+        help="Path to item file (relative to project root)",
     )
     parser.add_argument(
-        "--log-level",
+        "--store_fn",
         type=str,
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level",
+        default="",
+        help="Path to store file (relative to project root)",
     )
     parser.add_argument(
-        "--store-item-matrix-fn",
+        "--store_item_matrix_fn",
         type=str,
         default="",
         help="Path to store item matrix file (relative to project root)",
     )
     parser.add_argument(
-        "--output-fn",
+        "--output_fn",
         type=str,
         default="",
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
-        "--row-range",
+        "--row_range",
         type=parse_range,
         default=range(2, 5),
         help="Range of number of rows to cluster (format: START:END)",
     )
     parser.add_argument(
-        "--col-range",
+        "--col_range",
         type=parse_range,
         default=range(2, 5),
         help="Range of number of columns to cluster (format: START:END)",
     )
     parser.add_argument(
-        "--cluster-output-fn",
+        "--cluster_output_fn",
         type=str,
         default="",
         help="Path to cluster output file (relative to project root)",
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default="../output/logs",
+        help="Directory to save script outputs (relative to project root)",
+    )
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level",
     )
     return parser.parse_args()
 
@@ -94,12 +106,13 @@ def main():
     args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
-    row_range = args.row_range
-    col_range = args.col_range
-    # store_item_matrix_fn = Path(args.store_item_matrix_fn).resolve()
-    store_item_matrix_fn = None
+    item_fn = Path(args.item_fn).resolve()
+    store_fn = Path(args.store_fn).resolve()
+    store_item_matrix_fn = Path(args.store_item_matrix_fn).resolve()
     cluster_output_fn = Path(args.cluster_output_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
+    row_range = args.row_range
+    col_range = args.col_range
 
     log_dir = Path(args.log_dir).resolve()
 
@@ -109,10 +122,10 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Row range: {row_range}")
-        logger.info(f"  Col range: {col_range}")
-        logger.info(f"  Cluster output fn: {cluster_output_fn}")
+        logger.info(f"  Item fn: {item_fn}")
+        logger.info(f"  Store fn: {store_fn}")
         logger.info(f"  Store item matrix fn: {store_item_matrix_fn}")
+        logger.info(f"  Cluster output fn: {cluster_output_fn}")
         logger.info(f"  Output fn: {output_fn}")
 
         # Load and preprocess data
@@ -121,6 +134,8 @@ def main():
             df,
             store_item_matrix_fn=store_item_matrix_fn,
             cluster_output_fn=cluster_output_fn,
+            item_fn=item_fn,
+            store_fn=store_fn,
             output_fn=output_fn,
             row_range=row_range,
             col_range=col_range,
