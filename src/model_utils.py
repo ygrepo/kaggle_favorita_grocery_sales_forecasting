@@ -306,7 +306,38 @@ def generate_loaders(
 
     num_windows = num_samples - window_size
     if num_windows <= 0:
-        raise ValueError("Not enough samples to generate windows.")
+        if num_windows <= 0:
+            logger.warning(
+                f"No valid windows for store_cluster={store_cluster}, item_cluster={item_cluster} "
+                f"(num_samples={num_samples}, window_size={window_size}) — returning empty loaders."
+            )
+
+            empty_tensor = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
+            empty_y = torch.empty((0, len(label_cols)), dtype=torch.float32)
+            empty_w = torch.empty((0, 1), dtype=torch.float32)
+
+            empty_loader = DataLoader(
+                TensorDataset(empty_tensor, empty_y, empty_w),
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=0,
+            )
+
+            empty_meta_df = pd.DataFrame(columns=meta_cols)
+            fn = dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
+            torch.save(empty_loader, fn)
+            fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+            torch.save(empty_loader, fn)
+            fn = scalers_dir / f"{store_cluster}_{item_cluster}_x_sales_scaler.pkl"
+            pickle.dump(MinMaxScaler(), open(fn, "wb"))
+            fn = scalers_dir / f"{store_cluster}_{item_cluster}_x_cyc_scaler.pkl"
+            pickle.dump(MinMaxScaler(), open(fn, "wb"))
+            fn = dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+            empty_meta_df.to_parquet(fn)
+            fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+            empty_meta_df.to_parquet(fn)
+
+            return empty_loader, empty_loader
 
     logger.info(f"Processing {num_windows} windows")
 

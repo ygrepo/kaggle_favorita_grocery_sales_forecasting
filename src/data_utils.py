@@ -8,7 +8,8 @@ import logging
 from tqdm import tqdm
 from pathlib import Path
 import gc
-
+import re
+import torch
 
 logging.basicConfig(
     level=logging.INFO,  # or DEBUG
@@ -1286,3 +1287,134 @@ def save_parquets_by_cluster_pairs(
             filename = f"cluster_{store_cluster}_{item_cluster}.csv"
             group.to_csv(output_dir / filename, index=False)
         del group
+
+
+def dataloader_to_dataframe(
+    loader_path: str,
+    x_feature_cols: List[str],
+    label_cols: List[str],
+    weight_col="weight",
+) -> pd.DataFrame:
+    """
+    Load a saved DataLoader and convert its dataset into a pandas DataFrame.
+
+    Parameters
+    ----------
+    loader_path : str
+        Path to the saved DataLoader (.pt file).
+    input_prefix : str
+        Prefix to name input columns.
+    target_col : str
+        Column name for the target values.
+    weight_col : str
+        Column name for sample weights.
+
+    Returns
+    -------
+    pd.DataFrame
+        Combined DataFrame containing inputs, target, and weight.
+    """
+    data = torch.load(loader_path)
+
+    loader = torch.utils.data.DataLoader(data.dataset, batch_size=32)
+
+    all_x, all_y, all_w = [], [], []
+
+    with torch.no_grad():
+        for xb, yb, wb in loader:
+            all_x.append(xb.cpu())
+            all_y.append(yb.cpu())
+            all_w.append(wb.cpu())
+
+    x_tensor = torch.cat(all_x, dim=0)
+    y_tensor = torch.cat(all_y, dim=0)
+    w_tensor = torch.cat(all_w, dim=0)
+
+    # Convert to numpy
+    x_np = x_tensor.numpy()
+    y_np = y_tensor.numpy()
+    w_np = w_tensor.numpy()
+
+    df = pd.DataFrame(x_np, columns=x_feature_cols)
+    df2 = pd.DataFrame(y_np, columns=label_cols)
+    df3 = pd.DataFrame(w_np, columns=[weight_col])
+    df = pd.concat([df, df2, df3], axis=1)
+
+    return df
+
+
+def combine_loaders_to_dataframe(
+    dataloader_dir: Path,
+    x_feature_cols: List[str],
+    label_cols: List[str],
+    *,
+    store_cluster: Optional[int] = None,
+    item_cluster: Optional[int] = None,
+    loader_type: str = "val",  # or "train"
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    """
+    Combines multiple loaders and meta files into a single DataFrame for a given store or item cluster.
+
+    Parameters
+    ----------
+    dataloader_dir : Path
+        Directory containing the *_loader.pt and *_meta.parquet files.
+    x_feature_cols : List[str]
+        Column names for input features.
+    label_cols : List[str]
+        Column names for label features.
+    store_cluster : Optional[int]
+        If set, only include files with this store cluster.
+    item_cluster : Optional[int]
+        If set, only include files with this item cluster.
+    loader_type : str
+        'train' or 'val' to indicate which type of loader to load.
+    log_level : str
+        Logging level for the logger.
+
+    Returns
+    -------
+    pd.DataFrame
+        Concatenated DataFrame from all matching loaders and meta files.
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    assert (store_cluster is None) != (
+        item_cluster is None
+    ), "Provide only one of store_cluster or item_cluster"
+    pattern = re.compile(r"(\d+)_(\d+)_" + re.escape(loader_type) + r"_loader\.pt")
+    logger.info(f"Loading {dataloader_dir}")
+    logger.info(f"Loader type: {loader_type}")
+    logger.info(f"Store cluster: {store_cluster}")
+    logger.info(f"Item cluster: {item_cluster}")
+    dfs = []
+    for file in dataloader_dir.glob(f"*_{loader_type}_loader.pt"):
+        match = pattern.match(file.name)
+        if not match:
+            logger.warning(f"Skipping {file.name}")
+            continue
+
+        sc, ic = int(match.group(1)), int(match.group(2))
+        logger.info(f"Loading {file.name} (store_cluster={sc}, item_cluster={ic})")
+        if store_cluster is not None and sc != store_cluster:
+            logger.warning(f"Skipping {file.name} (store_cluster={sc})")
+            continue
+        if item_cluster is not None and ic != item_cluster:
+            logger.warning(f"Skipping {file.name} (item_cluster={ic})")
+            continue
+
+        logger.info(f"Loading {file.name}")
+        df = dataloader_to_dataframe(file, x_feature_cols, label_cols, "weight")
+        meta_path = dataloader_dir / f"{sc}_{ic}_{loader_type}_meta.parquet"
+        logger.info(f"Loading {meta_path}")
+        if meta_path.exists():
+            meta_df = pd.read_parquet(meta_path)
+            df = pd.concat(
+                [meta_df.reset_index(drop=True), df.reset_index(drop=True)], axis=1
+            )
+        else:
+            logger.warning(f"Meta file not found for {file.name}")
+        dfs.append(df)
+
+    return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
