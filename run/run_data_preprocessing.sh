@@ -33,7 +33,7 @@ ITEM_BOTTOM_N=4
 NROWS=0
 START_DATE="2014-01-01"
 #END_DATE="2015-12-31"
-END_DATE="2011-01-01"
+END_DATE="2014-01-01"
 ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_January_10_store_10_item.csv"
 STORE_FN="${OUTPUT_DATA_DIR}/train_2014_January_10_store_10_item_stores.csv"
 GROUP_STORE_COLUMN="store"
@@ -43,25 +43,25 @@ VALUE_COLUMN="unit_sales"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data-dir) DATA_DIR="$2"; shift 2 ;;
-    --data-fn) DATA_FN="$2"; shift 2 ;;
-    --weights-fn) WEIGHTS_FN="$2"; shift 2 ;;
+    --data_dir) DATA_DIR="$2"; shift 2 ;;
+    --data_fn) DATA_FN="$2"; shift 2 ;;
+    --weights_fn) WEIGHTS_FN="$2"; shift 2 ;;
     #--filtered-data-fn) FILTERED_DATA_FN="$2"; shift 2 ;;
     --nrows) NROWS="$2"; shift 2 ;;
-    --start-date) START_DATE="$2"; shift 2 ;;
-    --end-date) END_DATE="$2"; shift 2 ;;
-    --output-data-dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    --output-fn) OUTPUT_FN="$2"; shift 2 ;;
-    --log-dir) LOG_DIR="$2"; shift 2 ;;
-    --log-level) LOG_LEVEL="$2"; shift 2 ;;
-    --item-top-n) ITEM_TOP_N="$2"; shift 2 ;;
-    --item-med-n) ITEM_MED_N="$2"; shift 2 ;;
-    --item-bottom-n) ITEM_BOTTOM_N="$2"; shift 2 ;;
-    --item-fn) ITEM_FN="$2"; shift 2 ;;
-    --store-fn) STORE_FN="$2"; shift 2 ;;
-    --group-store-column) GROUP_STORE_COLUMN="$2"; shift 2 ;;
-    --group-item-column) GROUP_ITEM_COLUMN="$2"; shift 2 ;;
-    --value-column) VALUE_COLUMN="$2"; shift 2 ;;
+    --start_date) START_DATE="$2"; shift 2 ;;
+    --end_date) END_DATE="$2"; shift 2 ;;
+    --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
+    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
+    --log_dir) LOG_DIR="$2"; shift 2 ;;
+    --log_level) LOG_LEVEL="$2"; shift 2 ;;
+    --item_top_n) ITEM_TOP_N="$2"; shift 2 ;;
+    --item_med_n) ITEM_MED_N="$2"; shift 2 ;;
+    --item_bottom_n) ITEM_BOTTOM_N="$2"; shift 2 ;;
+    --item_fn) ITEM_FN="$2"; shift 2 ;;
+    --store_fn) STORE_FN="$2"; shift 2 ;;
+    --group_store_column) GROUP_STORE_COLUMN="$2"; shift 2 ;;
+    --group_item_column) GROUP_ITEM_COLUMN="$2"; shift 2 ;;
+    --value_column) VALUE_COLUMN="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
 done
@@ -95,32 +95,35 @@ echo "Group Item column: $GROUP_ITEM_COLUMN" | tee -a "$LOG_FILE"
 echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/run_data_preprocessing.py" \
-  --data-fn "$DATA_FN" \
-  --weights-fn "$WEIGHTS_FN" \
-  --output-fn "$OUTPUT_FN" \
-  --item-fn "$ITEM_FN" \
-  --store-fn "$STORE_FN" \
-  --log-dir "$LOG_DIR" \
-  --log-level "$LOG_LEVEL" \
+  --data_fn "$DATA_FN" \
+  --weights_fn "$WEIGHTS_FN" \
+  --output_fn "$OUTPUT_FN" \
+  --item_fn "$ITEM_FN" \
+  --store_fn "$STORE_FN" \
+  --log_dir "$LOG_DIR" \
+  --log_level "$LOG_LEVEL" \
   --nrows "$NROWS" \
-  --start-date "$START_DATE" \
-  --end-date "$END_DATE" \
-  --item-top-n "$ITEM_TOP_N" \
-  --item-med-n "$ITEM_MED_N" \
-  --item-bottom-n "$ITEM_BOTTOM_N" \
-  --group-store-column "$GROUP_STORE_COLUMN" \
-  --group-item-column "$GROUP_ITEM_COLUMN" \
-  --value-column "$VALUE_COLUMN" \
+  --start_date "$START_DATE" \
+  --end_date "$END_DATE" \
+  --store_top_n "$STORE_TOP_N" \
+  --store_med_n "$STORE_MED_N" \
+  --store_bottom_n "$STORE_BOTTOM_N" \
+  --item_top_n "$ITEM_TOP_N" \
+  --item_med_n "$ITEM_MED_N" \
+  --item_bottom_n "$ITEM_BOTTOM_N" \
+  --group_store_column "$GROUP_STORE_COLUMN" \
+  --group_item_column "$GROUP_ITEM_COLUMN" \
+  --value_column "$VALUE_COLUMN" \
    2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script
-DATA_PREPROCESSING_EXIT_CODE=${PIPESTATUS[0]}
+EXIT_CODE=${PIPESTATUS[0]}
 
-if [ $DATA_PREPROCESSING_EXIT_CODE -eq 0 ]; then
+if [ $EXIT_CODE -eq 0 ]; then
     echo "Script completed successfully at $(date)" | tee -a "$LOG_FILE"
     exit 0
 else
-    echo "Error: Script failed with exit code $DATA_PREPROCESSING_EXIT_CODE" | tee -a "$LOG_FILE"
+    echo "Error: Script failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
     echo "Check the log file for details: $LOG_FILE"
-    exit $DATA_PREPROCESSING_EXIT_CODE
+    exit $EXIT_CODE
 fi

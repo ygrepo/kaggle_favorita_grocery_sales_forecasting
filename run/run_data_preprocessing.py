@@ -29,80 +29,80 @@ def parse_args():
         description="Data preprocessing for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--data-fn",
+        "--data_fn",
         type=str,
         default="",
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
-        "--weights-fn",
+        "--weights_fn",
         type=str,
         default="",
         help="Path to weights file (relative to project root)",
     )
     parser.add_argument(
-        "--filtered-data-fn",
+        "--filtered_data_fn",
         type=str,
         default="",
         help="Path to filtered data file (relative to project root)",
     )
     parser.add_argument(
-        "--log-dir",
+        "--log_dir",
         type=str,
         default="../output/logs",
         help="Directory to save script outputs (relative to project root)",
     )
     parser.add_argument(
-        "--log-level",
+        "--log_level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level",
     )
     parser.add_argument(
-        "--output-fn",
+        "--output_fn",
         type=str,
         default="",
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
-        "--store-top-n",
+        "--store_top_n",
         type=int,
         default=0,
         help="Number of top stores to return",
     )
     parser.add_argument(
-        "--store-med-n",
+        "--store_med_n",
         type=int,
         default=0,
         help="Number of top stores to return",
     )
     parser.add_argument(
-        "--store-bottom-n",
+        "--store_bottom_n",
         type=int,
         default=0,
         help="Number of bottom stores to return",
     )
     parser.add_argument(
-        "--store-fn",
+        "--store_fn",
         type=str,
         default="",
         help="Path to store file (relative to project root)",
     )
     parser.add_argument(
-        "--item-top-n",
+        "--item_top_n",
         type=int,
         default=0,
         help="Number of top items to return",
     )
     parser.add_argument(
-        "--item-med-n",
+        "--item_med_n",
         type=int,
         default=0,
         help="Number of top items to return",
     )
     parser.add_argument(
-        "--item-bottom-n",
+        "--item_bottom_n",
         type=int,
         default=0,
         help="Number of bottom items to return",
@@ -114,37 +114,37 @@ def parse_args():
         help="Number of rows to load",
     )
     parser.add_argument(
-        "--start-date",
+        "--start_date",
         type=str,
         default="",
         help="Date to cap on",
     )
     parser.add_argument(
-        "--end-date",
+        "--end_date",
         type=str,
         default="",
         help="Date to cap on",
     )
     parser.add_argument(
-        "--item-fn",
+        "--item_fn",
         type=str,
         default="",
         help="Path to item file (relative to project root)",
     )
     parser.add_argument(
-        "--group-store-column",
+        "--group_store_column",
         type=str,
         default="store",
         help="Column to group by",
     )
     parser.add_argument(
-        "--group-item-column",
+        "--group_item_column",
         type=str,
         default="item",
         help="Column to group by",
     )
     parser.add_argument(
-        "--value-column",
+        "--value_column",
         type=str,
         default="unit_sales",
         help="Column to calculate percentages from",
