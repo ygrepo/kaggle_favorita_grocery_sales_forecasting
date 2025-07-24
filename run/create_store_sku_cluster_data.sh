@@ -11,8 +11,8 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
-OUTPUT_DIR="${DATA_DIR}/clustered_data"
+DATA_FN="${DATA_DIR}/train_2014_January_10_store_10_item.parquet"
+OUTPUT_DIR="${DATA_DIR}/clustered_data_10_store_10_item"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
@@ -45,6 +45,7 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
+mkdir -p "$OUTPUT_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
