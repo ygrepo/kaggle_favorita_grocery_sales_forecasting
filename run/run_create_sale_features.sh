@@ -24,8 +24,8 @@ cd "$PROJECT_ROOT"
 # OUTPUT_FN="${DATA_DIR}/20150209_10_train_top_20_item_sale_cluster.csv"
 #OUTPUT_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_sale_cluster.parquet"
 
-DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_28_store_10_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_data_28_store_10_item/"
+DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_10_store_10_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_data_10_store_10_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
