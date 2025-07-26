@@ -385,7 +385,7 @@ def compute_cluster_medians(
     )
 
     item_med = (
-        DocFileTest.groupby(["item_cluster", "date"], observed=True)[value_col]
+        df.groupby(["item_cluster", "date"], observed=True)[value_col]
         .median()
         .rename("item_cluster_median")
         .reset_index()
