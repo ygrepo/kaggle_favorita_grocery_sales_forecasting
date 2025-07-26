@@ -145,10 +145,16 @@ def main():
             item_fn=item_fn,
             log_level=log_level,
         )
+        logger.info(f"Merged data with shape {df.shape}")
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        logger.info(f"Unique items: {df['item'].nunique()}")
         df = df.merge(store_med, on=["store_cluster", "date"], how="left").merge(
             item_med, on=["item_cluster", "date"], how="left"
         )
-        df.to_parquet(output_fn)
+        if output_fn.suffix == ".parquet":
+            df.to_parquet(output_fn)
+        else:
+            df.to_csv(output_fn, index=False)
         logger.info(f"Saved data to {output_fn}")
 
     except Exception as e:
