@@ -151,6 +151,8 @@ def main():
         df = df.merge(store_med, on=["store_cluster", "date"], how="left").merge(
             item_med, on=["item_cluster", "date"], how="left"
         )
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        logger.info(f"Unique items: {df['item'].nunique()}")
         if output_fn.suffix == ".parquet":
             df.to_parquet(output_fn)
         else:
