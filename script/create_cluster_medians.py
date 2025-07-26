@@ -35,6 +35,12 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
+        "--output_fn",
+        type=str,
+        default="",
+        help="Path to output file (relative to project root)",
+    )
+    parser.add_argument(
         "--item_fn",
         type=str,
         default="",
