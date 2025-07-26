@@ -55,7 +55,7 @@ echo "  Output fn: ${OUTPUT_FN}" | tee -a "$LOG_FILE"
 echo "  Log dir: ${LOG_DIR}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_features.py" \
+python "${SCRIPT_DIR}/create_cluster_medians.py" \
   --data_fn "$DATA_FN" \
   --item_fn "$ITEM_FN" \
   --store_fn "$STORE_FN" \
