@@ -762,15 +762,6 @@ def generate_cyclical_features(
 #             df.to_csv(output_path, index=False)
 #     return df
 
-import logging
-import numpy as np
-import pandas as pd
-from typing import List, Optional
-from pathlib import Path
-from tqdm import tqdm
-
-logger = logging.getLogger(__name__)
-
 
 def generate_sales_features(
     df: pd.DataFrame,
