@@ -8,9 +8,7 @@ This script handles the complete clustering pipeline including:
 """
 
 import sys
-import logging
 import argparse
-from datetime import datetime
 from pathlib import Path
 
 # Add project root to path to allow importing from src

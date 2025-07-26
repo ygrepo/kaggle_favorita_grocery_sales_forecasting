@@ -385,7 +385,7 @@ def cluster_data(
         + "_"
         + df["item_cluster"].astype(int).astype(str)
     )
-    df["store_item"] = df["store_item"].astype(str)
+    df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
     df["item_cluster"] = df["item_cluster"].astype(str)
     df["store_cluster"] = df["store_cluster"].astype(str)
     df["cluster"] = df["cluster"].astype(str)
