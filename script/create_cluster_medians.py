@@ -70,10 +70,6 @@ def parse_args():
 
 def load_data(
     data_fn: Path,
-    nrows: int = 0,
-    start_date: str = "",
-    end_date: str = "",
-    fn: Path = None,
 ) -> pd.DataFrame:
     """Load and preprocess training data.
 
@@ -87,25 +83,22 @@ def load_data(
     logger.info(f"Loading data from {data_fn}")
 
     try:
-        dtype_dict = {
-            "id": np.uint32,
-            "store_item": str,
-            "store": np.uint8,
-            "item": np.uint32,
-            "unit_sales": np.float32,
-        }
-        if nrows > 0:
+        if data_fn.suffix == ".parquet":
+            df = pd.read_parquet(data_fn)
+        else:
+            dtype_dict = {
+                "id": np.uint32,
+                "store_item": str,
+                "store": np.uint8,
+                "item": np.uint32,
+                "unit_sales": np.float32,
+            }
             logger.info(f"Loading {nrows} rows")
             df = pd.read_csv(
                 data_fn,
                 dtype=dtype_dict,
                 low_memory=False,
-                nrows=nrows,
                 parse_dates=["date"],
-            )
-        else:
-            df = pd.read_csv(
-                data_fn, dtype=dtype_dict, low_memory=False, parse_dates=["date"]
             )
         cols = ["date", "store_item", "store", "item", "unit_sales"] + [
             c
