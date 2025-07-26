@@ -840,17 +840,17 @@ def generate_sales_features(
         )
 
         # Store-item sales
-        sales = w_df.pivot_table(
-            index=["store", "item"],
-            columns="date",
-            values="unit_sales",
-            aggfunc="sum",  # or "mean" or "median"
-            fill_value=0,
-        )
+        # sales = w_df.pivot_table(
+        #     index=["store", "item"],
+        #     columns="date",
+        #     values="unit_sales",
+        #     aggfunc="sum",  # or "mean" or "median"
+        #     fill_value=0,
+        # )
 
-        # sales = w_df.pivot(
-        #     index=["store", "item"], columns="date", values="unit_sales"
-        # ).fillna(0)
+        sales = w_df.pivot(
+            index=["store", "item"], columns="date", values="unit_sales"
+        ).fillna(0)
 
         iterator = sales.iterrows()
         if logger.level == logging.DEBUG:
