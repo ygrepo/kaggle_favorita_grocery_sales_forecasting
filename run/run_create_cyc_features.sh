@@ -27,8 +27,9 @@ cd "$PROJECT_ROOT"
 # LOG_LEVEL="DEBUG"
 # WINDOW_SIZE=1
 
-DATA_FN="${PROJECT_ROOT}/output/data/clustered_data/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/cyc_data/"
+#DATA_FN="${PROJECT_ROOT}/output/data/clustered_data/"
+DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_28_store_10_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/cyc_data_28_store_10_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"

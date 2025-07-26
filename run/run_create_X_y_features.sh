@@ -21,8 +21,11 @@ cd "$PROJECT_ROOT"
 #OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.csv"
 #OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
 
-DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
+#DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data/"
+#OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
+
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_28_store_10_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_28_store_10_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
