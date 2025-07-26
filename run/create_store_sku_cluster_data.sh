@@ -11,8 +11,8 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${DATA_DIR}/train_2014_January_10_store_10_item_cluster.parquet"
-OUTPUT_DIR="${DATA_DIR}/clustered_data_10_store_10_item"
+DATA_FN="${DATA_DIR}/train_2014_January_12_store_20_item_cluster.parquet"
+OUTPUT_DIR="${DATA_DIR}/clustered_data_12_store_20_item"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
