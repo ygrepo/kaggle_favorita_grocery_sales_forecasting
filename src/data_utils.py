@@ -1,4 +1,5 @@
 from __future__ import annotations
+from doctest import DocFileTest
 
 import numpy as np
 import pandas as pd
@@ -369,35 +370,35 @@ def load_X_y_data(
 
 def compute_cluster_medians(
     df: pd.DataFrame,
-    store_med_long_fn: Path | None = None,
-    item_med_long_fn: Path | None = None,
+    store_fn: Path | None = None,
+    item_fn: Path | None = None,
     *,
     value_col: str = "unit_sales",
     log_level: str = "INFO",
 ):
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    store_med_long = (
+    store_med = (
         df.groupby(["store_cluster", "date"], observed=True)[value_col]
         .median()
         .rename("store_cluster_median")
         .reset_index()
     )
 
-    item_med_long = (
-        df.groupby(["item_cluster", "date"], observed=True)[value_col]
+    item_med = (
+        DocFileTest.groupby(["item_cluster", "date"], observed=True)[value_col]
         .median()
         .rename("item_cluster_median")
         .reset_index()
     )
 
-    if store_med_long_fn is not None:
-        logger.info(f"Saving store_med_long to {store_med_long_fn}")
-        store_med_long.to_parquet(store_med_long_fn)
-    if item_med_long_fn is not None:
-        logger.info(f"Saving item_med_long to {item_med_long_fn}")
-        item_med_long.to_parquet(item_med_long_fn)
+    if store_fn is not None:
+        logger.info(f"Saving store_med to {store_fn}")
+        store_med.to_parquet(store_fn)
+    if item_fn is not None:
+        logger.info(f"Saving item_med to {item_fn}")
+        item_med.to_parquet(item_fn)
 
-    return store_med_long, item_med_long
+    return store_med, item_med
 
 
 def generate_aligned_windows(

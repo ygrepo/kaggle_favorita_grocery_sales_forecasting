@@ -139,14 +139,14 @@ def main():
         logger.info(f"  Output fn: {output_fn}")
 
         df = load_data(data_fn)
-        (store_med_long, item_med_long) = compute_cluster_medians(
+        (store_med, item_med) = compute_cluster_medians(
             df,
-            item_fn=item_fn,
             store_fn=store_fn,
+            item_fn=item_fn,
             log_level=log_level,
         )
-        df = df.merge(store_med_long, on=["store_cluster", "date"], how="left").merge(
-            item_med_long, on=["item_cluster", "date"], how="left"
+        df = df.merge(store_med, on=["store_cluster", "date"], how="left").merge(
+            item_med, on=["item_cluster", "date"], how="left"
         )
         df.to_parquet(output_fn)
         logger.info(f"Saved data to {output_fn}")
