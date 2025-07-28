@@ -299,7 +299,6 @@ def generate_loaders(
         f"Preparing loaders from {num_samples} samples: {store_cluster}, {item_cluster}"
     )
 
-    all_cols = meta_cols + x_feature_cols
     X_train_raw, y_train_raw, W_train_raw = [], [], []
     X_val_raw, y_val_raw, W_val_raw = [], [], []
     meta_train_raw, meta_val_raw = [], []
