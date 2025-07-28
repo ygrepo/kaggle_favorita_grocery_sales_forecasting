@@ -10,7 +10,6 @@ This script handles the complete training pipeline including:
 import sys
 import logging
 import argparse
-from datetime import datetime
 from pathlib import Path
 
 # Add project root to path to allow importing from src
@@ -92,41 +91,6 @@ def add_y_targets(
 
     logger.info("Features created successfully")
     return
-
-
-# def add_y_targets(
-#     window_size: int,
-#     data_fn: Path,
-#     output_data_fn: Path,
-#     output_fn: Path,
-#     log_level: str,
-# ):
-#     """Create features for training the model."""
-#     logger = logging.getLogger(__name__)
-#     logger.info("Starting adding data")
-#     df = load_full_data(
-#         data_fn=data_fn,
-#         window_size=window_size,
-#         output_fn=output_data_fn,
-#         log_level=log_level,
-#     )
-#     df = create_y_targets_from_shift(
-#         df,
-#         window_size=window_size,
-#         log_level=log_level,
-#         feature_prefixes=[
-#             "sales_day_",
-#             "store_med_logpct_change_",
-#             "item_med_logpct_change_",
-#         ],
-#     )
-#     if output_fn:
-#         logger.info(f"Saving final_df to {output_fn}")
-#         if output_fn.suffix == ".parquet":
-#             df.to_parquet(output_fn)
-#         else:
-#             df.to_csv(output_fn, index=False)
-#     return df
 
 
 def parse_args():

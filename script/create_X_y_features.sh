@@ -24,8 +24,8 @@ cd "$PROJECT_ROOT"
 #DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data/"
 #OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
 
-DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_28_store_10_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_28_store_10_item/"
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_12_store_20_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_12_store_20_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -35,8 +35,7 @@ WINDOW_SIZE=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_dir) DATA_DIR="$2"; shift 2 ;;
-    #--output-data-fn) OUTPUT_DATA_FN="$2"; shift 2 ;;
-    --output_dir) OUTPUT_FN="$2"; shift 2 ;;
+    --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
@@ -50,7 +49,7 @@ mkdir -p "$OUTPUT_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/create_X_1_day_y_features_${TIMESTAMP}.log"
+LOG_FILE="${LOG_DIR}/create_X_y_features_${TIMESTAMP}.log"
 
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
@@ -66,7 +65,7 @@ echo "  Output dir: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_X_y_features.py" \
+python "${SCRIPT_DIR}/create_X_y_features.py" \
   --data_dir "$DATA_DIR" \
   --output_dir "$OUTPUT_DIR" \
   --log_dir "$LOG_DIR" \
