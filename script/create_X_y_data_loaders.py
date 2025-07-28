@@ -64,6 +64,7 @@ def create_data_loaders(
             label_cols,
             y_log_features,
             y_to_log_features,
+            all_features,
         ) = build_feature_and_label_cols(window_size=window_size)
         generate_loaders(
             df,
