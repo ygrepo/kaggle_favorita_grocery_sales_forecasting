@@ -592,6 +592,7 @@ def generate_cyclical_features(
 
     return df
 
+
 def generate_sales_features(
     df: pd.DataFrame,
     window_size: int = 1,
@@ -606,13 +607,14 @@ def generate_sales_features(
     df["date"] = pd.to_datetime(df["date"])
     assert "store_cluster" in df.columns, "Missing 'store_cluster' column"
     assert "item_cluster" in df.columns, "Missing 'item_cluster' column"
+    assert "store_cluster_median" in df.columns, "Missing 'store_cluster_median' column"
+    assert "item_cluster_median" in df.columns, "Missing 'item_cluster_median' column"
     assert (
         df[["store", "item", "date"]].duplicated().sum() == 0
     ), "Duplicate store-item-date rows"
 
     logger.info(f"Total rows: {len(df)}")
 
-    # Build cluster lookup once
     store_item_to_clusters = (
         df.drop_duplicates(["store", "item"])[
             ["store", "item", "store_cluster", "item_cluster"]
@@ -637,29 +639,28 @@ def generate_sales_features(
         logger.info(f"Processing window: {window_dates[0]} to {window_dates[-1]}")
         w_df = df[df["date"].isin(window_dates)].copy()
 
-        store_med = (
-            w_df.groupby(["store_cluster", "date"])["unit_sales"]
-            .median()
-            .unstack(fill_value=0)
-        )
-        item_med = (
-            w_df.groupby(["item_cluster", "date"])["unit_sales"]
-            .median()
-            .unstack(fill_value=0)
-        )
-
-        logger.debug(
-            f"store_med shape: {store_med.shape}, item_med shape: {item_med.shape}"
-        )
-        logger.debug(f"Sample store_med values:\n{store_med.iloc[:3, :3]}")
-        logger.debug(f"Sample item_med values:\n{item_med.iloc[:3, :3]}")
-
         sales = w_df.pivot_table(
             index=["store", "item"],
             columns="date",
             values="unit_sales",
             aggfunc="sum",
             fill_value=0,
+        )
+
+        store_meds = w_df.pivot_table(
+            index=["store", "item"],
+            columns="date",
+            values="store_cluster_median",
+            aggfunc="first",
+            fill_value=np.nan,
+        )
+
+        item_meds = w_df.pivot_table(
+            index=["store", "item"],
+            columns="date",
+            values="item_cluster_median",
+            aggfunc="first",
+            fill_value=np.nan,
         )
 
         iterator = sales.iterrows()
@@ -671,15 +672,9 @@ def generate_sales_features(
             )
 
         for (store, item), sales_vals in iterator:
-            # Cluster lookups from cached dict
             cluster_info = store_item_to_clusters.get((store, item), {})
             s_cl = cluster_info.get("store_cluster", "ALL_STORES")
             i_cl = cluster_info.get("item_cluster", "ALL_ITEMS")
-
-            if s_cl not in store_med.index:
-                logger.warning(f"Missing store_cluster {s_cl} in store_med index")
-            if i_cl not in item_med.index:
-                logger.warning(f"Missing item_cluster {i_cl} in item_med index")
 
             row = {
                 "start_date": window_dates[0],
@@ -707,12 +702,8 @@ def generate_sales_features(
                     continue
 
                 sales_val = sales_vals.get(d, 0)
-                store_med_val = (
-                    store_med.loc[s_cl].get(d, 0) if s_cl in store_med.index else np.nan
-                )
-                item_med_val = (
-                    item_med.loc[i_cl].get(d, 0) if i_cl in item_med.index else np.nan
-                )
+                store_med_val = store_meds.loc[(store, item)].get(d, np.nan)
+                item_med_val = item_meds.loc[(store, item)].get(d, np.nan)
 
                 row[f"sales_day_{i}"] = sales_val
                 row[f"store_med_day_{i}"] = store_med_val
@@ -738,16 +729,10 @@ def generate_sales_features(
                     max(sales_val / imv, epsilon)
                 )
 
-                if store_med_val == item_med_val and store_med_val != 0:
-                    logger.warning(
-                        f"Same median for store_cluster {s_cl} and item_cluster {i_cl} on {d}"
-                    )
-
             records.append(row)
 
-        del store_med, item_med, sales
+        del sales, store_meds, item_meds
 
-    # Column order
     cols = [
         "start_date",
         "store_item",
@@ -789,6 +774,205 @@ def generate_sales_features(
         logger.info(f"Saved debug sample to {debug_fn}")
 
     return df
+
+
+# def generate_sales_features(
+#     df: pd.DataFrame,
+#     window_size: int = 1,
+#     *,
+#     calendar_aligned: bool = True,
+#     log_level: str = "INFO",
+#     output_path: Optional[Path] = None,
+#     epsilon: float = 1e-3,
+# ) -> pd.DataFrame:
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+#     df["date"] = pd.to_datetime(df["date"])
+#     assert "store_cluster" in df.columns, "Missing 'store_cluster' column"
+#     assert "item_cluster" in df.columns, "Missing 'item_cluster' column"
+#     assert (
+#         df[["store", "item", "date"]].duplicated().sum() == 0
+#     ), "Duplicate store-item-date rows"
+
+#     logger.info(f"Total rows: {len(df)}")
+
+#     # Build cluster lookup once
+#     store_item_to_clusters = (
+#         df.drop_duplicates(["store", "item"])[
+#             ["store", "item", "store_cluster", "item_cluster"]
+#         ]
+#         .set_index(["store", "item"])
+#         .to_dict("index")
+#     )
+
+#     logger.debug(f"Unique store_clusters: {df['store_cluster'].unique()}")
+#     logger.debug(f"Unique item_clusters: {df['item_cluster'].unique()}")
+#     logger.debug(
+#         f"Store vs. Item cluster crosstab:\n{pd.crosstab(df['store_cluster'], df['item_cluster'])}"
+#     )
+
+#     logger.debug("Generating rolling windows")
+#     windows = generate_aligned_windows(
+#         df, window_size, calendar_aligned=calendar_aligned
+#     )
+#     records: List[dict] = []
+
+#     for window_dates in windows:
+#         logger.info(f"Processing window: {window_dates[0]} to {window_dates[-1]}")
+#         w_df = df[df["date"].isin(window_dates)].copy()
+
+#         store_med = (
+#             w_df.groupby(["store_cluster", "date"])["unit_sales"]
+#             .median()
+#             .unstack(fill_value=0)
+#         )
+#         item_med = (
+#             w_df.groupby(["item_cluster", "date"])["unit_sales"]
+#             .median()
+#             .unstack(fill_value=0)
+#         )
+
+#         logger.debug(
+#             f"store_med shape: {store_med.shape}, item_med shape: {item_med.shape}"
+#         )
+#         logger.debug(f"Sample store_med values:\n{store_med.iloc[:3, :3]}")
+#         logger.debug(f"Sample item_med values:\n{item_med.iloc[:3, :3]}")
+
+#         sales = w_df.pivot_table(
+#             index=["store", "item"],
+#             columns="date",
+#             values="unit_sales",
+#             aggfunc="sum",
+#             fill_value=0,
+#         )
+
+#         iterator = sales.iterrows()
+#         if logger.level == logging.DEBUG:
+#             iterator = tqdm(
+#                 iterator,
+#                 total=sales.shape[0],
+#                 desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
+#             )
+
+#         for (store, item), sales_vals in iterator:
+#             # Cluster lookups from cached dict
+#             cluster_info = store_item_to_clusters.get((store, item), {})
+#             s_cl = cluster_info.get("store_cluster", "ALL_STORES")
+#             i_cl = cluster_info.get("item_cluster", "ALL_ITEMS")
+
+#             if s_cl not in store_med.index:
+#                 logger.warning(f"Missing store_cluster {s_cl} in store_med index")
+#             if i_cl not in item_med.index:
+#                 logger.warning(f"Missing item_cluster {i_cl} in item_med index")
+
+#             row = {
+#                 "start_date": window_dates[0],
+#                 "store_item": f"{store}_{item}",
+#                 "store": store,
+#                 "item": item,
+#                 "store_cluster": s_cl,
+#                 "item_cluster": i_cl,
+#             }
+
+#             if "weight" in df.columns:
+#                 try:
+#                     weight_val = (
+#                         df.loc[(df["store"] == store) & (df["item"] == item), "weight"]
+#                         .dropna()
+#                         .iloc[0]
+#                     )
+#                 except IndexError:
+#                     weight_val = np.nan
+#                 row["weight"] = weight_val
+
+#             for i in range(1, window_size + 1):
+#                 d = window_dates[i - 1] if i - 1 < len(window_dates) else None
+#                 if d is None:
+#                     continue
+
+#                 sales_val = sales_vals.get(d, 0)
+#                 store_med_val = (
+#                     store_med.loc[s_cl].get(d, 0) if s_cl in store_med.index else np.nan
+#                 )
+#                 item_med_val = (
+#                     item_med.loc[i_cl].get(d, 0) if i_cl in item_med.index else np.nan
+#                 )
+
+#                 row[f"sales_day_{i}"] = sales_val
+#                 row[f"store_med_day_{i}"] = store_med_val
+#                 row[f"item_med_day_{i}"] = item_med_val
+
+#                 smv = (
+#                     store_med_val
+#                     if pd.notna(store_med_val) and store_med_val > 0
+#                     else epsilon
+#                 )
+#                 imv = (
+#                     item_med_val
+#                     if pd.notna(item_med_val) and item_med_val > 0
+#                     else epsilon
+#                 )
+
+#                 row[f"store_med_change_{i}"] = sales_val / smv
+#                 row[f"item_med_change_{i}"] = sales_val / imv
+#                 row[f"store_med_logpct_change_{i}"] = np.log(
+#                     max(sales_val / smv, epsilon)
+#                 )
+#                 row[f"item_med_logpct_change_{i}"] = np.log(
+#                     max(sales_val / imv, epsilon)
+#                 )
+
+#                 if store_med_val == item_med_val and store_med_val != 0:
+#                     logger.warning(
+#                         f"Same median for store_cluster {s_cl} and item_cluster {i_cl} on {d}"
+#                     )
+
+#             records.append(row)
+
+#         del store_med, item_med, sales
+
+#     # Column order
+#     cols = [
+#         "start_date",
+#         "store_item",
+#         "store",
+#         "item",
+#         "store_cluster",
+#         "item_cluster",
+#         "weight",
+#     ]
+#     cols += [
+#         f"{prefix}{i}"
+#         for prefix in (
+#             "store_med_day_",
+#             "item_med_day_",
+#             "store_med_change_",
+#             "item_med_change_",
+#             "store_med_logpct_change_",
+#             "item_med_logpct_change_",
+#             "sales_day_",
+#         )
+#         for i in range(1, window_size + 1)
+#     ]
+
+#     df = pd.DataFrame(records)
+#     if df.empty:
+#         df = pd.DataFrame(columns=cols)
+#     else:
+#         df = df[cols]
+
+#     if output_path is not None:
+#         logger.info(f"Saving sales features to {output_path}")
+#         if output_path.suffix == ".parquet":
+#             df.to_parquet(output_path)
+#         else:
+#             df.to_csv(output_path, index=False)
+
+#         debug_fn = output_path.with_name("debug_subset.csv")
+#         df.head(50).to_csv(debug_fn, index=False)
+#         logger.info(f"Saved debug sample to {debug_fn}")
+
+#     return df
 
 
 def create_y_targets_from_shift(

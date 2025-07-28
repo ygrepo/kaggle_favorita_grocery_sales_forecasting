@@ -89,7 +89,7 @@ echo "Col range: $COL_RANGE" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_clustering.py" \
+python "${SCRIPT_DIR}/cluster.py" \
   --data_fn "$DATA_FN" \
   --store_item_matrix_fn "$STORE_ITEM_MATRIX_FN" \
   --cluster_output_fn "$CLUSTER_OUTPUT_FN" \

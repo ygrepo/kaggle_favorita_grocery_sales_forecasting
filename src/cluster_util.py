@@ -336,13 +336,21 @@ def cluster_data(
 
     if model_kwargs is None:
         model_kwargs = {}
-    norm_data = normalize_store_item_matrix(df, freq=freq)
-    norm_data = norm_data.fillna(0)
+
+    # Save a copy of the full-resolution df (with unit_sales)
+    original_df = df.copy()
+
+    # Create normalized matrix for clustering only
+    norm_data = normalize_store_item_matrix(df, freq=freq).fillna(0)
+
     logger.info(f"Number of items: {df['item'].nunique()}")
     logger.info(f"Number of stores: {df['store'].nunique()}")
+
     if store_item_matrix_fn:
         logger.info(f"Saving store_item_matrix to {store_item_matrix_fn}")
         norm_data.to_csv(store_item_matrix_fn, index=False)
+
+    # Run biclustering grid search
     cluster_df = compute_biclustering_scores(
         data=norm_data.values,
         model_class=model_class,
@@ -352,10 +360,12 @@ def cluster_data(
         model_kwargs=model_kwargs,
         return_models=True,
     )
+
     if cluster_output_fn:
         logger.info(f"Saving cluster_df to {cluster_output_fn}")
         cluster_df.to_csv(cluster_output_fn, index=False)
-    # Select the best clustering result
+
+    # Select best result
     if cluster_df["Explained Variance (%)"].notna().any():
         best_idx = cluster_df["Explained Variance (%)"].idxmax()
         best_row = cluster_df.loc[best_idx]
@@ -364,42 +374,146 @@ def cluster_data(
             "No valid clustering results: all entries have NaN Explained Variance"
         )
         return
+
     logger.info(f"Best clustering result: {best_row}")
     best_model = best_row["model"]
 
+    # Extract row/column labels from model
     store_labels = best_model.row_labels_
     item_labels = best_model.column_labels_
 
-    # Map cluster labels to actual store and item IDs
     store_ids = norm_data.index.tolist()
     item_ids = norm_data.columns.tolist()
 
+    # Map cluster labels to IDs
     store_cluster_map = dict(zip(store_ids, store_labels))
     item_cluster_map = dict(zip(item_ids, item_labels))
 
-    # Apply to original DataFrame
-    df["store_cluster"] = df["store"].map(store_cluster_map)
-    df["item_cluster"] = df["item"].map(item_cluster_map)
-    df["cluster"] = (
-        df["store_cluster"].astype(int).astype(str)
-        + "_"
-        + df["item_cluster"].astype(int).astype(str)
+    # Build cluster assignment DataFrames
+    store_clusters = pd.DataFrame(
+        {
+            "store": store_ids,
+            "store_cluster": [str(store_cluster_map[s]) for s in store_ids],
+        }
     )
+
+    item_clusters = pd.DataFrame(
+        {"item": item_ids, "item_cluster": [str(item_cluster_map[i]) for i in item_ids]}
+    )
+
+    # Merge cluster assignments into original df
+    df = original_df.merge(store_clusters, on="store", how="left")
+    df = df.merge(item_clusters, on="item", how="left")
+
+    # Final adjustments
+    df["cluster"] = df["store_cluster"] + "_" + df["item_cluster"]
     df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-    df["item_cluster"] = df["item_cluster"].astype(str)
-    df["store_cluster"] = df["store_cluster"].astype(str)
-    df["cluster"] = df["cluster"].astype(str)
-    df["onpromotion"] = df["onpromotion"].astype(bool)
+
+    if "onpromotion" in df.columns:
+        df["onpromotion"] = df["onpromotion"].astype(bool)
 
     if store_fn:
         logger.info(f"Saving store_fn to {store_fn}")
-        store_df = df[["date", "store", "store_cluster"]]
-        store_df.to_csv(store_fn, index=False)
+        df[["date", "store", "store_cluster"]].drop_duplicates().to_csv(
+            store_fn, index=False
+        )
+
     if item_fn:
         logger.info(f"Saving item_fn to {item_fn}")
-        item_df = df[["date", "item", "item_cluster"]]
-        item_df.to_csv(item_fn, index=False)
+        df[["date", "item", "item_cluster"]].drop_duplicates().to_csv(
+            item_fn, index=False
+        )
+
     if output_fn:
         logger.info(f"Saving df to {output_fn}")
         df.to_parquet(output_fn)
+
     return df
+
+
+# def cluster_data(
+#     df: pd.DataFrame,
+#     *,
+#     freq: str = "W",
+#     store_item_matrix_fn: Path = None,
+#     cluster_output_fn: Path = None,
+#     store_fn: Path = None,
+#     item_fn: Path = None,
+#     output_fn: Path = None,
+#     model_class=SpectralBiclustering,
+#     row_range: range = range(2, 5),
+#     col_range: range = range(2, 5),
+#     model_kwargs=None,
+#     log_level: str = "INFO",
+# ) -> pd.DataFrame:
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+#     if model_kwargs is None:
+#         model_kwargs = {}
+#     norm_data = normalize_store_item_matrix(df, freq=freq)
+#     norm_data = norm_data.fillna(0)
+#     logger.info(f"Number of items: {df['item'].nunique()}")
+#     logger.info(f"Number of stores: {df['store'].nunique()}")
+#     if store_item_matrix_fn:
+#         logger.info(f"Saving store_item_matrix to {store_item_matrix_fn}")
+#         norm_data.to_csv(store_item_matrix_fn, index=False)
+#     cluster_df = compute_biclustering_scores(
+#         data=norm_data.values,
+#         model_class=model_class,
+#         row_range=row_range,
+#         col_range=col_range,
+#         true_row_labels=None,
+#         model_kwargs=model_kwargs,
+#         return_models=True,
+#     )
+#     if cluster_output_fn:
+#         logger.info(f"Saving cluster_df to {cluster_output_fn}")
+#         cluster_df.to_csv(cluster_output_fn, index=False)
+#     # Select the best clustering result
+#     if cluster_df["Explained Variance (%)"].notna().any():
+#         best_idx = cluster_df["Explained Variance (%)"].idxmax()
+#         best_row = cluster_df.loc[best_idx]
+#     else:
+#         logger.error(
+#             "No valid clustering results: all entries have NaN Explained Variance"
+#         )
+#         return
+#     logger.info(f"Best clustering result: {best_row}")
+#     best_model = best_row["model"]
+
+#     store_labels = best_model.row_labels_
+#     item_labels = best_model.column_labels_
+
+#     # Map cluster labels to actual store and item IDs
+#     store_ids = norm_data.index.tolist()
+#     item_ids = norm_data.columns.tolist()
+
+#     store_cluster_map = dict(zip(store_ids, store_labels))
+#     item_cluster_map = dict(zip(item_ids, item_labels))
+
+#     # Apply to original DataFrame
+#     df["store_cluster"] = df["store"].map(store_cluster_map)
+#     df["item_cluster"] = df["item"].map(item_cluster_map)
+#     df["cluster"] = (
+#         df["store_cluster"].astype(int).astype(str)
+#         + "_"
+#         + df["item_cluster"].astype(int).astype(str)
+#     )
+#     df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+#     df["item_cluster"] = df["item_cluster"].astype(str)
+#     df["store_cluster"] = df["store_cluster"].astype(str)
+#     df["cluster"] = df["cluster"].astype(str)
+#     df["onpromotion"] = df["onpromotion"].astype(bool)
+
+#     if store_fn:
+#         logger.info(f"Saving store_fn to {store_fn}")
+#         store_df = df[["date", "store", "store_cluster"]]
+#         store_df.to_csv(store_fn, index=False)
+#     if item_fn:
+#         logger.info(f"Saving item_fn to {item_fn}")
+#         item_df = df[["date", "item", "item_cluster"]]
+#         item_df.to_csv(item_fn, index=False)
+#     if output_fn:
+#         logger.info(f"Saving df to {output_fn}")
+#         df.to_parquet(output_fn)
+#     return df
