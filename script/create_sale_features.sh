@@ -26,7 +26,6 @@ cd "$PROJECT_ROOT"
 
 DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_12_store_20_item/"
 OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_data_12_store_20_item/"
-
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 WINDOW_SIZE=1
