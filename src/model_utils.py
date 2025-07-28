@@ -352,18 +352,18 @@ def generate_loaders(
         df_train = df.iloc[train_start:train_end].fillna(0)
         df_val = df.iloc[[val_idx]].fillna(0)
 
-        all_train = df_train[all_cols].values
+        X_train = df_train[x_feature_cols].values
         y_train = df_train[label_cols].values
         w_train = df_train[[weight_col]].values
 
-        all_val = df_val[all_cols].values
+        X_val = df_val[x_feature_cols].values
         y_val = df_val[label_cols].values
         w_val = df_val[[weight_col]].values
 
-        X_train_raw.append(all_train)
+        X_train_raw.append(X_train)
         y_train_raw.append(y_train)
         W_train_raw.append(w_train)
-        X_val_raw.append(all_val)
+        X_val_raw.append(X_val)
         y_val_raw.append(y_val)
         W_val_raw.append(w_val)
 
