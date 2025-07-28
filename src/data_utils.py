@@ -703,9 +703,9 @@ def generate_sales_features(
 
                 sales_val = sales_vals.get(d, 0)
                 store_med_val = store_meds.loc[(store, item)].get(d, np.nan)
-                logger.debug(f"Store med: {store_med_val}")
+                # logger.debug(f"Store med: {store_med_val}")
                 item_med_val = item_meds.loc[(store, item)].get(d, np.nan)
-                logger.debug(f"Item med: {item_med_val}")
+                # logger.debug(f"Item med: {item_med_val}")
 
                 row[f"sales_day_{i}"] = sales_val
                 row[f"store_med_day_{i}"] = store_med_val

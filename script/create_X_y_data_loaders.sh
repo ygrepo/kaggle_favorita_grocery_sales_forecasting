@@ -14,10 +14,11 @@ cd "$PROJECT_ROOT"
 #DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
 #DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
 #DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
-DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_28_store_10_item/"
+#DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_28_store_10_item/"
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_12_store_20_item/"
 
-DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_28_store_10_item/"
-SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_28_store_10_item/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_12_store_20_item/"
+SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_12_store_20_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -60,7 +61,7 @@ echo "  Dataloader dir: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_X_y_data_loaders.py" \
+python "${SCRIPT_DIR}/create_X_y_data_loaders.py" \
   --data_dir "$DATA_DIR" \
   --scalers_dir "$SCALERS_DIR" \
   --dataloader_dir "$DATALOADER_DIR" \
