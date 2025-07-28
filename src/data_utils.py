@@ -59,7 +59,6 @@ def build_feature_and_label_cols(
         "store_item",
         "store_cluster",
         "item_cluster",
-        "weight",
     ]
     x_cyclical_features = [
         f"{feat}_{trig}_{i}"

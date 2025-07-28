@@ -299,6 +299,7 @@ def generate_loaders(
         f"Preparing loaders from {num_samples} samples: {store_cluster}, {item_cluster}"
     )
 
+    X_all_features = meta_cols + x_feature_cols
     X_train_raw, y_train_raw, W_train_raw = [], [], []
     X_val_raw, y_val_raw, W_val_raw = [], [], []
     meta_train_raw, meta_val_raw = [], []
@@ -351,11 +352,11 @@ def generate_loaders(
         df_train = df.iloc[train_start:train_end].fillna(0)
         df_val = df.iloc[[val_idx]].fillna(0)
 
-        X_train = df_train[x_feature_cols].values
+        X_train = df_train[X_all_features].values
         y_train = df_train[label_cols].values
         w_train = df_train[[weight_col]].values
 
-        X_val = df_val[x_feature_cols].values
+        X_val = df_val[X_all_features].values
         y_val = df_val[label_cols].values
         w_val = df_val[[weight_col]].values
 
