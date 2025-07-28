@@ -10,12 +10,7 @@ This script handles the complete training pipeline including:
 import sys
 import logging
 import argparse
-from datetime import datetime
 from pathlib import Path
-
-import pandas as pd
-import numpy as np
-from scipy.linalg import dft
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent

@@ -28,9 +28,9 @@ cd "$PROJECT_ROOT"
 
 # SALE_DIR="${PROJECT_ROOT}/output/data/sales_data/"
 # CYC_DIR="${PROJECT_ROOT}/output/data/cyc_data/"
-SALE_DIR="${PROJECT_ROOT}/output/data/sales_data_28_store_10_item/"
-CYC_DIR="${PROJECT_ROOT}/output/data/cyc_data_28_store_10_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_28_store_10_item/"
+SALE_DIR="${PROJECT_ROOT}/output/data/sale_data_12_store_20_item/"
+CYC_DIR="${PROJECT_ROOT}/output/data/cyc_data_12_store_20_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_12_store_20_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -76,7 +76,7 @@ echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Add y targets: ${ADD_Y_TARGETS}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_features.py" \
+python "${SCRIPT_DIR}/create_features.py" \
   --sales_dir "$SALE_DIR" \
   --cyc_dir "$CYC_DIR" \
   --output_dir "$OUTPUT_DIR" \
