@@ -69,7 +69,7 @@ echo "  Output dir: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_cyc_features.py" \
+python "${SCRIPT_DIR}/create_cyc_features.py" \
   --data_fn "$DATA_FN" \
   --output_dir "$OUTPUT_DIR" \
   --log_dir "$LOG_DIR" \
