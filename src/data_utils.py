@@ -40,7 +40,18 @@ TRIGS = ["sin", "cos"]
 
 def build_feature_and_label_cols(
     window_size: int,
-) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
+) -> tuple[
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+]:
     """Return feature and label column names for a given window size."""
     meta_cols = [
         "start_date",
