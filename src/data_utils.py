@@ -359,18 +359,9 @@ def load_X_y_data(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
             )
 
-        (
-            meta_cols,
-            _,
-            _,
-            x_feature_cols,
-            _,
-            _,
-            label_cols,
-            _,
-            _,
-        ) = build_feature_and_label_cols(window_size=window_size)
-
+        (meta_cols, _, _, x_feature_cols, _, _, label_cols, _, _, _) = (
+            build_feature_and_label_cols(window_size=window_size)
+        )
         df = df[meta_cols + x_feature_cols + label_cols]
         df["start_date"] = pd.to_datetime(df["start_date"])
         df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
