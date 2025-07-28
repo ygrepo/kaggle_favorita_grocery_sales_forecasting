@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${DATA_DIR}/train_2014_January_12_store_20_item_cluster.parquet"
+DATA_FN="${DATA_DIR}/train_2014_January_12_store_20_item_cluster_medians.parquet"
 OUTPUT_DIR="${DATA_DIR}/clustered_data_12_store_20_item"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -67,7 +67,7 @@ echo "  Output dir: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
 echo "  Log dir: ${LOG_DIR}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/run_create_store_sku_cluster_data.py" \
+python "${SCRIPT_DIR}/split_store_sku_data.py" \
   --data_fn "$DATA_FN" \
   --output_dir "$OUTPUT_DIR" \
   --log_dir "$LOG_DIR" \
