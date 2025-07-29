@@ -23,9 +23,9 @@ SALE_FEATURES = [
     "item_med_day",
     "store_med_change",
     "item_med_change",
+    "sales_day",
     "store_med_logpct_change",
     "item_med_logpct_change",
-    "sales_day",
 ]
 
 CYCLICAL_FEATURES = [
@@ -84,16 +84,19 @@ def build_feature_and_label_cols(
         if name in ["store_med_logpct_change", "item_med_logpct_change"]
     ]
 
-    x_feature_cols = x_sales_features + x_cyclical_features
-    label_cols = (
-        [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
-        + [f"y_store_med_logpct_change_{i}" for i in range(1, window_size + 1)]
-        + [f"y_item_med_logpct_change_{i}" for i in range(1, window_size + 1)]
+    x_feature_cols = x_to_log_features + x_log_features + x_cyclical_features
+    logger.info(f"x_feature_cols: {x_feature_cols}")
+    logger.info(
+        f"x_sales_features + x_cyclical_features: {x_sales_features + x_cyclical_features}"
     )
-    y_log_features = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
-    y_to_log_features = [
+    assert x_feature_cols == x_sales_features + x_cyclical_features
+
+    y_to_log_features = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
+    y_log_features = [
         f"y_store_med_logpct_change_{i}" for i in range(1, window_size + 1)
     ] + [f"y_item_med_logpct_change_{i}" for i in range(1, window_size + 1)]
+    label_cols = y_to_log_features + y_log_features
+    assert label_cols == y_to_log_features + y_log_features
 
     all_features = meta_cols + x_feature_cols + label_cols
 
