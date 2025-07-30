@@ -783,7 +783,7 @@ class LightningWrapper(pl.LightningModule):
 # ─────────────────────────────────────────────────────────────────────
 def compute_mav(
     loader: DataLoader,
-    sales_idx: list[int],  # positions of the sales targets in y
+    sales_idx: list[int],
 ) -> float:
     """
     Mean absolute value of the sales targets in original units.
@@ -796,14 +796,12 @@ def compute_mav(
     with torch.no_grad():
         for _, yb, _ in loader:
             y_np = yb.cpu().numpy()
+            sales = np.expm1(y_np[:, sales_idx])  # Undo log1p
 
-            sales = y_np[:, sales_idx]  # directly select the relevant y columns
-
-            # Undo log1p
-            sales = np.expm1(sales)
-
+            nonzero_count = np.count_nonzero(sales)
             logger.debug(
-                f"Sales: min={np.min(sales)}, max={np.max(sales)}, mean={np.mean(sales)}"
+                f"Sales: shape={sales.shape}, non-zero={nonzero_count}, "
+                f"min={np.min(sales):.2f}, max={np.max(sales):.2f}, mean={np.mean(sales):.2f}"
             )
 
             abs_sum += np.abs(sales).sum()
@@ -836,7 +834,7 @@ def compute_mae(
     Returns 0.0 if batch is empty or only zeros.
     """
     if xb.numel() == 0 or yb.numel() == 0:
-        logging.warning("Empty batch encountered in compute_mae. Returning 0.0.")
+        logger.warning("Empty batch encountered in compute_mae. Returning 0.0.")
         return 0.0
 
     with torch.no_grad():
@@ -852,10 +850,16 @@ def compute_mae(
 
         # ----- calculate batch-wise MAE -----
         if y_sales_units.size == 0:
-            logging.warning("No sales values found in compute_mae. Returning 0.0.")
+            logger.warning("No sales values found in compute_mae. Returning 0.0.")
+            return 0.0
+        mask = y_sales_units > 0
+        logger.debug(f"Non-zero targets in batch: {mask.sum()} / {y_sales_units.size}")
+
+        if mask.sum() == 0:
+            logger.warning("All targets are zero in this batch. Skipping MAE.")
             return 0.0
 
-        batch_mae = np.abs(p_sales_units - y_sales_units).mean()
+    batch_mae = np.abs(p_sales_units[mask] - y_sales_units[mask]).mean()
 
     return batch_mae
 
