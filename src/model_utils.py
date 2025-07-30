@@ -793,31 +793,6 @@ def compute_mav(
     return abs_sum / count
 
 
-def compute_rmse(
-    preds: torch.Tensor,
-    targets: torch.Tensor,
-    device: torch.device = torch.device("cpu"),
-) -> torch.Tensor:
-    """Compute Root Mean Squared Error (RMSE)."""
-    # Ensure both tensors are on the correct device
-    preds = preds.to(device)
-    targets = targets.to(device)
-
-    # Detach the tensors from the computation graph to avoid gradient tracking issues
-    preds = preds.detach()
-    targets = targets.detach()
-
-    # Calculate squared differences
-    squared_diff = torch.square(preds - targets)
-
-    # Compute the mean squared error (MSE)
-    mse = torch.mean(squared_diff)
-
-    # Return the square root of MSE (RMSE)
-    rmse = torch.sqrt(mse)
-    return rmse
-
-
 def compute_mae(
     xb: torch.Tensor,  # Input batch of features
     yb: torch.Tensor,  # Input batch of targets
@@ -847,6 +822,31 @@ def compute_mae(
         )  # MAE for this batch
 
     return batch_mae
+
+
+def compute_rmse(
+    preds: torch.Tensor,
+    targets: torch.Tensor,
+    device: torch.device = torch.device("cpu"),
+) -> torch.Tensor:
+    """Compute Root Mean Squared Error (RMSE)."""
+    # Ensure both tensors are on the correct device
+    preds = preds.to(device)
+    targets = targets.to(device)
+
+    # Detach the tensors from the computation graph to avoid gradient tracking issues
+    preds = preds.detach()
+    targets = targets.detach()
+
+    # Calculate squared differences
+    squared_diff = torch.square(preds - targets)
+
+    # Compute the mean squared error (MSE)
+    mse = torch.mean(squared_diff)
+
+    # Return the square root of MSE (RMSE)
+    rmse = torch.sqrt(mse)
+    return rmse
 
 
 def train_all_models_for_cluster_pair(
@@ -983,6 +983,8 @@ def train_per_cluster_pair(
     output_dim = len(label_cols)
 
     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+    logger.debug(f"Checking label order consistency: {col_y_index_map}")
+
     y_log_idx = [col_y_index_map[c] for c in y_log_features]
     train_mav = compute_mav(train_loader, y_log_idx)
     val_mav = compute_mav(val_loader, y_log_idx)

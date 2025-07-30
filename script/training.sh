@@ -11,9 +11,9 @@ cd "$PROJECT_ROOT"
 
 
 # Default configuration
-DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader2/"
-MODEL_DIR="${PROJECT_ROOT}/output/models"
-HISTORY_DIR="${PROJECT_ROOT}/output/data/histories/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_12_store_20_item/"
+MODEL_DIR="${PROJECT_ROOT}/output/models_12_store_20_item/"
+HISTORY_DIR="${PROJECT_ROOT}/output/data/histories_12_store_20_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 HISTORY_FN="${HISTORY_DIR}/${TIMESTAMP}_training_history.csv"
 
@@ -70,7 +70,7 @@ echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 nvidia-smi | tee -a "$LOG_FILE"
 
 
-python "${SCRIPT_DIR}/run_training.py" \
+python "${SCRIPT_DIR}/training.py" \
   --dataloader_dir "$DATALOADER_DIR" \
   --model_dir "$MODEL_DIR" \
   --history_fn "$HISTORY_FN" \
