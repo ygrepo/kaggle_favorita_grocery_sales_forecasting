@@ -90,7 +90,7 @@ def train(
         y_to_log_features,
         all_features,
     ) = build_feature_and_label_cols(window_size)
-    
+
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         parts = file_path.stem.split("_")
@@ -215,6 +215,7 @@ def main():
             logger.info("✅ CUDA is available. Proceeding with GPU training.")
 
         # mp.set_sharing_strategy("file_system")
+        torch.multiprocessing.set_sharing_strategy("file_system")
 
         # Train model
         train(

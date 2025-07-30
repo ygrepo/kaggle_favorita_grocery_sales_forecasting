@@ -971,12 +971,14 @@ def train_per_cluster_pair(
         batch_size=inferred_batch_size,
         num_workers=num_workers,
         persistent_workers=persistent_workers,
+        pin_memory=True,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=inferred_batch_size,
         num_workers=num_workers,
-        persistent_workers=True,
+        persistent_workers=persistent_workers,
+        pin_memory=True,
     )
 
     input_dim = train_dataset.tensors[0].shape[1]
