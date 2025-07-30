@@ -31,6 +31,7 @@ from src.model_utils import (
 )
 from src.data_utils import build_feature_and_label_cols
 from src.utils import setup_logging, str2bool
+from src.model_utils import ModelType
 
 
 def train(
@@ -99,7 +100,7 @@ def train(
         logger.info(f"Store cluster: {store_cluster}")
         logger.info(f"Item cluster: {item_cluster}")
         train_all_models_for_cluster_pair(
-            model_types=[MODEL_TYPES.SHALLOW_NN],
+            model_types=[ModelType.SHALLOW_NN],
             epochs=epochs,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
