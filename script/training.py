@@ -40,7 +40,7 @@ def train(
     epochs: int,
     num_workers: int,
     persistent_workers: bool,
-    history_fn: Path,
+    history_dir: Path,
     log_level: str,
 ):
     """
@@ -55,8 +55,8 @@ def train(
         Directory to save trained models.
     window_size : int
         Rolling window size for feature creation.
-    history_fn : Path
-        Path to save training history.
+    history_dir : Path
+        Directory to save training history.
     epochs : int
         Number of training epochs.
     num_workers : int
@@ -109,7 +109,7 @@ def train(
             y_log_features=y_log_features,
             store_cluster=store_cluster,
             item_cluster=item_cluster,
-            history_fn=history_fn,
+            history_dir=history_dir,
             log_level=log_level,
         )
 
@@ -144,10 +144,10 @@ def parse_args():
         help="Whether to use persistent workers for data loading",
     )
     parser.add_argument(
-        "--history_fn",
+        "--history_dir",
         type=str,
         default="",
-        help="Path to save training history (relative to project root)",
+        help="Directory to save training history (relative to project root)",
     )
     parser.add_argument(
         "--window_size",
@@ -187,7 +187,7 @@ def main():
     project_root = Path(__file__).parent.parent
     dataloader_dir = (project_root / args.dataloader_dir).resolve()
     model_dir = (project_root / args.model_dir).resolve()
-    history_fn = (project_root / args.history_fn).resolve()
+    history_dir = (project_root / args.history_dir).resolve()
     log_dir = (project_root / args.log_dir).resolve()
     num_workers = args.num_workers
     persistent_workers = args.persistent_workers
@@ -201,7 +201,7 @@ def main():
         logger.info(f"  Project root: {project_root}")
         logger.info(f"  Dataloader directory: {dataloader_dir}")
         logger.info(f"  Model directory: {model_dir}")
-        logger.info(f"  History fn: {history_fn}")
+        logger.info(f"  History directory: {history_dir}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
         logger.info(f"  Num workers: {num_workers}")
@@ -223,7 +223,7 @@ def main():
             model_dir=model_dir,
             window_size=args.window_size,
             epochs=args.epochs,
-            history_fn=history_fn,
+            history_dir=history_dir,
             log_level=args.log_level,
             num_workers=num_workers,
             persistent_workers=persistent_workers,

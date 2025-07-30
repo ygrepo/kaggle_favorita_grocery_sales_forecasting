@@ -15,7 +15,6 @@ DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_12_store_20_item/"
 MODEL_DIR="${PROJECT_ROOT}/output/models_12_store_20_item/"
 HISTORY_DIR="${PROJECT_ROOT}/output/data/histories_12_store_20_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-HISTORY_FN="${HISTORY_DIR}/${TIMESTAMP}_training_history.csv"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 WINDOW_SIZE=1
@@ -29,7 +28,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dataloader_dir) DATALOADER_DIR="$2"; shift 2 ;;
     --model_dir) MODEL_DIR="$2"; shift 2 ;;
-    --history_fn) HISTORY_FN="$2"; shift 2 ;;
+    --history_dir) HISTORY_DIR="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
     --epochs) EPOCHS="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
@@ -60,7 +59,7 @@ set +e  # Disable exit on error to handle the error message
 echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Dataloader directory: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Model directory: ${MODEL_DIR}" | tee -a "$LOG_FILE"
-echo "  History fn: ${HISTORY_FN}" | tee -a "$LOG_FILE"
+echo "  History directory: ${HISTORY_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
 echo "  Num workers: ${NUM_WORKERS}" | tee -a "$LOG_FILE"
@@ -73,7 +72,7 @@ nvidia-smi | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/training.py" \
   --dataloader_dir "$DATALOADER_DIR" \
   --model_dir "$MODEL_DIR" \
-  --history_fn "$HISTORY_FN" \
+  --history_dir "$HISTORY_DIR" \
   --window_size "$WINDOW_SIZE" \
   --epochs "$EPOCHS" \
   --num_workers "$NUM_WORKERS" \

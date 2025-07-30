@@ -898,7 +898,7 @@ def train_all_models_for_cluster_pair(
     store_cluster: int,
     item_cluster: int,
     *,
-    history_fn: Optional[Path] = None,
+    history_dir: Optional[Path] = None,
     lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
@@ -924,11 +924,12 @@ def train_all_models_for_cluster_pair(
                 y_log_features=y_log_features,
                 store_cluster=store_cluster,
                 item_cluster=item_cluster,
-                history_fn=history_fn,
+                history_dir=history_dir,
                 lr=lr,
                 epochs=epochs,
                 seed=seed,
                 num_workers=num_workers,
+                persistent_workers=persistent_workers,
                 enable_progress_bar=enable_progress_bar,
                 train_logger=train_logger,
                 log_level=log_level,
@@ -954,7 +955,7 @@ def train_per_cluster_pair(
     store_cluster: int,
     item_cluster: int,
     *,
-    history_fn: Optional[Path] = None,
+    history_dir: Optional[Path] = None,
     lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
@@ -1087,6 +1088,9 @@ def train_per_cluster_pair(
         ]
     )
 
+    history_fn = (
+        history_dir / f"{store_cluster}_{item_cluster}_{model_type.value}.csv  "
+    )
     history = safe_append_to_history(history_fn, history)
     return history
 
