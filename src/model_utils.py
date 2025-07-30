@@ -1038,9 +1038,9 @@ def train_per_cluster_pair(
     train_mav = compute_mav(train_loader, y_log_idx)
     val_mav = compute_mav(val_loader, y_log_idx)
 
-    model_name = f"model_{store_cluster}_{item_cluster}_{model_type.value}"
     base_model = model_factory(model_type, input_dim, output_dim)
     base_model.apply(init_weights)
+    model_name = f"{model_type.value}"
 
     lightning_model = LightningWrapper(
         base_model,
@@ -1188,7 +1188,7 @@ def load_scalers(
     return scaler_dict
 
 
-def load_lightning_wrapper(ckpt_path: Path, model_factory_fn) -> LightningWrapper:
+def load_lightning_wrapper(ckpt_path: Path) -> LightningWrapper:
     """
     Load a LightningWrapper from checkpoint with automatic model creation.
 
@@ -1196,8 +1196,6 @@ def load_lightning_wrapper(ckpt_path: Path, model_factory_fn) -> LightningWrappe
     ----------
     ckpt_path : Path
         Path to the .ckpt file.
-    model_factory_fn : Callable[[str, int, int], nn.Module]
-        Function that returns an initialized model given (model_name, input_dim, output_dim)
 
     Returns
     -------
@@ -1205,16 +1203,20 @@ def load_lightning_wrapper(ckpt_path: Path, model_factory_fn) -> LightningWrappe
         Loaded LightningWrapper instance with restored weights.
     """
     # Load just the hyperparameters first
-    hparams = pl.utilities.cloud_io.load(ckpt_path)["hyper_parameters"]
+    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    hparams = checkpoint["hyper_parameters"]
+    print(checkpoint["hyper_parameters"]["model_name"])
+    print(checkpoint["hyper_parameters"]["input_dim"])
+    print(checkpoint["hyper_parameters"]["output_dim"])
 
     # Rebuild the base model using saved dimensions and model type
-    model = model_factory_fn(
+    model = model_factory_from_str(
         hparams["model_name"], hparams["input_dim"], hparams["output_dim"]
     )
-
+    print(model)
     # Load the wrapper with model injected
-    wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
-    return wrapper
+    # wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
+    # return wrapper
 
 
 def load_latest_models_from_checkpoints(

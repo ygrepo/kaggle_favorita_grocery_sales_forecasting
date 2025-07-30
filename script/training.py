@@ -113,6 +113,7 @@ def train(
             history_dir=history_dir,
             log_level=log_level,
         )
+        break
 
 
 def parse_args():
