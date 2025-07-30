@@ -80,6 +80,7 @@ def safe_append_to_history(history_fn: Path, new_history: pd.DataFrame) -> pd.Da
 
     # Save combined history
     if history_fn is not None:
+        logger.info(f"Saving history to {history_fn}")
         combined_history.to_csv(history_fn, index=False)
 
     return combined_history
