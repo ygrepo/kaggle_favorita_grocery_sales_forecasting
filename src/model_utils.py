@@ -679,7 +679,10 @@ class LightningWrapper(pl.LightningModule):
         # Compute average metrics for the epoch
         avg_train_mae = np.mean([_to_float(t) for t in self.train_mae_history])
         avg_train_rmse = np.mean([_to_float(t) for t in self.train_rmse_history])
-        avg_train_percent_mav = avg_train_mae / self.train_mav * 100
+        if self.train_mav == 0:
+            avg_train_percent_mav = float("inf")
+        else:
+            avg_train_percent_mav = avg_train_mae / self.train_mav * 100
 
         avg_val_mae = np.mean([_to_float(t) for t in self.val_mae_history])
         avg_val_rmse = np.mean([_to_float(t) for t in self.val_rmse_history])
