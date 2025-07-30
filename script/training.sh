@@ -12,8 +12,8 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_12_store_20_item/"
-MODEL_DIR="${PROJECT_ROOT}/output/models_12_store_20_item/"
-HISTORY_DIR="${PROJECT_ROOT}/output/data/histories_12_store_20_item/"
+MODEL_DIR="${PROJECT_ROOT}/output/model_12_store_20_item/"
+HISTORY_DIR="${PROJECT_ROOT}/output/data/history_12_store_20_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
