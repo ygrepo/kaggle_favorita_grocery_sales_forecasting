@@ -1040,7 +1040,7 @@ def train_per_cluster_pair(
 
     base_model = model_factory(model_type, input_dim, output_dim)
     base_model.apply(init_weights)
-    model_name = f"{model_type.value}"
+    model_name = f"{store_cluster}_{item_cluster}_{model_type.value}"
 
     lightning_model = LightningWrapper(
         base_model,
