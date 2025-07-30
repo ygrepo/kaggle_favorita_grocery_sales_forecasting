@@ -584,6 +584,8 @@ class LightningWrapper(pl.LightningModule):
         logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
         self.model = model
         self.model_name = model_name
+        self.store = store
+        self.item = item
         self.lr = lr
         self.sales_idx = sales_idx
         self.train_mav = train_mav
