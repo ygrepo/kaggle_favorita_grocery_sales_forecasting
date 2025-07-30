@@ -781,8 +781,6 @@ class LightningWrapper(pl.LightningModule):
 # ─────────────────────────────────────────────────────────────────────
 # Helper metrics
 # ─────────────────────────────────────────────────────────────────────
-
-
 def compute_mav(
     loader: DataLoader,
     sales_idx: list[int],  # positions of the sales targets in y
@@ -790,6 +788,7 @@ def compute_mav(
     """
     Mean absolute value of the sales targets in original units.
     Assumes log1p scaling. Cyclical sin/cos columns are ignored.
+    Returns 0.0 if all sales are zero or count is zero.
     """
     logger.setLevel(getattr(logging, "DEBUG", logging.INFO))
 
@@ -802,31 +801,49 @@ def compute_mav(
 
             # Undo log1p
             sales = np.expm1(sales)
-            logger.debug(f"Sales: {np.min(sales)}, {np.max(sales)}, {np.mean(sales)}")
+
+            logger.debug(
+                f"Sales: min={np.min(sales)}, max={np.max(sales)}, mean={np.mean(sales)}"
+            )
 
             abs_sum += np.abs(sales).sum()
             count += sales.size
 
-    return abs_sum / count
+    if count == 0:
+        logger.warning(
+            "MAV computation: No sales entries found (count=0). Returning 0.0."
+        )
+        return 0.0
+
+    mav = abs_sum / count
+
+    if mav == 0.0:
+        logger.warning("MAV computation: All sales are zero. Returning 0.0.")
+
+    return mav
 
 
 def compute_mae(
-    xb: torch.Tensor,  # Input batch of features
-    yb: torch.Tensor,  # Input batch of targets
-    model: torch.nn.Module,  # The model used for predictions
-    device: torch.device,  # The device (cpu or cuda)
-    sales_idx: list[int],  # Indices of the sales targets in the output
+    xb: torch.Tensor,
+    yb: torch.Tensor,
+    model: torch.nn.Module,
+    device: torch.device,
+    sales_idx: list[int],
 ) -> float:
     """
     Mean Absolute Error on SALES ONLY, expressed in original units.
     Cyclical targets are excluded from the calculation.
+    Returns 0.0 if batch is empty or only zeros.
     """
+    if xb.numel() == 0 or yb.numel() == 0:
+        logging.warning("Empty batch encountered in compute_mae. Returning 0.0.")
+        return 0.0
 
     with torch.no_grad():
         # ----- predictions -----
-        preds_np = model(xb.to(device)).cpu().numpy()  # (batch, n_targets)
-        p_sales_units = preds_np[:, sales_idx]  # Extract the sales block
-        p_sales_units = np.expm1(p_sales_units)  # Convert back to unit sales
+        preds_np = model(xb.to(device)).cpu().numpy()
+        p_sales_units = preds_np[:, sales_idx]
+        p_sales_units = np.expm1(p_sales_units)
 
         # ----- ground truth ----
         yb_np = yb.cpu().numpy()
@@ -834,9 +851,11 @@ def compute_mae(
         y_sales_units = np.expm1(y_sales_units)
 
         # ----- calculate batch-wise MAE -----
-        batch_mae = (
-            np.abs(p_sales_units - y_sales_units).sum() / y_sales_units.size
-        )  # MAE for this batch
+        if y_sales_units.size == 0:
+            logging.warning("No sales values found in compute_mae. Returning 0.0.")
+            return 0.0
+
+        batch_mae = np.abs(p_sales_units - y_sales_units).mean()
 
     return batch_mae
 
