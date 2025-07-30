@@ -974,7 +974,6 @@ def train_per_cluster_pair(
 
     # Setup paths
     checkpoints_dir = model_dir / "checkpoints"
-    history_dir = model_dir / "history"
     for d in [checkpoints_dir, history_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
@@ -1089,9 +1088,7 @@ def train_per_cluster_pair(
         ]
     )
 
-    history_fn = (
-        history_dir / f"{store_cluster}_{item_cluster}_{model_type.value}.csv  "
-    )
+    history_fn = history_dir / f"{store_cluster}_{item_cluster}_{model_type.value}.csv"
     history = safe_append_to_history(history_fn, history)
     return history
 
