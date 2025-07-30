@@ -578,6 +578,9 @@ class LightningWrapper(pl.LightningModule):
         sales_idx: list[int],
         train_mav: float,
         val_mav: float,
+        input_dim: int,
+        output_dim: int,
+        *,
         lr: float = 3e-4,
         log_level: str = "INFO",
     ):
@@ -592,6 +595,9 @@ class LightningWrapper(pl.LightningModule):
         self.train_mav = train_mav
         self.val_mav = val_mav
         self.loss_fn = NWRMSLELoss()
+
+        # Save all except model
+        self.save_hyperparameters(ignore=["model"])
 
         # Initialize metrics accumulators for each epoch
         self.train_error_history = []
@@ -1044,6 +1050,8 @@ def train_per_cluster_pair(
         sales_idx=y_log_idx,
         train_mav=train_mav,
         val_mav=val_mav,
+        input_dim=input_dim,
+        output_dim=output_dim,
         lr=lr,
         log_level=log_level,
     )
@@ -1093,27 +1101,45 @@ def train_per_cluster_pair(
     return history
 
 
-def load_model(model_path: str) -> Tuple[int, nn.Module, List[str]]:
-    """Loads a saved model from the given path and returns it along with the
-    associated store_item identifier and feature columns.
-
-    Args:
-        model_path (str): The path to the saved model file.
-
-    Returns:
-        tuple: A tuple containing the store_item identifier, the model, and its
-            feature columns.
+def load_latest_model(
+    checkpoints_dir: Path,
+    input_dim: int,
+    output_dim: int,
+    model_type: ModelType,
+    *,
+    log_level: str = "INFO",
+) -> dict[tuple[int, int], LightningWrapper]:
     """
-    checkpoint = torch.load(model_path, map_location=torch.device("cpu"))
-    store_item_id = checkpoint["sid"]
-    model_state_dict = checkpoint["model_state_dict"]
-    feature_columns = checkpoint["feature_cols"]
+    Load the latest checkpoint per (store_cluster, item_cluster).
+    Prioritizes -v3 > -v2 > -v1 > base (version=0).
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    model = ShallowNN(input_dim=len(feature_columns))
-    model.load_state_dict(model_state_dict)
-    model.eval()
+    candidates = defaultdict(list)
+    pattern = re.compile(r"model_(\d+)_(\d+)_([A-Za-z0-9]+)(?:-v(\d+))?")
+    version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
 
-    return store_item_id, model, feature_columns
+    for ckpt_path in checkpoints_dir.rglob("*.ckpt"):
+        match = pattern.match(ckpt_path.parent.name)  # match folder name
+        if not match:
+            continue
+        sc, ic = int(match[1]), int(match[2])
+        model_name = match[3]
+        version = int(match[4]) if match[4] is not None else 0
+        candidates[(sc, ic)].append((version, ckpt_path, model_name))
+
+    model_dict = {}
+    for (sc, ic), versioned_ckpts in candidates.items():
+        try:
+            model = model_factory_from_str(model_name, input_dim, output_dim)
+            wrapper = LightningWrapper.load_from_checkpoint(
+                best_ckpt, model=model, strict=False
+            )
+            model_dict[(sc, ic)] = wrapper
+        except Exception as e:
+            logger.warning(f"Skipping {best_ckpt.name}: {e}")
+
+    return model_dict
 
 
 def load_scalers(
@@ -1160,6 +1186,35 @@ def load_scalers(
             logger.warning(f"Failed to load {filename}: {e}")
 
     return scaler_dict
+
+
+def load_lightning_wrapper(ckpt_path: Path, model_factory_fn) -> LightningWrapper:
+    """
+    Load a LightningWrapper from checkpoint with automatic model creation.
+
+    Parameters
+    ----------
+    ckpt_path : Path
+        Path to the .ckpt file.
+    model_factory_fn : Callable[[str, int, int], nn.Module]
+        Function that returns an initialized model given (model_name, input_dim, output_dim)
+
+    Returns
+    -------
+    LightningWrapper
+        Loaded LightningWrapper instance with restored weights.
+    """
+    # Load just the hyperparameters first
+    hparams = pl.utilities.cloud_io.load(ckpt_path)["hyper_parameters"]
+
+    # Rebuild the base model using saved dimensions and model type
+    model = model_factory_fn(
+        hparams["model_name"], hparams["input_dim"], hparams["output_dim"]
+    )
+
+    # Load the wrapper with model injected
+    wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
+    return wrapper
 
 
 def load_latest_models_from_checkpoints(
@@ -1226,7 +1281,8 @@ def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
 
 
 def predict_store_item(
-    store_cluster: int,
+    loader_path: Path,
+    model_path: Path,
     item_cluster: int,
     model_dict: dict[tuple[int, int], LightningWrapper],
     input_feature_cols: list[str],
@@ -1237,6 +1293,17 @@ def predict_store_item(
     item_cluster_col: str = "item_cluster",
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
 ) -> pd.DataFrame:
+    # --- Load DataLoader ---
+    data = torch.load(loader_path)
+    loader = torch.utils.data.DataLoader(data.dataset, batch_size=32)
+
+    all_x, all_y, all_w = [], [], []
+    with torch.no_grad():
+        for xb, yb, wb in loader:
+            all_x.append(xb.cpu())
+            all_y.append(yb.cpu())
+            all_w.append(wb.cpu())
+
     pass
 
 

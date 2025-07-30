@@ -99,7 +99,7 @@ def train(
         logger.info(f"Store cluster: {store_cluster}")
         logger.info(f"Item cluster: {item_cluster}")
         train_all_models_for_cluster_pair(
-            model_types=MODEL_TYPES,
+            model_types=[MODEL_TYPES.SHALLOW_NN],
             epochs=epochs,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
