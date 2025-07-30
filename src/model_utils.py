@@ -683,7 +683,10 @@ class LightningWrapper(pl.LightningModule):
 
         avg_val_mae = np.mean([_to_float(t) for t in self.val_mae_history])
         avg_val_rmse = np.mean([_to_float(t) for t in self.val_rmse_history])
-        avg_val_percent_mav = avg_val_mae / self.val_mav * 100
+        if self.val_mav == 0:
+            avg_val_percent_mav = float("inf")
+        else:
+            avg_val_percent_mav = avg_val_mae / self.val_mav * 100
 
         # Log epoch-level metrics
         self.log("avg_train_mav", self.train_mav, prog_bar=False, sync_dist=True)
@@ -777,6 +780,8 @@ def compute_mav(
     Mean absolute value of the sales targets in original units.
     Assumes log1p scaling. Cyclical sin/cos columns are ignored.
     """
+    logger.setLevel(getattr(logging, "DEBUG", logging.INFO))
+
     abs_sum, count = 0.0, 0
     with torch.no_grad():
         for _, yb, _ in loader:
@@ -786,6 +791,7 @@ def compute_mav(
 
             # Undo log1p
             sales = np.expm1(sales)
+            logger.debug(f"Sales: {np.min(sales)}, {np.max(sales)}, {np.mean(sales)}")
 
             abs_sum += np.abs(sales).sum()
             count += sales.size
