@@ -104,7 +104,6 @@ def train(
             num_workers=num_workers,
             persistent_workers=persistent_workers,
             model_dir=model_dir,
-            history_dir=history_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,
             y_log_features=y_log_features,
