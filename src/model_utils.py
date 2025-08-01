@@ -1,4 +1,5 @@
 import os
+from scipy.stats import f
 import torch
 from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader
@@ -20,6 +21,18 @@ from typing import Optional
 
 # Set up logger
 logger = logging.getLogger(__name__)
+
+
+def extract_model_name(model_name_chkp: Path) -> str:
+    """
+    Extract the model name without store/item cluster prefix.
+    E.g. from "7_7_ShallowNN.ckpt" → "ShallowNN"
+    """
+    parts = model_name_chkp.split("_")
+    if len(parts) < 3:
+        raise ValueError(f"Unexpected checkpoint name format: {model_name_chkp}")
+
+    return "_".join(parts[2:])
 
 
 def get_accelerator():
@@ -561,6 +574,177 @@ def dataloader_to_dataframe(
     df.reset_index(drop=True, inplace=True)
 
     return df
+
+
+def combine_loaders_to_dataframe(
+    dataloader_dir: Path,
+    x_feature_cols: List[str],
+    label_cols: List[str],
+    *,
+    store_cluster: Optional[int] = None,
+    item_cluster: Optional[int] = None,
+    loader_type: str = "val",  # or "train"
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    """
+    Combines multiple loaders and meta files into a single DataFrame for a given store or item cluster.
+
+    Parameters
+    ----------
+    dataloader_dir : Path
+        Directory containing the *_loader.pt and *_meta.parquet files.
+    x_feature_cols : List[str]
+        Column names for input features.
+    label_cols : List[str]
+        Column names for label features.
+    store_cluster : Optional[int]
+        If set, only include files with this store cluster.
+    item_cluster : Optional[int]
+        If set, only include files with this item cluster.
+    loader_type : str
+        'train' or 'val' to indicate which type of loader to load.
+    log_level : str
+        Logging level for the logger.
+
+    Returns
+    -------
+    pd.DataFrame
+        Concatenated DataFrame from all matching loaders and meta files.
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    assert (store_cluster is None) != (
+        item_cluster is None
+    ), "Provide only one of store_cluster or item_cluster"
+    pattern = re.compile(r"(\d+)_(\d+)_" + re.escape(loader_type) + r"_loader\.pt")
+    logger.info(f"Loading {dataloader_dir}")
+    logger.info(f"Loader type: {loader_type}")
+    logger.info(f"Store cluster: {store_cluster}")
+    logger.info(f"Item cluster: {item_cluster}")
+    dfs = []
+    for file in dataloader_dir.glob(f"*_{loader_type}_loader.pt"):
+        match = pattern.match(file.name)
+        if not match:
+            logger.warning(f"Skipping {file.name}")
+            continue
+
+        sc, ic = int(match.group(1)), int(match.group(2))
+        logger.info(f"Loading {file.name} (store_cluster={sc}, item_cluster={ic})")
+        if store_cluster is not None and sc != store_cluster:
+            logger.warning(f"Skipping {file.name} (store_cluster={sc})")
+            continue
+        if item_cluster is not None and ic != item_cluster:
+            logger.warning(f"Skipping {file.name} (item_cluster={ic})")
+            continue
+
+        logger.info(f"Loading {file.name}")
+        df = dataloader_to_dataframe(file, x_feature_cols, label_cols, "weight")
+        meta_path = dataloader_dir / f"{sc}_{ic}_{loader_type}_meta.parquet"
+        logger.info(f"Loading {meta_path}")
+        if meta_path.exists():
+            meta_df = pd.read_parquet(meta_path)
+            df = pd.concat(
+                [meta_df.reset_index(drop=True), df.reset_index(drop=True)], axis=1
+            )
+        else:
+            logger.warning(f"Meta file not found for {file.name}")
+        dfs.append(df)
+
+    return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
+
+
+
+def predict_store_item(store_cluster: int, 
+                       item_cluster: int,
+                       dataloader_dir: Path,
+                       scaler_dir: Path,
+                       ):
+    loader_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+    meta_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta_loader.parquet"
+    
+    df2 = dataloader_to_dataframe(
+    loader_path=loader_path,
+    meta_path= meta_path,
+    scaler_dir= scaler_dir),
+    x_feature_cols=x_feature_cols,
+    label_cols=label_cols,
+    x_to_log_features=x_to_log_features,
+    x_log_features=x_log_features,
+    x_cyclical_features=x_cyclical_features,
+    y_to_log_features=y_to_log_features,
+    y_log_features=y_log_features,
+    meta_cols=meta_cols,
+    )
+
+# def predict_store_item(
+#     loader_path: Path,
+#     model_path: Path,
+#     scaler_dir: Path,
+#     label_cols: List[str],
+#     x_to_log_features: List[str],
+#     x_log_features: List[str],
+#     x_cyclical_features: List[str],
+#     y_to_log_features: List[str],
+#     y_log_features: List[str],
+#     item_cluster: int,
+#     input_feature_cols: list[str],
+#     input_df: pd.DataFrame,
+#     store_col: str = "store",
+#     item_col: str = "item",
+#     store_cluster_col: str = "store_cluster",
+#     item_cluster_col: str = "item_cluster",
+#     device: str = "cuda" if torch.cuda.is_available() else "cpu",
+#     log_level: str = "INFO",
+# ) -> pd.DataFrame:
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     # --- Load DataLoader ---
+#     data = torch.load(loader_path)
+#     loader = torch.utils.data.DataLoader(data.dataset, batch_size=32)
+#     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+#     y_to_log_idx = [col_y_index_map[c] for c in y_to_log_features]
+#     mav = compute_mav(loader, y_to_log_idx)
+
+#     wrapper = load_lightning_wrapper(path)
+
+#     all_x, all_y, all_w = [], [], []
+#     with torch.no_grad():
+#         for xb, yb, wb in loader:
+#             all_x.append(xb.cpu())
+#             all_y.append(yb.cpu())
+#             all_w.append(wb.cpu())
+
+#     X = torch.cat(all_x, dim=0).numpy()
+#     Y = torch.cat(all_y, dim=0).numpy()
+#     W = torch.cat(all_w, dim=0).numpy()
+#     preds = self.model(xb)
+
+#     logger.debug(f"Validation Batch {batch_idx} preds:\n", preds)
+#         if torch.any(torch.isnan(preds)):
+#             logger.warning(f"NaN detected in predictions at batch {batch_idx}")
+#         preds = torch.clamp(preds, min=1e-6)
+#         if torch.all(torch.eq(yb, 0)):
+#             logger.warning(f"Zero detected in targets at batch {batch_idx}")
+#         yb = torch.clamp(yb, min=1e-6)
+#         loss = self.loss_fn(preds, yb, wb)
+
+#         # Compute validation MAE for this batch
+#         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         val_mae = compute_mae(xb, yb, self.model, device, self.sales_idx)
+#         val_rmse = compute_rmse(preds, yb, device)
+
+
+#     # --- Load scalers ---
+#     stem = loader_path.stem
+#     cluster_key = "_".join(stem.split("_")[:2])
+#     x_log1p_scaler = pickle.load(
+#         (scaler_dir / f"{cluster_key}_x_log1p_scaler.pkl").open("rb")
+#     )
+#     x_log_raw_scaler = pickle.load(
+#         (scaler_dir / f"{cluster_key}_x_log_raw_scaler.pkl").open("rb")
+#     )
+#     x_cyc_scaler = pickle.load(
+#         (scaler_dir / f"{cluster_key}_x_cyc_scaler.pkl").open("rb")
+#     )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1205,18 +1389,13 @@ def load_lightning_wrapper(ckpt_path: Path) -> LightningWrapper:
     # Load just the hyperparameters first
     checkpoint = torch.load(ckpt_path, map_location="cpu")
     hparams = checkpoint["hyper_parameters"]
-    print(checkpoint["hyper_parameters"]["model_name"])
-    print(checkpoint["hyper_parameters"]["input_dim"])
-    print(checkpoint["hyper_parameters"]["output_dim"])
-
-    # Rebuild the base model using saved dimensions and model type
+    model_name = extract_model_name(hparams["model_name"])
     model = model_factory_from_str(
-        hparams["model_name"], hparams["input_dim"], hparams["output_dim"]
+        model_name, hparams["input_dim"], hparams["output_dim"]
     )
-    print(model)
     # Load the wrapper with model injected
-    # wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
-    # return wrapper
+    wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
+    return wrapper
 
 
 def load_latest_models_from_checkpoints(
@@ -1280,33 +1459,6 @@ def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
             sid, model, feature_cols = load_model(model_path)
             models[sid] = (model, feature_cols)
     return models
-
-
-def predict_store_item(
-    loader_path: Path,
-    model_path: Path,
-    item_cluster: int,
-    model_dict: dict[tuple[int, int], LightningWrapper],
-    input_feature_cols: list[str],
-    input_df: pd.DataFrame,
-    store_col: str = "store",
-    item_col: str = "item",
-    store_cluster_col: str = "store_cluster",
-    item_cluster_col: str = "item_cluster",
-    device: str = "cuda" if torch.cuda.is_available() else "cpu",
-) -> pd.DataFrame:
-    # --- Load DataLoader ---
-    data = torch.load(loader_path)
-    loader = torch.utils.data.DataLoader(data.dataset, batch_size=32)
-
-    all_x, all_y, all_w = [], [], []
-    with torch.no_grad():
-        for xb, yb, wb in loader:
-            all_x.append(xb.cpu())
-            all_y.append(yb.cpu())
-            all_w.append(wb.cpu())
-
-    pass
 
 
 def batch_predict_all_store_items(
