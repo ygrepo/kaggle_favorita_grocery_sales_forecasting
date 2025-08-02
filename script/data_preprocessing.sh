@@ -105,9 +105,9 @@ python "${SCRIPT_DIR}/data_preprocessing.py" \
   --nrows "$NROWS" \
   --start_date "$START_DATE" \
   --end_date "$END_DATE" \
-  --store_top_n "$STORE_TOP_N" \
-  --store_med_n "$STORE_MED_N" \
-  --store_bottom_n "$STORE_BOTTOM_N" \
+  # --store_top_n "$STORE_TOP_N" \
+  # --store_med_n "$STORE_MED_N" \
+  # --store_bottom_n "$STORE_BOTTOM_N" \
   --item_top_n "$ITEM_TOP_N" \
   --item_med_n "$ITEM_MED_N" \
   --item_bottom_n "$ITEM_BOTTOM_N" \
