@@ -43,19 +43,18 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/create_X_y_data_loaders_${TIMESTAMP}.log"
 
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
-echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
-echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
-echo "Window size: $WINDOW_SIZE" | tee -a "$LOG_FILE"
-echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 
 # Run the script
 set +e  # Disable exit on error to handle the error message
 echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
+echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
+echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
+echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "  Data dir: ${DATA_DIR}" | tee -a "$LOG_FILE"
 echo "  Scalers dir: ${SCALERS_DIR}" | tee -a "$LOG_FILE"
 echo "  Dataloader dir: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
-echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
+echo "  Window val: ${WINDOW_VAL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/create_X_y_data_loaders.py" \
   --data_dir "$DATA_DIR" \
