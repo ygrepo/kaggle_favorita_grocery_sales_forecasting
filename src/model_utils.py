@@ -1562,8 +1562,8 @@ def generate_sequence_model_loaders(
         .sort_values(["start_date", "store_item"])
         .reset_index(drop=True)
     )
-    df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
-    df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
+    df["store_cluster"] = df["store_cluster"].astype(str)
+    df["item_cluster"] = df["item_cluster"].astype(str)
 
     store_cluster = df["store_cluster"].unique()
     item_cluster = df["item_cluster"].unique()
