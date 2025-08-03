@@ -10,8 +10,6 @@ This script handles the complete training pipeline including:
 - Logging
 """
 
-import os
-
 import sys
 import logging
 import argparse
@@ -100,7 +98,7 @@ def train(
         logger.info(f"Store cluster: {store_cluster}")
         logger.info(f"Item cluster: {item_cluster}")
         train_all_models_for_cluster_pair(
-            model_types=[ModelType.SHALLOW_NN],
+            model_types=MODEL_TYPES,
             epochs=epochs,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
@@ -113,7 +111,8 @@ def train(
             history_dir=history_dir,
             log_level=log_level,
         )
-        break
+
+    logger.info("Training complete.")
 
 
 def parse_args():

@@ -11,9 +11,10 @@ cd "$PROJECT_ROOT"
 
 
 # Default configuration
-DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_12_store_20_item/"
-MODEL_DIR="${PROJECT_ROOT}/output/model_12_store_20_item/"
-HISTORY_DIR="${PROJECT_ROOT}/output/data/history_12_store_20_item/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_2014_2015_top_53_store_2000_item/"
+SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_item/"
+MODEL_DIR="${PROJECT_ROOT}/output/model_2014_2015_top_53_store_2000_item/"
+HISTORY_DIR="${PROJECT_ROOT}/output/data/history_2014_2015_top_53_store_2000_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
