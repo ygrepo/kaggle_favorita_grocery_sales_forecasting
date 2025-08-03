@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
+DATA_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 OUTPUT_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_medians.parquet"
 ITEM_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_item_cluster_medians.parquet"
 STORE_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_store_cluster_medians.parquet"
@@ -22,10 +22,10 @@ LOG_LEVEL="DEBUG"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --item_fn) ITEM_FN="$2"; shift 2 ;;
     --store_fn) STORE_FN="$2"; shift 2 ;;
+    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
