@@ -125,19 +125,19 @@ def parse_args():
         help="Size of the lookback window",
     )
     parser.add_argument(
-        "max_encoder_length",
+        "--max_encoder_length",
         type=int,
         default=30,
         help="Size of the historical window for the model",
     )
     parser.add_argument(
-        "max_prediction_length",
+        "--max_prediction_length",
         type=int,
         default=1,
         help="Size of the prediction window for the model",
     )
     parser.add_argument(
-        "val_horizon",
+        "--val_horizon",
         type=int,
         default=20,
         help="Size of the validation horizon for the model",
@@ -175,7 +175,6 @@ def main():
         logger.info("Starting creating data loaders with configuration:")
         logger.info(f"  Data dir: {data_dir}")
         logger.info(f"  Dataloader dir: {dataloader_dir}")
-        logger.info(f"  Scalers dir: {scalers_dir}")
         logger.info(f"  Log dir: {log_dir}")
         logger.info(f"  Max encoder length: {args.max_encoder_length}")
         logger.info(f"  Max prediction length: {args.max_prediction_length}")
