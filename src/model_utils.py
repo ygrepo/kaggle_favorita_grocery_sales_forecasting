@@ -19,6 +19,10 @@ from collections import defaultdict
 import re
 from typing import Optional
 from pytorch_forecasting import TimeSeriesDataSet
+from pytorch_forecasting import TemporalFusionTransformer
+from pytorch_forecasting.metrics import RMSE
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -654,143 +658,6 @@ def combine_loaders_to_dataframe(
         dfs.append(df)
 
     return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
-
-
-def generate_sequence_model_loaders(
-    df: pd.DataFrame,
-    meta_cols: List[str],
-    x_historical_cols: List[
-        str
-    ],  # features known only historically (lags, medians, sales)
-    x_cyclical_cols: List[str],  # calendar/cyclical features precomputed for all dates
-    label_cols: List[str],  # multi-target y
-    dataloader_dir: Path,
-    *,
-    weight_col: str = "weight",
-    max_encoder_length: int = 30,
-    max_prediction_length: int = 1,
-    val_horizon: int = 20,
-    batch_size: int = 64,
-    num_workers: int = 8,
-    log_level: str = "INFO",
-):
-    """
-    Generate PyTorch Forecasting DataLoaders (train & val) for TFT.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Full DataFrame with meta, features, and labels for 2 years.
-    meta_cols : list of str
-        Columns like ['start_date','store_item','store_cluster','item_cluster'].
-    x_historical_cols : list of str
-        Time-varying unknown features (sales, lags, medians, etc.).
-    x_cyclical_cols : list of str
-        Time-varying known future features (calendar/cyclical).
-    label_cols : list of str
-        Multi-target y columns (e.g., sales + logpct changes).
-    dataloader_dir : Path
-        Directory to save loaders and meta.
-    weight_col : str
-        Optional weight column for loss.
-    max_encoder_length : int
-        Days of history for the encoder (like your old window_size).
-    max_prediction_length : int
-        Days to predict (usually 1 for next-day forecasting).
-    val_horizon : int
-        How many last days to keep for validation.
-    batch_size : int
-        Loader batch size.
-    num_workers : int
-        DataLoader workers.
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    dataloader_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- Prepare and sort DF ---
-    df = (
-        df[meta_cols + x_historical_cols + x_cyclical_cols + label_cols]
-        .sort_values(["start_date", "store_item"])
-        .reset_index(drop=True)
-    )
-    df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
-    df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
-
-    store_cluster = df["store_cluster"].unique()
-    item_cluster = df["item_cluster"].unique()
-    assert len(store_cluster) == 1
-    assert len(item_cluster) == 1
-    store_cluster, item_cluster = store_cluster[0], item_cluster[0]
-    cluster_key = f"{store_cluster}_{item_cluster}"
-    logger.info(
-        f"Preparing Sequence loaders for cluster {cluster_key} with {len(df)} rows"
-    )
-
-    # --- Create time index per series ---
-    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-    df["time_idx"] = df.groupby("store_item").cumcount()
-
-    if weight_col not in df.columns:
-        df[weight_col] = 1.0
-
-    # --- Train/validation split ---
-    validation_cutoff = df["time_idx"].max() - val_horizon
-    train_df = df[df.time_idx <= validation_cutoff]
-
-    # --- Define features ---
-    time_varying_unknown_reals = x_historical_cols
-    time_varying_known_future_reals = x_cyclical_cols
-    static_categoricals = ["store_cluster", "item_cluster"]
-
-    # --- Training TimeSeriesDataSet ---
-    training = TimeSeriesDataSet(
-        train_df,
-        time_idx="time_idx",
-        target=label_cols,
-        group_ids=["store_item"],
-        weight=weight_col,
-        max_encoder_length=max_encoder_length,
-        max_prediction_length=max_prediction_length,
-        time_varying_unknown_reals=time_varying_unknown_reals,
-        time_varying_known_future_reals=time_varying_known_future_reals,
-        static_categoricals=static_categoricals,
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
-    )
-
-    # --- Validation using same scaling & encoding ---
-    validation = TimeSeriesDataSet.from_dataset(
-        training, df, predict=True, stop_randomization=True
-    )
-
-    # --- Convert to DataLoaders ---
-    train_loader = training.to_dataloader(
-        train=True,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        persistent_workers=num_workers > 0,
-    )
-    val_loader = validation.to_dataloader(
-        train=False,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        persistent_workers=num_workers > 0,
-    )
-
-    # --- Save loaders and meta ---
-    torch.save(train_loader, dataloader_dir / f"{cluster_key}_seq_train_loader.pt")
-    torch.save(val_loader, dataloader_dir / f"{cluster_key}_seq_val_loader.pt")
-
-    df[df.time_idx <= validation_cutoff][meta_cols].to_parquet(
-        dataloader_dir / f"{cluster_key}_seq_train_meta.parquet"
-    )
-    df[df.time_idx > validation_cutoff][meta_cols].to_parquet(
-        dataloader_dir / f"{cluster_key}_seq_val_meta.parquet"
-    )
-
-    logger.info(f"Saved Sequence Model loaders and meta for {cluster_key}")
-    return train_loader, val_loader
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1633,3 +1500,217 @@ def predict_next_days_for_sids(
             logger.info(f"Skipping {sid} due to error: {e}")
 
     return pd.concat(all_preds, ignore_index=True)
+
+
+# ------------------------
+# Sequence to Sequence
+# ------------------------
+
+
+def generate_sequence_model_loaders(
+    df: pd.DataFrame,
+    meta_cols: List[str],
+    x_sales_cols: List[str],  # features known only historically (lags, medians, sales)
+    x_cyclical_cols: List[str],  # calendar/cyclical features precomputed for all dates
+    label_cols: List[str],  # multi-target y
+    dataloader_dir: Path,
+    *,
+    weight_col: str = "weight",
+    max_encoder_length: int = 30,  # historical window size, e.g., 30 days
+    max_prediction_length: int = 1,  # usually 1 for next-day forecasting
+    val_horizon: int = 20,  # Last N days for validation
+    batch_size: int = 64,
+    num_workers: int = 8,
+    log_level: str = "INFO",
+):
+    """
+    Generate PyTorch Forecasting DataLoaders (train & val) for TFT.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Full DataFrame with meta, features, and labels for 2 years.
+    meta_cols : list of str
+        Columns like ['start_date','store_item','store_cluster','item_cluster'].
+    x_sales_cols : list of str
+        Time-varying unknown features (sales, lags, medians, etc.).
+    x_cyclical_cols : list of str
+        Time-varying known future features (calendar/cyclical).
+    label_cols : list of str
+        Multi-target y columns (e.g., sales + logpct changes).
+    dataloader_dir : Path
+        Directory to save loaders and meta.
+    weight_col : str
+        Optional weight column for loss.
+    max_encoder_length : int
+        Days of history for the encoder (like your old window_size).
+    max_prediction_length : int
+        Days to predict (usually 1 for next-day forecasting).
+    val_horizon : int
+        How many last days to keep for validation.
+    batch_size : int
+        Loader batch size.
+    num_workers : int
+        DataLoader workers.
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    dataloader_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Prepare and sort DF ---
+    df = (
+        df[meta_cols + x_sales_cols + x_cyclical_cols + label_cols]
+        .sort_values(["start_date", "store_item"])
+        .reset_index(drop=True)
+    )
+    df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
+    df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
+
+    store_cluster = df["store_cluster"].unique()
+    item_cluster = df["item_cluster"].unique()
+    assert len(store_cluster) == 1
+    assert len(item_cluster) == 1
+    store_cluster, item_cluster = store_cluster[0], item_cluster[0]
+    cluster_key = f"{store_cluster}_{item_cluster}"
+    logger.info(
+        f"Preparing Sequence loaders for cluster {cluster_key} with {len(df)} rows"
+    )
+
+    # --- Create time index per series ---
+    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+    df["time_idx"] = df.groupby("store_item").cumcount()
+
+    if weight_col not in df.columns:
+        df[weight_col] = 1.0
+
+    # --- Train/validation split ---
+    validation_cutoff = df["time_idx"].max() - val_horizon
+    train_df = df[df.time_idx <= validation_cutoff]
+
+    # --- Define features ---
+    time_varying_unknown_reals = x_sales_cols
+    time_varying_known_future_reals = x_cyclical_cols
+    static_categoricals = ["store_cluster", "item_cluster"]
+
+    # --- Training TimeSeriesDataSet ---
+    training = TimeSeriesDataSet(
+        train_df,
+        time_idx="time_idx",
+        target=label_cols,
+        group_ids=["store_item"],
+        weight=weight_col,
+        max_encoder_length=max_encoder_length,
+        max_prediction_length=max_prediction_length,
+        time_varying_unknown_reals=time_varying_unknown_reals,
+        time_varying_known_future_reals=time_varying_known_future_reals,
+        static_categoricals=static_categoricals,
+        add_relative_time_idx=True,
+        add_target_scales=True,
+        add_encoder_length=True,
+    )
+
+    # --- Validation using same scaling & encoding ---
+    validation = TimeSeriesDataSet.from_dataset(
+        training, df, predict=True, stop_randomization=True
+    )
+
+    # --- Convert to DataLoaders ---
+    train_loader = training.to_dataloader(
+        train=True,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+    val_loader = validation.to_dataloader(
+        train=False,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+
+    # --- Save loaders and meta ---
+    torch.save(train_loader, dataloader_dir / f"{cluster_key}_seq_train_loader.pt")
+    torch.save(val_loader, dataloader_dir / f"{cluster_key}_seq_val_loader.pt")
+
+    df[df.time_idx <= validation_cutoff][meta_cols].to_parquet(
+        dataloader_dir / f"{cluster_key}_seq_train_meta.parquet"
+    )
+    df[df.time_idx > validation_cutoff][meta_cols].to_parquet(
+        dataloader_dir / f"{cluster_key}_seq_val_meta.parquet"
+    )
+
+    logger.info(f"Saved Sequence Model loaders and meta for {cluster_key}")
+    return train_loader, val_loader
+
+
+def train_sequence_model(
+    df: pd.DataFrame,
+    meta_cols: list[str],
+    x_historical_cols: list[str],
+    x_cyclical_cols: list[str],
+    label_cols: list[str],
+    dataloader_dir: Path,
+) -> Tuple[DataLoader, DataLoader]:
+    """
+    Train a sequence-to-sequence model using PyTorch Lightning and TorchForecasting.
+    This function prepares the data, defines the model, and trains it.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame containing time series data.
+    meta_cols : list[str]
+        List of metadata columns.
+    x_historical_cols : list[str]
+        List of historical feature columns.
+    x_cyclical_cols : list[str]
+        List of cyclical feature columns.
+    label_cols : list[str]
+        List of label columns to predict.
+    dataloader_dir : Path
+        Directory to save the DataLoaders.
+
+    Returns
+    ----------
+    Tuple[DataLoader, DataLoader]
+    """
+
+    # --- Get the underlying TimeSeriesDataSet from train loader ---
+    training_dataset = train_loader.dataset.dataset  # DataLoader -> TimeSeriesDataSet
+    print("Training samples:", len(training_dataset))
+
+    # --- Define TemporalFusionTransformer model ---
+    tft = TemporalFusionTransformer.from_dataset(
+        training_dataset,
+        learning_rate=1e-3,
+        hidden_size=32,  # number of LSTM units
+        attention_head_size=4,
+        dropout=0.1,
+        hidden_continuous_size=16,  # size for continuous variables
+        output_size=len(label_cols),  # multi-target
+        loss=RMSE(),  # or QuantileLoss([0.1,0.5,0.9]) for probabilistic
+        log_interval=10,
+        reduce_on_plateau_patience=3,
+    )
+
+    print(f"Number of parameters in model: {tft.size()/1e3:.1f}k")
+
+    # --- Define PyTorch Lightning Trainer ---
+    early_stop_callback = EarlyStopping(monitor="val_loss", patience=5, mode="min")
+    lr_logger = LearningRateMonitor()
+
+    trainer = Trainer(
+        max_epochs=30,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        gradient_clip_val=0.1,
+        callbacks=[early_stop_callback, lr_logger],
+        enable_progress_bar=True,
+        deterministic=True,
+    )
+
+    # --- Train the model ---
+    trainer.fit(
+        tft,
+        train_dataloaders=train_loader,
+        val_dataloaders=val_loader,
+    )
