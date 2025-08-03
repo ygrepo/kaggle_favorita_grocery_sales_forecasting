@@ -89,7 +89,7 @@ def create_data_loaders(
             df,
             meta_cols=meta_cols,
             x_cyclical_cols=x_sales_features,
-            x_cyclical_features=x_cyclical_features,
+            x_cyclical_cols=x_cyclical_features,
             label_cols=label_cols,
             dataloader_dir=dataloader_dir,
             max_encoder_length=max_encoder_length,
