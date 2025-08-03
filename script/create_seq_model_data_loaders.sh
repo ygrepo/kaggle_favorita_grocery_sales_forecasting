@@ -11,8 +11,7 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_2014_2015_top_53_store_2000_item/"
-DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_2014_2015_top_53_store_2000_item/"
-SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_item/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_seq_model_2014_2015_top_53_store_2000_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -25,7 +24,6 @@ VAL_HORIZON=20  # Last N days for validation
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_dir) DATA_DIR="$2"; shift 2 ;;
-    --scalers_dir) SCALERS_DIR="$2"; shift 2 ;;
     --dataloader_dir) DATALOADER_DIR="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -55,7 +53,6 @@ echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "  Data dir: ${DATA_DIR}" | tee -a "$LOG_FILE"
-echo "  Scalers dir: ${SCALERS_DIR}" | tee -a "$LOG_FILE"
 echo "  Dataloader dir: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Max encoder length: ${MAX_ENCODER_LENGTH}" | tee -a "$LOG_FILE"
@@ -64,7 +61,6 @@ echo "  Validation horizon: ${VAL_HORIZON}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/create_seq_model_data_loaders.py" \
   --data_dir "$DATA_DIR" \
-  --scalers_dir "$SCALERS_DIR" \
   --dataloader_dir "$DATALOADER_DIR" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \

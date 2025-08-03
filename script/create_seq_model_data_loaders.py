@@ -113,12 +113,6 @@ def parse_args():
         help="Path to data directory (relative to project root)",
     )
     parser.add_argument(
-        "--scalers_dir",
-        type=str,
-        default="",
-        help="Path to scalers directory (relative to project root)",
-    )
-    parser.add_argument(
         "--dataloader_dir",
         type=str,
         default="",
@@ -169,7 +163,6 @@ def main():
     # Parse command line arguments
     args = parse_args()
     data_dir = Path(args.data_dir).resolve()
-    scalers_dir = Path(args.scalers_dir).resolve()
     dataloader_dir = Path(args.dataloader_dir).resolve()
     log_dir = Path(args.log_dir).resolve()
 
@@ -190,12 +183,13 @@ def main():
         logger.info(f"  Window size: {args.window_size}")
 
         create_data_loaders(
-            window_size=window_size,
-            window_val=int(args.window_val),
             data_dir=data_dir,
-            scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,
             log_level=args.log_level,
+            window_size=args.window_size,
+            max_encoder_length=args.max_encoder_length,
+            max_prediction_length=args.max_prediction_length,
+            val_horizon=args.val_horizon,
         )
 
     except Exception as e:
