@@ -56,7 +56,7 @@ def create_data_loaders(
         logger.info(f"Data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
         (
             meta_cols,
-            x_sales_features,
+            _,
             x_cyclical_features,
             x_feature_cols,
             x_to_log_features,
@@ -68,19 +68,17 @@ def create_data_loaders(
         ) = build_feature_and_label_cols(window_size=window_size)
         generate_loaders(
             df,
-            meta_cols,
-            x_feature_cols,
-            x_to_log_features,
-            x_log_features,
-            x_cyclical_features,
-            label_cols,
-            y_log_features,
-            y_to_log_features,
+            all_features=all_features,
+            meta_cols=meta_cols,
+            x_feature_cols=x_feature_cols,
+            x_to_log_features=x_to_log_features,
+            x_log_features=x_log_features,
+            x_cyclical_features=x_cyclical_features,
+            label_cols=label_cols,
+            y_log_features=y_log_features,
+            y_to_log_features=y_to_log_features,
             scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,
-            store_cluster=store_cluster,
-            item_cluster=item_cluster,
-            window_size=window_size,
             log_level=log_level,
         )
         logger.info("Data loaded")
