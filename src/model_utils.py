@@ -1510,8 +1510,8 @@ def predict_next_days_for_sids(
 def generate_sequence_model_loaders(
     df: pd.DataFrame,
     meta_cols: List[str],
-    x_sales_cols: List[str],  # features known only historically (lags, medians, sales)
-    x_cyclical_cols: List[str],  # calendar/cyclical features precomputed for all dates
+    all_features: List[str],
+    x_feature_cols: List[str],  # multi-input x
     label_cols: List[str],  # multi-target y
     dataloader_dir: Path,
     *,
@@ -1558,7 +1558,7 @@ def generate_sequence_model_loaders(
 
     # --- Prepare and sort DF ---
     df = (
-        df[meta_cols + x_sales_cols + x_cyclical_cols + label_cols]
+        df[all_features]
         .sort_values(["start_date", "store_item"])
         .reset_index(drop=True)
     )
@@ -1586,12 +1586,7 @@ def generate_sequence_model_loaders(
     validation_cutoff = df["time_idx"].max() - val_horizon
     train_df = df[df.time_idx <= validation_cutoff]
 
-    # --- Define features ---
-    time_varying_unknown_reals = x_sales_cols
-    time_varying_known_future_reals = x_cyclical_cols
-    static_categoricals = ["store_cluster", "item_cluster"]
-
-    # --- Training TimeSeriesDataSet ---
+  
     training = TimeSeriesDataSet(
         train_df,
         time_idx="time_idx",
@@ -1600,9 +1595,8 @@ def generate_sequence_model_loaders(
         weight=weight_col,
         max_encoder_length=max_encoder_length,
         max_prediction_length=max_prediction_length,
-        time_varying_unknown_reals=time_varying_unknown_reals,
-        time_varying_known_future_reals=time_varying_known_future_reals,
-        static_categoricals=static_categoricals,
+        time_varying_reals=x_feature_cols,
+        static_categoricals=["store_cluster", "item_cluster"],
         add_relative_time_idx=True,
         add_target_scales=True,
         add_encoder_length=True,
