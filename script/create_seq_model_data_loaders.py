@@ -85,10 +85,11 @@ def create_data_loaders(
             y_to_log_features,
             all_features,
         ) = build_feature_and_label_cols(window_size=window_size)
+        logger.info("Building sequence model data loaders...")
         generate_sequence_model_loaders(
             df,
             meta_cols=meta_cols,
-            x_cyclical_cols=x_sales_features,
+            x_sales_cols=x_sales_features,
             x_cyclical_cols=x_cyclical_features,
             label_cols=label_cols,
             dataloader_dir=dataloader_dir,
