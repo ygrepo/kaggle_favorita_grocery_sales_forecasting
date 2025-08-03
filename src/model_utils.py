@@ -1586,16 +1586,16 @@ def generate_sequence_model_loaders(
     validation_cutoff = df["time_idx"].max() - val_horizon
     train_df = df[df.time_idx <= validation_cutoff]
 
-  
     training = TimeSeriesDataSet(
         train_df,
         time_idx="time_idx",
-        target=label_cols,
         group_ids=["store_item"],
         weight=weight_col,
         max_encoder_length=max_encoder_length,
         max_prediction_length=max_prediction_length,
-        time_varying_reals=x_feature_cols,
+        time_varying_known_reals=x_feature_cols,
+        time_varying_unknown_reals=label_cols,
+        target=label_cols,
         static_categoricals=["store_cluster", "item_cluster"],
         add_relative_time_idx=True,
         add_target_scales=True,
