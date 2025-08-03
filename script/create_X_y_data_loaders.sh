@@ -17,6 +17,7 @@ SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_ite
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 WINDOW_SIZE=1
+WINDOW_VAL=30
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
+    --window_val) WINDOW_VAL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
 done
@@ -62,6 +64,7 @@ python "${SCRIPT_DIR}/create_X_y_data_loaders.py" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
   --window_size "$WINDOW_SIZE" \
+  --window_val "$WINDOW_VAL" \
    2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script

@@ -18,6 +18,9 @@ from tqdm import tqdm
 from collections import defaultdict
 import re
 from typing import Optional
+from pytorch_forecasting import TimeSeriesDataSet
+
+logger = logging.getLogger(__name__)
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -296,7 +299,7 @@ def generate_loaders(
     scalers_dir: Path,
     *,
     weight_col: str = "weight",
-    window_size: int = 1,
+    window_val: int = 30,
     batch_size: int = 32,
     num_workers: int = 15,
     log_level: str = "INFO",
@@ -326,7 +329,7 @@ def generate_loaders(
         df[weight_col] = 1.0
 
     num_samples = len(df)
-    num_windows = num_samples - window_size
+    num_windows = num_samples - window_val
     if num_windows <= 0:
         logger.warning(f"No valid windows")
         empty = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
@@ -354,8 +357,8 @@ def generate_loaders(
     X_val_raw, y_val_raw, W_val_raw, meta_val_raw = [], [], [], []
 
     for i in tqdm(range(num_windows), desc="Generating windows"):
-        df_train = df.iloc[i : i + window_size].fillna(0)
-        df_val = df.iloc[[i + window_size]].fillna(0)
+        df_train = df.iloc[i : i + window_val].fillna(0)
+        df_val = df.iloc[[i + window_val]].fillna(0)
 
         X_train_raw.append(df_train[x_feature_cols].values)
         y_train_raw.append(df_train[label_cols].values)
@@ -653,97 +656,141 @@ def combine_loaders_to_dataframe(
     return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
 
 
-# def predict_store_item(store_cluster: int,
-#                        item_cluster: int,
-#                        dataloader_dir: Path,
-#                        scaler_dir: Path,
-#                        ):
-#     loader_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
-#     meta_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta_loader.parquet"
+def generate_sequence_model_loaders(
+    df: pd.DataFrame,
+    meta_cols: List[str],
+    x_historical_cols: List[
+        str
+    ],  # features known only historically (lags, medians, sales)
+    x_cyclical_cols: List[str],  # calendar/cyclical features precomputed for all dates
+    label_cols: List[str],  # multi-target y
+    dataloader_dir: Path,
+    *,
+    weight_col: str = "weight",
+    max_encoder_length: int = 30,
+    max_prediction_length: int = 1,
+    val_horizon: int = 20,
+    batch_size: int = 64,
+    num_workers: int = 8,
+    log_level: str = "INFO",
+):
+    """
+    Generate PyTorch Forecasting DataLoaders (train & val) for TFT.
 
-#     df2 = dataloader_to_dataframe(
-#     loader_path=loader_path,
-#     meta_path= meta_path,
-#     scaler_dir= scaler_dir),
-#     x_feature_cols=x_feature_cols,
-#     label_cols=label_cols,
-#     x_to_log_features=x_to_log_features,
-#     x_log_features=x_log_features,
-#     x_cyclical_features=x_cyclical_features,
-#     y_to_log_features=y_to_log_features,
-#     y_log_features=y_log_features,
-#     meta_cols=meta_cols,
-#     )
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Full DataFrame with meta, features, and labels for 2 years.
+    meta_cols : list of str
+        Columns like ['start_date','store_item','store_cluster','item_cluster'].
+    x_historical_cols : list of str
+        Time-varying unknown features (sales, lags, medians, etc.).
+    x_cyclical_cols : list of str
+        Time-varying known future features (calendar/cyclical).
+    label_cols : list of str
+        Multi-target y columns (e.g., sales + logpct changes).
+    dataloader_dir : Path
+        Directory to save loaders and meta.
+    weight_col : str
+        Optional weight column for loss.
+    max_encoder_length : int
+        Days of history for the encoder (like your old window_size).
+    max_prediction_length : int
+        Days to predict (usually 1 for next-day forecasting).
+    val_horizon : int
+        How many last days to keep for validation.
+    batch_size : int
+        Loader batch size.
+    num_workers : int
+        DataLoader workers.
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    dataloader_dir.mkdir(parents=True, exist_ok=True)
 
-# def predict_store_item(
-#     loader_path: Path,
-#     model_path: Path,
-#     scaler_dir: Path,
-#     label_cols: List[str],
-#     x_to_log_features: List[str],
-#     x_log_features: List[str],
-#     x_cyclical_features: List[str],
-#     y_to_log_features: List[str],
-#     y_log_features: List[str],
-#     item_cluster: int,
-#     input_feature_cols: list[str],
-#     input_df: pd.DataFrame,
-#     store_col: str = "store",
-#     item_col: str = "item",
-#     store_cluster_col: str = "store_cluster",
-#     item_cluster_col: str = "item_cluster",
-#     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-#     log_level: str = "INFO",
-# ) -> pd.DataFrame:
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-#     # --- Load DataLoader ---
-#     data = torch.load(loader_path)
-#     loader = torch.utils.data.DataLoader(data.dataset, batch_size=32)
-#     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-#     y_to_log_idx = [col_y_index_map[c] for c in y_to_log_features]
-#     mav = compute_mav(loader, y_to_log_idx)
+    # --- Prepare and sort DF ---
+    df = (
+        df[meta_cols + x_historical_cols + x_cyclical_cols + label_cols]
+        .sort_values(["start_date", "store_item"])
+        .reset_index(drop=True)
+    )
+    df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
+    df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
 
-#     wrapper = load_lightning_wrapper(path)
+    store_cluster = df["store_cluster"].unique()
+    item_cluster = df["item_cluster"].unique()
+    assert len(store_cluster) == 1
+    assert len(item_cluster) == 1
+    store_cluster, item_cluster = store_cluster[0], item_cluster[0]
+    cluster_key = f"{store_cluster}_{item_cluster}"
+    logger.info(
+        f"Preparing Sequence loaders for cluster {cluster_key} with {len(df)} rows"
+    )
 
-#     all_x, all_y, all_w = [], [], []
-#     with torch.no_grad():
-#         for xb, yb, wb in loader:
-#             all_x.append(xb.cpu())
-#             all_y.append(yb.cpu())
-#             all_w.append(wb.cpu())
+    # --- Create time index per series ---
+    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
+    df["time_idx"] = df.groupby("store_item").cumcount()
 
-#     X = torch.cat(all_x, dim=0).numpy()
-#     Y = torch.cat(all_y, dim=0).numpy()
-#     W = torch.cat(all_w, dim=0).numpy()
-#     preds = self.model(xb)
+    if weight_col not in df.columns:
+        df[weight_col] = 1.0
 
-#     logger.debug(f"Validation Batch {batch_idx} preds:\n", preds)
-#         if torch.any(torch.isnan(preds)):
-#             logger.warning(f"NaN detected in predictions at batch {batch_idx}")
-#         preds = torch.clamp(preds, min=1e-6)
-#         if torch.all(torch.eq(yb, 0)):
-#             logger.warning(f"Zero detected in targets at batch {batch_idx}")
-#         yb = torch.clamp(yb, min=1e-6)
-#         loss = self.loss_fn(preds, yb, wb)
+    # --- Train/validation split ---
+    validation_cutoff = df["time_idx"].max() - val_horizon
+    train_df = df[df.time_idx <= validation_cutoff]
 
-#         # Compute validation MAE for this batch
-#         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#         val_mae = compute_mae(xb, yb, self.model, device, self.sales_idx)
-#         val_rmse = compute_rmse(preds, yb, device)
+    # --- Define features ---
+    time_varying_unknown_reals = x_historical_cols
+    time_varying_known_future_reals = x_cyclical_cols
+    static_categoricals = ["store_cluster", "item_cluster"]
 
+    # --- Training TimeSeriesDataSet ---
+    training = TimeSeriesDataSet(
+        train_df,
+        time_idx="time_idx",
+        target=label_cols,
+        group_ids=["store_item"],
+        weight=weight_col,
+        max_encoder_length=max_encoder_length,
+        max_prediction_length=max_prediction_length,
+        time_varying_unknown_reals=time_varying_unknown_reals,
+        time_varying_known_future_reals=time_varying_known_future_reals,
+        static_categoricals=static_categoricals,
+        add_relative_time_idx=True,
+        add_target_scales=True,
+        add_encoder_length=True,
+    )
 
-#     # --- Load scalers ---
-#     stem = loader_path.stem
-#     cluster_key = "_".join(stem.split("_")[:2])
-#     x_log1p_scaler = pickle.load(
-#         (scaler_dir / f"{cluster_key}_x_log1p_scaler.pkl").open("rb")
-#     )
-#     x_log_raw_scaler = pickle.load(
-#         (scaler_dir / f"{cluster_key}_x_log_raw_scaler.pkl").open("rb")
-#     )
-#     x_cyc_scaler = pickle.load(
-#         (scaler_dir / f"{cluster_key}_x_cyc_scaler.pkl").open("rb")
-#     )
+    # --- Validation using same scaling & encoding ---
+    validation = TimeSeriesDataSet.from_dataset(
+        training, df, predict=True, stop_randomization=True
+    )
+
+    # --- Convert to DataLoaders ---
+    train_loader = training.to_dataloader(
+        train=True,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+    val_loader = validation.to_dataloader(
+        train=False,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+
+    # --- Save loaders and meta ---
+    torch.save(train_loader, dataloader_dir / f"{cluster_key}_seq_train_loader.pt")
+    torch.save(val_loader, dataloader_dir / f"{cluster_key}_seq_val_loader.pt")
+
+    df[df.time_idx <= validation_cutoff][meta_cols].to_parquet(
+        dataloader_dir / f"{cluster_key}_seq_train_meta.parquet"
+    )
+    df[df.time_idx > validation_cutoff][meta_cols].to_parquet(
+        dataloader_dir / f"{cluster_key}_seq_val_meta.parquet"
+    )
+
+    logger.info(f"Saved Sequence Model loaders and meta for {cluster_key}")
+    return train_loader, val_loader
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -26,11 +26,30 @@ def create_data_loaders(
     dataloader_dir: Path,
     scalers_dir: Path,
     window_size: int,
+    window_val: int,
     log_level: str,
 ):
+    """
+    Create data loaders for the Favorita Grocery Sales Forecasting model.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory containing the input data files.
+    dataloader_dir : Path
+        Directory to save the generated data loaders.
+    scalers_dir : Path
+        Directory to save the scalers.
+    window_size : int
+        Size of the rolling window for feature creation.
+    window_val : int
+        Size of the validation window.
+    log_level : str
+        Logging level for the script.
+    """
     """Create features for training the model."""
     logger = logging.getLogger(__name__)
-    logger.info("Starting adding data")
+    logger.info("Starting data loader creation")
 
     if data_dir.is_file() and data_dir.suffix == ".parquet":
         files = [data_dir]
@@ -114,6 +133,12 @@ def parse_args():
         help="Size of the lookback window",
     )
     parser.add_argument(
+        "--window_val",
+        type=str,
+        default="30",
+        help="Size of the validation window",
+    )
+    parser.add_argument(
         "--log_dir",
         type=str,
         default="../output/logs",
@@ -150,10 +175,12 @@ def main():
         logger.info(f"  Dataloader dir: {dataloader_dir}")
         logger.info(f"  Scalers dir: {scalers_dir}")
         logger.info(f"  Window size: {window_size}")
+        logger.info(f"  Window validation size: {args.window_val}")
         logger.info(f"  Log dir: {log_dir}")
 
         create_data_loaders(
             window_size=window_size,
+            window_val=int(args.window_val),
             data_dir=data_dir,
             scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,
