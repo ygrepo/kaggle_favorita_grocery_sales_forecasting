@@ -653,28 +653,27 @@ def combine_loaders_to_dataframe(
     return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
 
 
+# def predict_store_item(store_cluster: int,
+#                        item_cluster: int,
+#                        dataloader_dir: Path,
+#                        scaler_dir: Path,
+#                        ):
+#     loader_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+#     meta_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta_loader.parquet"
 
-def predict_store_item(store_cluster: int, 
-                       item_cluster: int,
-                       dataloader_dir: Path,
-                       scaler_dir: Path,
-                       ):
-    loader_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
-    meta_path = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta_loader.parquet"
-    
-    df2 = dataloader_to_dataframe(
-    loader_path=loader_path,
-    meta_path= meta_path,
-    scaler_dir= scaler_dir),
-    x_feature_cols=x_feature_cols,
-    label_cols=label_cols,
-    x_to_log_features=x_to_log_features,
-    x_log_features=x_log_features,
-    x_cyclical_features=x_cyclical_features,
-    y_to_log_features=y_to_log_features,
-    y_log_features=y_log_features,
-    meta_cols=meta_cols,
-    )
+#     df2 = dataloader_to_dataframe(
+#     loader_path=loader_path,
+#     meta_path= meta_path,
+#     scaler_dir= scaler_dir),
+#     x_feature_cols=x_feature_cols,
+#     label_cols=label_cols,
+#     x_to_log_features=x_to_log_features,
+#     x_log_features=x_log_features,
+#     x_cyclical_features=x_cyclical_features,
+#     y_to_log_features=y_to_log_features,
+#     y_log_features=y_log_features,
+#     meta_cols=meta_cols,
+#     )
 
 # def predict_store_item(
 #     loader_path: Path,
