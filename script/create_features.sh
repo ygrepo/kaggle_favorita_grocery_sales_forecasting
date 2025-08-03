@@ -10,27 +10,9 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-#DATA_DIR="${PROJECT_ROOT}/output/data"
-
-#OUTPUT_FN="${DATA_DIR}/20250711_train_top_20_item_clusters_sales_cyclical_features_1_days_X_y.csv"
-#OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features.parquet"
-
-#SALES_FN="${DATA_DIR}/20250711_train_top_20_item_sale_cluster.csv"
-# OUTPUT_FN="${DATA_DIR}/20250711_train_top_51_store_100_item_clusters_sales_cyclical_features_1_days_X_y.csv"
-#SALES_FN="${DATA_DIR}/train_top_store_15_item_sale_cluster.parquet"
-#CYC_FN="${DATA_DIR}/train_top_store_15_item_cyc_cluster.parquet"
-#SALES_FN="${DATA_DIR}/train_top_store_15_item_sale_cluster.parquet"
-#CYC_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cyc_cluster.parquet"
-
-# SALES_FN="${DATA_DIR}/20150209_10_train_top_20_item_sale_cluster.csv"
-# CYC_FN="${DATA_DIR}/20150209_10_train_top_20_item_cyc_cluster.csv"
-#CYC_FN="${DATA_DIR}/20250711_train_top_20_item_cyc_cluster.csv"
-
-# SALE_DIR="${PROJECT_ROOT}/output/data/sales_data/"
-# CYC_DIR="${PROJECT_ROOT}/output/data/cyc_data/"
-SALE_DIR="${PROJECT_ROOT}/output/data/sale_data_12_store_20_item/"
-CYC_DIR="${PROJECT_ROOT}/output/data/cyc_data_12_store_20_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_12_store_20_item/"
+SALE_DIR="${PROJECT_ROOT}/output/data/sale_data_2014_2015_top_53_store_2000_item/"
+CYC_DIR="${PROJECT_ROOT}/output/data/cyc_data_2014_2015_top_53_store_2000_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_2014_2015_top_53_store_2000_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"

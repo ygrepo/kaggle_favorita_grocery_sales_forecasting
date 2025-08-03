@@ -10,27 +10,8 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-#DATA_DIR="${PROJECT_ROOT}/output/data"
-#DATA_FN="${DATA_DIR}/20250710_train_top_51_store_100_item_clusters.csv"
-#DATA_FN="${DATA_DIR}/20250711_train_top_100_item_cluster.csv"
-#DATA_FN="${DATA_DIR}/20150209_10_train_top_20_item_cluster.csv"
-#DATA_FN="${DATA_DIR}/20250711_train_top_store_3000_item_cluster.csv"
-#DATA_FN="${DATA_DIR}/train_top_store_15_item_cluster.parquet"
-#DATA_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
-
-#DATA_FN="${DATA_DIR}/20250707_500_train_top_51_store_9000_item_cluster.csv"
-#OUTPUT_FN="${DATA_DIR}/20250711_train_top_20_item_cyc_cluster.csv"
-#OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_cyc_cluster.parquet"
-# OUTPUT_FN="${DATA_DIR}/20150209_10_train_top_20_item_cyc_cluster.csv"
-# OUTPUT_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cyc_cluster.parquet"
-# LOG_DIR="${PROJECT_ROOT}/output/logs"
-# LOG_LEVEL="DEBUG"
-# WINDOW_SIZE=1
-
-#DATA_FN="${PROJECT_ROOT}/output/data/clustered_data/"
-DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_12_store_20_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/cyc_data_12_store_20_item/"
-
+DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_2014_2015_top_53_store_2000_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/cyc_data_2014_2015_top_53_store_2000_item/"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 WINDOW_SIZE=1
