@@ -10,22 +10,8 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-#DATA_DIR="${PROJECT_ROOT}/output/data"
-
-#DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features.parquet"
-#DATA_FN="${DATA_DIR}/20250711_train_top_store_300_item_clusters_sales_cyclical_features.csv"
-#DATA_FN="${DATA_DIR}/20250711_train_top_store_15_item_clusters_sales_cyclical_features.csv"
-
-#OUTPUT_DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_new.csv"
-#OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
-#OUTPUT_FN="${DATA_DIR}/20250711_train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.csv"
-#OUTPUT_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
-
-#DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data/"
-#OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
-
-DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_12_store_20_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_12_store_20_item/"
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_data_2014_2015_top_53_store_2000_item/"
+OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_2014_2015_top_53_store_2000_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"

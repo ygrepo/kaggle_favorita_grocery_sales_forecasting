@@ -10,15 +10,9 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-#DATA_DIR="${PROJECT_ROOT}/output/data"
-#DATA_FN="${DATA_DIR}/train_top_store_15_item_clusters_sales_cyclical_features_X_1_day_y.parquet"
-#DATA_FN="${DATA_DIR}/20250711_train_top_store_2000_item_clusters_sales_cyclical_features_X_1_day_y.csv"
-#DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y/"
-#DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_28_store_10_item/"
-DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_12_store_20_item/"
-
-DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_12_store_20_item/"
-SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_12_store_20_item/"
+DATA_DIR="${PROJECT_ROOT}/output/data/sale_cyc_features_X_1_day_y_2014_2015_top_53_store_2000_item/"
+DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_2014_2015_top_53_store_2000_item/"
+SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_item/"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
