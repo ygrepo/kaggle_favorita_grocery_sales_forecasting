@@ -37,7 +37,6 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
-mkdir -p "$SCALERS_DIR"
 mkdir -p "$DATALOADER_DIR"
 
 # Set up log file with timestamp
