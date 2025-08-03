@@ -11,10 +11,10 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${DATA_DIR}/train_2014_January_12_store_20_item_cluster.parquet"
-OUTPUT_FN="${DATA_DIR}/train_2014_January_12_store_20_item_cluster_medians.parquet"
-ITEM_FN="${DATA_DIR}/train_2014_January_12_store_20_item_item_cluster_medians.parquet"
-STORE_FN="${DATA_DIR}/train_2014_January_12_store_20_item_store_cluster_medians.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
+OUTPUT_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_medians.parquet"
+ITEM_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_item_cluster_medians.parquet"
+STORE_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_store_cluster_medians.parquet"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
