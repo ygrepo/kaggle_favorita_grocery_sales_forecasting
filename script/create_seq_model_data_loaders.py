@@ -88,7 +88,7 @@ def create_data_loaders(
         generate_sequence_model_loaders(
             df,
             meta_cols=meta_cols,
-            x_sales_features=x_sales_features,
+            x_cyclical_cols=x_sales_features,
             x_cyclical_features=x_cyclical_features,
             label_cols=label_cols,
             dataloader_dir=dataloader_dir,
