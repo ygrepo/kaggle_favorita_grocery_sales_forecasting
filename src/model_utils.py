@@ -537,6 +537,7 @@ def train_all_models_for_cluster_pair(
                 train_logger=train_logger,
                 log_level=log_level,
             )
+            break
             # history = train_per_cluster_pair(
             #     model_dir=model_dir,
             #     model_type=model_type,
@@ -1189,7 +1190,13 @@ def train_sequence_model(
 
     # --- Get the underlying TimeSeriesDataSet from train loader ---
     training_dataset = train_loader.dataset.dataset  # DataLoader -> TimeSeriesDataSet
-    print("Training samples:", len(training_dataset))
+    # Get number of training samples - handle different dataset types
+    try:
+        num_samples = len(training_dataset)
+    except (TypeError, AttributeError):
+        # For datasets that don't implement __len__ properly
+        num_samples = getattr(training_dataset, "length", "unknown")
+    print("Training samples:", num_samples)
 
     # --- Define TemporalFusionTransformer model ---
     tft = TemporalFusionTransformer.from_dataset(
@@ -1292,6 +1299,7 @@ def train_model_unified(
         )
 
         inferred_batch_size = train_loader.batch_size or 32
+        logger.info(f"Inferred batch size: {inferred_batch_size}")
         train_loader = DataLoader(
             train_loader.dataset,
             batch_size=inferred_batch_size,
@@ -1299,6 +1307,13 @@ def train_model_unified(
             persistent_workers=persistent_workers,
             pin_memory=True,
         )
+        # Get number of training samples - handle different dataset types
+        try:
+            num_samples = len(train_loader.dataset)
+        except (TypeError, AttributeError):
+            # For datasets that don't implement __len__ properly
+            num_samples = getattr(train_loader.dataset, "length", "unknown")
+        logger.info(f"Number of training samples: {num_samples}")
         val_loader = DataLoader(
             val_loader.dataset,
             batch_size=inferred_batch_size,
@@ -1306,13 +1321,27 @@ def train_model_unified(
             persistent_workers=persistent_workers,
             pin_memory=True,
         )
+        try:
+            num_samples = len(val_loader.dataset)
+        except (TypeError, AttributeError):
+            # For datasets that don't implement __len__ properly
+            num_samples = getattr(val_loader.dataset, "length", "unknown")
+        logger.info(f"Number of training samples: {num_samples}")
 
-        input_dim = train_loader.dataset.tensors[0].shape[1]
+        # Get input dimension from the first batch
+        # For TensorDataset, we can access tensors directly
+        if hasattr(train_loader.dataset, "tensors"):
+            input_dim = train_loader.dataset.tensors[0].shape[1]
+        else:
+            # Fallback: get from first batch
+            sample_batch = next(iter(train_loader))
+            input_dim = sample_batch[0].shape[1]
         output_dim = len(label_cols)
 
         # Compute MAV for normalization
         col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
         y_log_idx = [col_y_index_map[c] for c in y_log_features]
+        logger.info(f"y_log_idx: {y_log_idx}")
         train_mav = compute_mav(train_loader, y_log_idx)
         val_mav = compute_mav(val_loader, y_log_idx)
 
@@ -1388,7 +1417,13 @@ def train_model_unified(
         )
 
         training_dataset = train_loader.dataset.dataset  # underlying TimeSeriesDataSet
-        logger.info(f"Training samples: {len(training_dataset)}")
+        # Get number of training samples - handle different dataset types
+        try:
+            num_samples = len(training_dataset)
+        except (TypeError, AttributeError):
+            # For datasets that don't implement __len__ properly
+            num_samples = getattr(training_dataset, "length", "unknown")
+        logger.info(f"Training samples: {num_samples}")
 
         # Build TFT model
         tft = TemporalFusionTransformer.from_dataset(
