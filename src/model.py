@@ -509,11 +509,11 @@ def compute_mav(
             y_np = yb.cpu().numpy()
             sales = np.expm1(y_np[:, sales_idx])  # Undo log1p
 
-            nonzero_count = np.count_nonzero(sales)
-            logger.debug(
-                f"Sales: shape={sales.shape}, non-zero={nonzero_count}, "
-                f"min={np.min(sales):.2f}, max={np.max(sales):.2f}, mean={np.mean(sales):.2f}"
-            )
+            # nonzero_count = np.count_nonzero(sales)
+            # logger.debug(
+            #     f"Sales: shape={sales.shape}, non-zero={nonzero_count}, "
+            #     f"min={np.min(sales):.2f}, max={np.max(sales):.2f}, mean={np.mean(sales):.2f}"
+            # )
 
             abs_sum += np.abs(sales).sum()
             count += sales.size
