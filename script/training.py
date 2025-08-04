@@ -106,7 +106,7 @@ def train(
             model_dir=model_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,
-            y_log_features=y_log_features,
+            y_to_log_features=y_to_log_features,
             store_cluster=store_cluster,
             item_cluster=item_cluster,
             history_dir=history_dir,

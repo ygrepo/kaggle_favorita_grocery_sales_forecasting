@@ -496,7 +496,7 @@ def train_all_models_for_cluster_pair(
     model_dir: Path,
     dataloader_dir: Path,
     label_cols: list[str],
-    y_log_features: list[str],
+    y_to_log_features: list[str],
     store_cluster: int,
     item_cluster: int,
     *,
@@ -524,7 +524,7 @@ def train_all_models_for_cluster_pair(
                 dataloader_dir=dataloader_dir,
                 model_family="feedforward",
                 label_cols=label_cols,
-                y_log_features=y_log_features,
+                y_to_log_features=y_to_log_features,
                 store_cluster=store_cluster,
                 item_cluster=item_cluster,
                 history_dir=history_dir,
@@ -1242,7 +1242,7 @@ def train_model_unified(
     model_type: ModelType,  # Your enum for feedforward models
     model_family: str,  # "feedforward" or "sequence"
     label_cols: list[str],
-    y_log_features: list[str],
+    y_to_log_features: list[str],
     store_cluster: int,
     item_cluster: int,
     *,
@@ -1340,10 +1340,10 @@ def train_model_unified(
 
         # Compute MAV for normalization
         col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-        y_log_idx = [col_y_index_map[c] for c in y_log_features]
-        logger.info(f"y_log_idx: {y_log_idx}")
-        train_mav = compute_mav(train_loader, y_log_idx)
-        val_mav = compute_mav(val_loader, y_log_idx)
+        y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
+        logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
+        train_mav = compute_mav(train_loader, y_to_log_features_idx)
+        val_mav = compute_mav(val_loader, y_to_log_features_idx)
 
         # Build model and wrapper
         base_model = model_factory(model_type, input_dim, output_dim)
@@ -1353,7 +1353,7 @@ def train_model_unified(
             model_name=model_name,
             store=store_cluster,
             item=item_cluster,
-            sales_idx=y_log_idx,
+            sales_idx=y_to_log_features_idx,
             train_mav=train_mav,
             val_mav=val_mav,
             lr=lr,
