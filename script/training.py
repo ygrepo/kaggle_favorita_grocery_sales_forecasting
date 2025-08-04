@@ -17,19 +17,17 @@ from pathlib import Path
 
 import torch
 import gc
-import torch.multiprocessing as mp
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.model_utils import (
+from src.model import (
     MODEL_TYPES,
-    train_all_models_for_cluster_pair,
 )
+from src.model_utils import train_all_models_for_cluster_pair
 from src.data_utils import build_feature_and_label_cols
 from src.utils import setup_logging, str2bool
-from src.model_utils import ModelType
 
 
 def train(
@@ -37,6 +35,8 @@ def train(
     model_dir: Path,
     window_size: int,
     epochs: int,
+    lr: float,
+    seed: int,
     num_workers: int,
     persistent_workers: bool,
     history_dir: Path,
@@ -58,6 +58,10 @@ def train(
         Directory to save training history.
     epochs : int
         Number of training epochs.
+    lr : float
+        Learning rate.
+    seed : int
+        Random seed.
     num_workers : int
         Number of subprocesses to use for data loading.
     persistent_workers : bool
@@ -99,9 +103,6 @@ def train(
         logger.info(f"Item cluster: {item_cluster}")
         train_all_models_for_cluster_pair(
             model_types=MODEL_TYPES,
-            epochs=epochs,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
             model_dir=model_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,
@@ -109,10 +110,13 @@ def train(
             store_cluster=store_cluster,
             item_cluster=item_cluster,
             history_dir=history_dir,
+            lr=lr,
+            epochs=epochs,
+            seed=seed,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
             log_level=log_level,
         )
-
-    logger.info("Training complete.")
 
 
 def parse_args():
@@ -121,16 +125,40 @@ def parse_args():
         description="Train Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
+        "--model_dir",
+        type=str,
+        default="./output/models",
+        help="Directory to save trained models (relative to project root)",
+    )
+    parser.add_argument(
         "--dataloader_dir",
         type=str,
         default="./output/dataloaders",
         help="Directory to save dataloaders (relative to project root)",
     )
     parser.add_argument(
-        "--model_dir",
+        "--epochs",
+        type=int,
+        default=100,
+        help="Number of training epochs",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=3e-4,
+        help="Learning rate",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=2025,
+        help="Random seed",
+    )
+    parser.add_argument(
+        "--history_dir",
         type=str,
-        default="./output/models",
-        help="Directory to save trained models (relative to project root)",
+        default="",
+        help="Directory to save training history (relative to project root)",
     )
     parser.add_argument(
         "--num_workers",
@@ -144,24 +172,14 @@ def parse_args():
         default=True,
         help="Whether to use persistent workers for data loading",
     )
-    parser.add_argument(
-        "--history_dir",
-        type=str,
-        default="",
-        help="Directory to save training history (relative to project root)",
-    )
+
     parser.add_argument(
         "--window_size",
         type=int,
         default=1,
         help="Size of the lookback window",
     )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=100,
-        help="Number of training epochs",
-    )
+
     parser.add_argument(
         "--log_dir",
         type=str,
@@ -205,6 +223,8 @@ def main():
         logger.info(f"  History directory: {history_dir}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
+        logger.info(f"  Learning rate: {args.lr}")
+        logger.info(f"  Seed: {args.seed}")
         logger.info(f"  Num workers: {num_workers}")
         logger.info(f"  Persistent workers: {persistent_workers}")
         torch.cuda.empty_cache()
@@ -224,10 +244,12 @@ def main():
             model_dir=model_dir,
             window_size=args.window_size,
             epochs=args.epochs,
+            lr=args.lr,
+            seed=args.seed,
             history_dir=history_dir,
-            log_level=args.log_level,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
+            log_level=args.log_level,
         )
         logger.info("Training completed successfully!")
 

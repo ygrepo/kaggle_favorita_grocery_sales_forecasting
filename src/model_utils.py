@@ -1,5 +1,4 @@
 import os
-from scipy.stats import f
 import torch
 from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader
@@ -23,6 +22,9 @@ from pytorch_forecasting import TemporalFusionTransformer
 from pytorch_forecasting.metrics import RMSE
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
+from src.model import LightningWrapper, ModelType
+from src.model import compute_mav, model_factory, init_weights, model_factory_from_str
+from torch.utils.data import TensorDataset, Dataset, DataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -30,30 +32,12 @@ logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 
-def extract_model_name(model_name_chkp: Path) -> str:
-    """
-    Extract the model name without store/item cluster prefix.
-    E.g. from "7_7_ShallowNN.ckpt" → "ShallowNN"
-    """
-    parts = model_name_chkp.split("_")
-    if len(parts) < 3:
-        raise ValueError(f"Unexpected checkpoint name format: {model_name_chkp}")
-
-    return "_".join(parts[2:])
-
-
-def get_accelerator():
+def get_device():
     if torch.cuda.is_available():
         accelerator = "gpu"
     else:
         accelerator = "cpu"
     return accelerator
-
-
-def _to_float(x):
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().item()
-    return float(x)
 
 
 def safe_append_to_history(history_fn: Path, new_history: pd.DataFrame) -> pd.DataFrame:
@@ -124,165 +108,6 @@ class StoreItemDataset(Dataset):
         return self.X[idx], self.y[idx], self.w[idx]
 
 
-class ShallowNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim=128, output_dim=3, dropout=0.0):
-        """
-        Shallow 1-layer neural network for log-space regression targets.
-        Outputs are unbounded real numbers.
-        """
-        super().__init__()
-
-        dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LeakyReLU(),
-            dropout_layer,
-            nn.Linear(hidden_dim, output_dim),
-            nn.Identity(),  # no activation at output
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class TwoLayerNN(nn.Module):
-    def __init__(self, input_dim, output_dim=3, h1=128, h2=64, dropout=0.2):
-        """
-        Two-layer feedforward NN for log-transformed targets.
-        All outputs are unbounded real values, no final activation.
-        """
-        super().__init__()
-
-        dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, h1),
-            nn.LayerNorm(h1),
-            nn.LeakyReLU(),
-            dropout_layer,
-            nn.Linear(h1, h2),
-            nn.LayerNorm(h2),
-            nn.LeakyReLU(),
-            dropout_layer,
-            nn.Linear(h2, output_dim),
-            nn.Identity(),  # no activation
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class ResidualMLP(nn.Module):
-    def __init__(self, input_dim, output_dim=3, hidden=128, depth=3, dropout=0.2):
-        super().__init__()
-        self.blocks = nn.ModuleList()
-        for _ in range(depth):
-            self.blocks.append(
-                nn.Sequential(
-                    nn.Linear(input_dim, hidden),
-                    nn.LayerNorm(hidden),  # changed from BatchNorm1d
-                    nn.ReLU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(hidden, input_dim),  # residual connection
-                )
-            )
-        self.out_proj = nn.Linear(input_dim, output_dim)
-
-    def forward(self, x):
-        out = x
-        for block in self.blocks:
-            out = out + block(out)
-        return self.out_proj(out)
-
-
-# Enum for model types
-class ModelType(Enum):
-    SHALLOW_NN = "ShallowNN"
-    TWO_LAYER_NN = "TwoLayerNN"
-    RESIDUAL_MLP = "ResidualMLP"
-
-
-MODEL_TYPES = list(ModelType)
-
-
-# Model Factory Function
-def model_factory(model_type: ModelType, input_dim: int, output_dim: int) -> nn.Module:
-    """Factory function to return the correct model based on the model_type."""
-    if model_type == ModelType.SHALLOW_NN:
-        return ShallowNN(input_dim, output_dim)
-    elif model_type == ModelType.TWO_LAYER_NN:
-        return TwoLayerNN(input_dim, output_dim)
-    elif model_type == ModelType.RESIDUAL_MLP:
-        return ResidualMLP(input_dim, output_dim)
-
-
-def model_factory_from_str(
-    model_type: str, input_dim: int, output_dim: int
-) -> nn.Module:
-    """Factory function to return the correct model based on the model_type."""
-    if model_type == "ShallowNN":
-        return ShallowNN(input_dim, output_dim)
-    elif model_type == "TwoLayerNN":
-        return TwoLayerNN(input_dim, output_dim)
-    elif model_type == "ResidualMLP":
-        return ResidualMLP(input_dim, output_dim)
-
-
-# ----- initialise every nn.Linear in the network ----------
-def init_weights(m):
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_uniform_(m.weight, a=0.01)  # He initialisation for LeakyReLU
-        nn.init.zeros_(m.bias)
-
-
-class NWRMSLELoss(nn.Module):
-    def __init__(self):
-        super().__init__()
-        logger.setLevel(logging.INFO)
-
-    def forward(self, y_pred, y_true, w):
-        # add 1 to avoid log(0), clamp to eps to keep preds positive
-        eps = 1e-6
-        y_pred = torch.clamp(y_pred, min=eps)
-        log_diff = torch.log(y_pred + 1.0) - torch.log(y_true + 1.0)
-        num = torch.sum(w * log_diff**2)
-        den = torch.sum(w)
-        return torch.sqrt(num / den)
-
-
-class HybridLoss(nn.Module):
-    def __init__(self, alpha=0.8):
-        super().__init__()
-        self.alpha = alpha
-
-    def forward(self, y_pred, y_true, w):
-        eps = 1e-6
-        y_pred = torch.clamp(y_pred, min=eps)
-        log_diff = torch.log(y_pred + 1.0) - torch.log(y_true + 1.0)
-        nwrmsle = torch.sqrt(torch.sum(w * log_diff**2) / torch.sum(w))
-        mae = torch.sum(w * torch.abs(y_pred - y_true)) / torch.sum(w)
-        return self.alpha * nwrmsle + (1 - self.alpha) * mae
-
-
-def set_seed(seed: int = 42):
-    """Set seed for reproducibility across random, numpy, and torch."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)  # for multi-GPU
-
-    # Ensure deterministic behavior
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    # For full reproducibility in future versions
-    os.environ["PYTHONHASHSEED"] = str(seed)
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
@@ -344,7 +169,7 @@ def generate_loaders(
     )  # 🔹 windows ending after this go to validation
 
     if num_windows <= 0:
-        logger.warning(f"No valid windows")
+        logger.warning("No valid windows")
         empty = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
         empty_y = torch.empty((0, len(label_cols)), dtype=torch.float32)
         empty_w = torch.empty((0, 1), dtype=torch.float32)
@@ -501,7 +326,7 @@ def dataloader_to_dataframe(
 
     # --- Load DataLoader ---
     data = torch.load(loader_path)
-    loader = torch.utils.data.DataLoader(data.dataset, batch_size=32)
+    loader = DataLoader(data.dataset, batch_size=32)
 
     all_x, all_y, all_w = [], [], []
     with torch.no_grad():
@@ -666,339 +491,6 @@ def combine_loaders_to_dataframe(
     return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
 
 
-# ─────────────────────────────────────────────────────────────────────
-# LightningWrapper
-# ─────────────────────────────────────────────────────────────────────
-class LightningWrapper(pl.LightningModule):
-    """Minimal Lightning module wrapping the forecasting model."""
-
-    def __init__(
-        self,
-        model: nn.Module,
-        model_name: str,
-        store: int,
-        item: int,
-        sales_idx: list[int],
-        train_mav: float,
-        val_mav: float,
-        input_dim: int,
-        output_dim: int,
-        *,
-        lr: float = 3e-4,
-        log_level: str = "INFO",
-    ):
-        super().__init__()
-        logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-        self.model = model
-        self.model_name = model_name
-        self.store = store
-        self.item = item
-        self.lr = lr
-        self.sales_idx = sales_idx
-        self.train_mav = train_mav
-        self.val_mav = val_mav
-        self.loss_fn = NWRMSLELoss()
-
-        # Save all except model
-        self.save_hyperparameters(ignore=["model"])
-
-        # Initialize metrics accumulators for each epoch
-        self.train_error_history = []
-        self.val_error_history = []
-        self.train_mae_history = []
-        self.val_mae_history = []
-        self.train_rmse_history = []
-        self.val_rmse_history = []
-        self.best_train_avg_mae = float("inf")
-        self.best_val_avg_mae = float("inf")
-        self.best_train_avg_rmse = float("inf")
-        self.best_val_avg_rmse = float("inf")
-        self.best_train_avg_percent_mav = float("inf")
-        self.best_val_avg_percent_mav = float("inf")
-
-    def forward(self, x):
-        return self.model(x)
-
-    def training_step(self, batch, batch_idx):
-        xb, yb, wb = batch
-        if torch.any(torch.isnan(xb)):
-            logger.warning(f"NaN in input (xb) at batch {batch_idx}")
-        if torch.any(torch.isinf(xb)):
-            logger.warning(f"Inf in input (xb) at batch {batch_idx}")
-        preds = self.model(xb)
-        logger.debug(f"Training Batch {batch_idx} preds:\n", preds)
-        if torch.any(torch.isinf(preds)):
-            logger.warning(f"Inf in raw preds at batch {batch_idx}")
-        preds = torch.clamp(preds, min=1e-6)
-
-        loss = self.loss_fn(preds, yb, wb)
-
-        # Compute training MAE for this batch
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        train_mae = compute_mae(xb, yb, self.model, device, self.sales_idx)
-        train_rmse = compute_rmse(preds, yb, device)
-
-        self.train_error_history.append(loss)
-        self.train_mae_history.append(train_mae)
-        self.train_rmse_history.append(train_rmse)
-
-        # Log the batch loss, MAE, and accuracy
-        self.log("train_loss", loss, prog_bar=True, sync_dist=True)
-        self.log("train_mae", train_mae, prog_bar=True, sync_dist=True)
-        self.log("train_rmse", train_rmse, prog_bar=True, sync_dist=True)
-
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        xb, yb, wb = batch
-        if (
-            torch.any(torch.isnan(xb))
-            or torch.any(torch.isnan(yb))
-            or torch.any(torch.isnan(wb))
-        ):
-            logger.info(f"NaN detected in data at batch {batch_idx}")
-        preds = self.model(xb)
-        logger.debug(f"Validation Batch {batch_idx} preds:\n", preds)
-        if torch.any(torch.isnan(preds)):
-            logger.warning(f"NaN detected in predictions at batch {batch_idx}")
-        preds = torch.clamp(preds, min=1e-6)
-        if torch.all(torch.eq(yb, 0)):
-            logger.warning(f"Zero detected in targets at batch {batch_idx}")
-        yb = torch.clamp(yb, min=1e-6)
-        loss = self.loss_fn(preds, yb, wb)
-
-        # Compute validation MAE for this batch
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        val_mae = compute_mae(xb, yb, self.model, device, self.sales_idx)
-        val_rmse = compute_rmse(preds, yb, device)
-
-        self.val_error_history.append(loss)
-        self.val_mae_history.append(val_mae)
-        self.val_rmse_history.append(val_rmse)
-
-        # Log the batch loss, MAE, and accuracy
-        self.log("val_loss", loss, prog_bar=True, sync_dist=True)
-        self.log("val_mae", val_mae, prog_bar=True, sync_dist=True)
-        self.log("val_rmse", val_rmse, prog_bar=True, sync_dist=True)
-
-        return loss
-
-    def on_epoch_start(self) -> None:
-        logger.info(f"\nModel: {self.model_name}-Epoch {self.current_epoch} started!")
-
-    def on_train_epoch_end(self) -> None:
-        logger.info(f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!")
-        # Compute average metrics for the epoch
-        avg_train_mae = np.mean([_to_float(t) for t in self.train_mae_history])
-        avg_train_rmse = np.mean([_to_float(t) for t in self.train_rmse_history])
-        if self.train_mav == 0:
-            logger.warning(
-                f"Train mav is 0 for store {self.store} and item {self.item}"
-            )
-            avg_train_percent_mav = float("inf")
-        else:
-            avg_train_percent_mav = avg_train_mae / self.train_mav * 100
-
-        avg_val_mae = np.mean([_to_float(t) for t in self.val_mae_history])
-        avg_val_rmse = np.mean([_to_float(t) for t in self.val_rmse_history])
-        if self.val_mav == 0:
-            logger.warning(
-                f"Train mav is 0 for store {self.store} and item {self.item}"
-            )
-            avg_val_percent_mav = float("inf")
-        else:
-            avg_val_percent_mav = avg_val_mae / self.val_mav * 100
-
-        # Log epoch-level metrics
-        self.log("avg_train_mav", self.train_mav, prog_bar=False, sync_dist=True)
-        self.log("avg_train_mae", avg_train_mae, prog_bar=False, sync_dist=True)
-        self.log(
-            "avg_train_percent_mav",
-            avg_train_percent_mav,
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log("avg_train_rmse", avg_train_rmse, prog_bar=False, sync_dist=True)
-        self.log("avg_val_mav", self.val_mav, prog_bar=False, sync_dist=True)
-        self.log("avg_val_mae", avg_val_mae, prog_bar=False, sync_dist=True)
-        self.log(
-            "avg_val_percent_mav", avg_val_percent_mav, prog_bar=False, sync_dist=True
-        )
-        self.log("avg_val_rmse", avg_val_rmse, prog_bar=False, sync_dist=True)
-
-        # Reset accumulators for the next epoch
-        self.train_mae_history = []
-        self.val_mae_history = []
-        self.train_rmse_history = []
-        self.val_rmse_history = []
-
-        if avg_train_mae < self.best_train_avg_mae:
-            self.best_train_avg_mae = avg_train_mae
-            self.best_train_avg_mae_percent_mav = avg_train_percent_mav
-        if avg_train_rmse < self.best_train_avg_rmse:
-            self.best_train_avg_rmse = avg_train_rmse
-        if avg_val_mae < self.best_val_avg_mae:
-            self.best_val_avg_mae = avg_val_mae
-            self.best_val_avg_mae_percent_mav = avg_val_percent_mav
-        if avg_val_rmse < self.best_val_avg_rmse:
-            self.best_val_avg_rmse = avg_val_rmse
-
-        self.log(
-            "best_train_avg_mae",
-            self.best_train_avg_mae,
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_train_avg_mae_percent_mav",
-            self.best_train_avg_mae_percent_mav,
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_train_avg_rmse",
-            self.best_train_avg_rmse,
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_val_avg_mae", self.best_val_avg_mae, prog_bar=False, sync_dist=True
-        )
-        self.log(
-            "best_val_avg_mae_percent_mav",
-            self.best_val_avg_mae_percent_mav,
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_val_avg_rmse", self.best_val_avg_rmse, prog_bar=False, sync_dist=True
-        )
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=4, min_lr=1e-5
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-            },
-        }
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Helper metrics
-# ─────────────────────────────────────────────────────────────────────
-def compute_mav(
-    loader: DataLoader,
-    sales_idx: list[int],
-) -> float:
-    """
-    Mean absolute value of the sales targets in original units.
-    Assumes log1p scaling. Cyclical sin/cos columns are ignored.
-    Returns 0.0 if all sales are zero or count is zero.
-    """
-    logger.setLevel(getattr(logging, "DEBUG", logging.INFO))
-
-    abs_sum, count = 0.0, 0
-    with torch.no_grad():
-        for _, yb, _ in loader:
-            y_np = yb.cpu().numpy()
-            sales = np.expm1(y_np[:, sales_idx])  # Undo log1p
-
-            nonzero_count = np.count_nonzero(sales)
-            logger.debug(
-                f"Sales: shape={sales.shape}, non-zero={nonzero_count}, "
-                f"min={np.min(sales):.2f}, max={np.max(sales):.2f}, mean={np.mean(sales):.2f}"
-            )
-
-            abs_sum += np.abs(sales).sum()
-            count += sales.size
-
-    if count == 0:
-        logger.warning(
-            "MAV computation: No sales entries found (count=0). Returning 0.0."
-        )
-        return 0.0
-
-    mav = abs_sum / count
-
-    if mav == 0.0:
-        logger.warning("MAV computation: All sales are zero. Returning 0.0.")
-
-    return mav
-
-
-def compute_mae(
-    xb: torch.Tensor,
-    yb: torch.Tensor,
-    model: torch.nn.Module,
-    device: torch.device,
-    sales_idx: list[int],
-) -> float:
-    """
-    Mean Absolute Error on SALES ONLY, expressed in original units.
-    Cyclical targets are excluded from the calculation.
-    Returns 0.0 if batch is empty or only zeros.
-    """
-    if xb.numel() == 0 or yb.numel() == 0:
-        logger.warning("Empty batch encountered in compute_mae. Returning 0.0.")
-        return 0.0
-
-    with torch.no_grad():
-        # ----- predictions -----
-        preds_np = model(xb.to(device)).cpu().numpy()
-        p_sales_units = preds_np[:, sales_idx]
-        p_sales_units = np.expm1(p_sales_units)
-
-        # ----- ground truth ----
-        yb_np = yb.cpu().numpy()
-        y_sales_units = yb_np[:, sales_idx]
-        y_sales_units = np.expm1(y_sales_units)
-
-        # ----- calculate batch-wise MAE -----
-        if y_sales_units.size == 0:
-            logger.warning("No sales values found in compute_mae. Returning 0.0.")
-            return 0.0
-        mask = y_sales_units > 0
-        logger.debug(f"Non-zero targets in batch: {mask.sum()} / {y_sales_units.size}")
-
-        if mask.sum() == 0:
-            logger.warning("All targets are zero in this batch. Skipping MAE.")
-            return 0.0
-
-    batch_mae = np.abs(p_sales_units[mask] - y_sales_units[mask]).mean()
-
-    return batch_mae
-
-
-def compute_rmse(
-    preds: torch.Tensor,
-    targets: torch.Tensor,
-    device: torch.device = torch.device("cpu"),
-) -> torch.Tensor:
-    """Compute Root Mean Squared Error (RMSE)."""
-    # Ensure both tensors are on the correct device
-    preds = preds.to(device)
-    targets = targets.to(device)
-
-    # Detach the tensors from the computation graph to avoid gradient tracking issues
-    preds = preds.detach()
-    targets = targets.detach()
-
-    # Calculate squared differences
-    squared_diff = torch.square(preds - targets)
-
-    # Compute the mean squared error (MSE)
-    mse = torch.mean(squared_diff)
-
-    # Return the square root of MSE (RMSE)
-    rmse = torch.sqrt(mse)
-    return rmse
-
-
 def train_all_models_for_cluster_pair(
     model_types: List[ModelType],
     model_dir: Path,
@@ -1026,10 +518,11 @@ def train_all_models_for_cluster_pair(
 
     for model_type in model_types:
         try:
-            history = train_per_cluster_pair(
+            history = train_model_unified(
                 model_dir=model_dir,
                 model_type=model_type,
                 dataloader_dir=dataloader_dir,
+                model_family="feedforward",
                 label_cols=label_cols,
                 y_log_features=y_log_features,
                 store_cluster=store_cluster,
@@ -1044,6 +537,24 @@ def train_all_models_for_cluster_pair(
                 train_logger=train_logger,
                 log_level=log_level,
             )
+            # history = train_per_cluster_pair(
+            #     model_dir=model_dir,
+            #     model_type=model_type,
+            #     dataloader_dir=dataloader_dir,
+            #     label_cols=label_cols,
+            #     y_log_features=y_log_features,
+            #     store_cluster=store_cluster,
+            #     item_cluster=item_cluster,
+            #     history_dir=history_dir,
+            #     lr=lr,
+            #     epochs=epochs,
+            #     seed=seed,
+            #     num_workers=num_workers,
+            #     persistent_workers=persistent_workers,
+            #     enable_progress_bar=enable_progress_bar,
+            #     train_logger=train_logger,
+            #     log_level=log_level,
+            # )
             all_histories.append(history)
         except Exception as e:
             logger.exception(
@@ -1153,8 +664,6 @@ def train_per_cluster_pair(
         sales_idx=y_log_idx,
         train_mav=train_mav,
         val_mav=val_mav,
-        input_dim=input_dim,
-        output_dim=output_dim,
         lr=lr,
         log_level=log_level,
     )
@@ -1170,7 +679,7 @@ def train_per_cluster_pair(
 
     logger.info("Training model...")
     trainer = pl.Trainer(
-        accelerator=get_accelerator(),
+        accelerator=get_device(),
         deterministic=True,
         max_epochs=epochs,
         logger=train_logger,
@@ -1199,8 +708,12 @@ def train_per_cluster_pair(
         ]
     )
 
-    history_fn = history_dir / f"{store_cluster}_{item_cluster}_{model_type.value}.csv"
-    history = safe_append_to_history(history_fn, history)
+    # Save history
+    if history_dir:
+        history_fn = (
+            history_dir / f"{store_cluster}_{item_cluster}_{model_type.value}.csv"
+        )
+        history = safe_append_to_history(history_fn, history)
     return history
 
 
@@ -1714,3 +1227,217 @@ def train_sequence_model(
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
     )
+
+
+def train_model_unified(
+    model_dir: Path,
+    dataloader_dir: Path,
+    model_type: ModelType,  # Your enum for feedforward models
+    model_family: str,  # "feedforward" or "sequence"
+    label_cols: list[str],
+    y_log_features: list[str],
+    store_cluster: int,
+    item_cluster: int,
+    *,
+    history_dir: Optional[Path] = None,
+    lr: float = 3e-4,
+    epochs: int = 30,
+    seed: int = 2025,
+    num_workers: int = 15,
+    persistent_workers: bool = True,
+    enable_progress_bar: bool = True,
+    train_logger: bool = False,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    """
+    Unified training for feedforward per-cluster models and sequence models.
+    """
+
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    pl.seed_everything(seed)
+    checkpoints_dir = model_dir / "checkpoints"
+    for d in [checkpoints_dir, history_dir]:
+        if d is not None:
+            d.mkdir(parents=True, exist_ok=True)
+
+    model_name = f"{store_cluster}_{item_cluster}_{model_type.value if model_family=='feedforward' else model_family}"
+
+    # --------------------------------------------------------
+    # 1) FEEDFORWARD MODEL BRANCH
+    # --------------------------------------------------------
+    if model_family == "feedforward":
+        # Load pre-saved metadata and loaders
+        train_meta_fn = (
+            dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+        )
+        val_meta_fn = (
+            dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+        )
+        meta_df = pd.read_parquet(train_meta_fn)
+        val_meta_df = pd.read_parquet(val_meta_fn)
+
+        if meta_df.empty or val_meta_df.empty:
+            logger.warning(
+                f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
+            )
+            return pd.DataFrame()
+
+        train_loader = torch.load(
+            dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
+            weights_only=False,
+        )
+        val_loader = torch.load(
+            dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
+            weights_only=False,
+        )
+
+        inferred_batch_size = train_loader.batch_size or 32
+        train_loader = DataLoader(
+            train_loader.dataset,
+            batch_size=inferred_batch_size,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            pin_memory=True,
+        )
+        val_loader = DataLoader(
+            val_loader.dataset,
+            batch_size=inferred_batch_size,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            pin_memory=True,
+        )
+
+        input_dim = train_loader.dataset.tensors[0].shape[1]
+        output_dim = len(label_cols)
+
+        # Compute MAV for normalization
+        col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+        y_log_idx = [col_y_index_map[c] for c in y_log_features]
+        train_mav = compute_mav(train_loader, y_log_idx)
+        val_mav = compute_mav(val_loader, y_log_idx)
+
+        # Build model and wrapper
+        base_model = model_factory(model_type, input_dim, output_dim)
+        base_model.apply(init_weights)
+        lightning_model = LightningWrapper(
+            base_model,
+            model_name=model_name,
+            store=store_cluster,
+            item=item_cluster,
+            sales_idx=y_log_idx,
+            train_mav=train_mav,
+            val_mav=val_mav,
+            lr=lr,
+            log_level=log_level,
+        )
+
+        checkpoint_dir = checkpoints_dir / model_name
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_callback = ModelCheckpoint(
+            monitor="best_train_avg_mae",
+            mode="min",
+            save_top_k=1,
+            dirpath=checkpoint_dir,
+            filename=model_name,
+        )
+
+        trainer = pl.Trainer(
+            accelerator=get_device(),
+            deterministic=True,
+            max_epochs=epochs,
+            logger=train_logger,
+            enable_progress_bar=enable_progress_bar,
+            callbacks=[checkpoint_callback],
+        )
+
+        logger.info(f"Training feedforward model: {model_name}")
+        trainer.fit(lightning_model, train_loader, val_loader)
+
+        # Collect training history
+        history = pd.DataFrame(
+            [
+                {
+                    "model_name": model_name,
+                    "store_cluster": store_cluster,
+                    "item_cluster": item_cluster,
+                    "train_mav": train_mav,
+                    "val_mav": val_mav,
+                    "best_train_avg_mae": lightning_model.best_train_avg_mae,
+                    "best_val_avg_mae": lightning_model.best_val_avg_mae,
+                    "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
+                    "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
+                    "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
+                    "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
+                }
+            ]
+        )
+
+    # --------------------------------------------------------
+    # 2) SEQUENCE MODEL BRANCH (TFT or other)
+    # --------------------------------------------------------
+    elif model_family == "sequence":
+
+        # Load dataloaders from disk (assume generated by generate_sequence_model_loaders)
+        train_loader = torch.load(
+            dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
+            weights_only=False,
+        )
+        val_loader = torch.load(
+            dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
+            weights_only=False,
+        )
+
+        training_dataset = train_loader.dataset.dataset  # underlying TimeSeriesDataSet
+        logger.info(f"Training samples: {len(training_dataset)}")
+
+        # Build TFT model
+        tft = TemporalFusionTransformer.from_dataset(
+            training_dataset,
+            learning_rate=lr,
+            hidden_size=32,
+            attention_head_size=4,
+            dropout=0.1,
+            hidden_continuous_size=16,
+            output_size=len(label_cols),
+            loss=RMSE(),
+            log_interval=10,
+            reduce_on_plateau_patience=3,
+        )
+        logger.info(f"TFT model params: {tft.size()/1e3:.1f}k")
+
+        # Callbacks and Trainer
+        early_stop = EarlyStopping(monitor="val_loss", patience=5, mode="min")
+        trainer = pl.Trainer(
+            max_epochs=epochs,
+            accelerator=get_device(),
+            deterministic=True,
+            enable_progress_bar=enable_progress_bar,
+            callbacks=[early_stop],
+        )
+
+        logger.info(f"Training sequence model: {model_name}")
+        trainer.fit(tft, train_loader, val_loader)
+
+        # Collect history
+        history = pd.DataFrame(
+            [
+                {
+                    "model_name": model_name,
+                    "store_cluster": store_cluster,
+                    "item_cluster": item_cluster,
+                    "best_val_loss": trainer.callback_metrics.get(
+                        "val_loss", float("nan")
+                    ).item(),
+                }
+            ]
+        )
+
+    else:
+        raise ValueError("`model_family` must be either 'feedforward' or 'sequence'")
+
+    # Save history
+    if history_dir:
+        history_fn = history_dir / f"{model_name}.csv"
+        history = safe_append_to_history(history_fn, history)
+
+    return history

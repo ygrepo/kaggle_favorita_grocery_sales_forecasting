@@ -20,6 +20,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 WINDOW_SIZE=1
 EPOCHS=100
+LR=3e-4
 NUM_WORKERS=15
 PERSISTENT_WORKERS=false
 LOG_LEVEL="DEBUG"
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --history_dir) HISTORY_DIR="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
     --epochs) EPOCHS="$2"; shift 2 ;;
+    --lr) LR="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
     --persistent_workers) PERSISTENT_WORKERS="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -62,6 +64,7 @@ echo "  Model directory: ${MODEL_DIR}" | tee -a "$LOG_FILE"
 echo "  History directory: ${HISTORY_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
+echo "  Learning rate: ${LR}" | tee -a "$LOG_FILE"
 echo "  Num workers: ${NUM_WORKERS}" | tee -a "$LOG_FILE"
 echo "  Persistent workers: ${PERSISTENT_WORKERS}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
@@ -75,6 +78,7 @@ python "${SCRIPT_DIR}/training.py" \
   --history_dir "$HISTORY_DIR" \
   --window_size "$WINDOW_SIZE" \
   --epochs "$EPOCHS" \
+  --lr "$LR" \
   --num_workers "$NUM_WORKERS" \
   --persistent_workers "$PERSISTENT_WORKERS" \
   --log_level "$LOG_LEVEL" 2>&1 | tee -a "$LOG_FILE"

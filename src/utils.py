@@ -1,8 +1,12 @@
+import os
 import sys
-import logging
 import argparse
 from datetime import datetime
 from pathlib import Path
+import torch
+import random
+import logging
+import numpy as np
 
 
 def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
@@ -43,3 +47,21 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError("Expected a boolean value (true/false)")
+
+
+def set_seed(seed: int = 42):
+    """Set seed for reproducibility across random, numpy, and torch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # for multi-GPU
+
+    # Ensure deterministic behavior
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # For full reproducibility in future versions
+    os.environ["PYTHONHASHSEED"] = str(seed)
