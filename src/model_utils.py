@@ -1345,8 +1345,8 @@ def train_model_unified(
             accelerator=get_device(),
             deterministic=True,
             max_epochs=epochs,
-            logger=train_logger,
-            enable_progress_bar=enable_progress_bar,
+            logger=True,
+            enable_progress_bar=True,
             callbacks=[checkpoint_callback],
         )
 
