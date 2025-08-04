@@ -304,14 +304,20 @@ def generate_loaders(
     *,
     weight_col: str = "weight",
     window_val: int = 30,
+    val_horizon: int = 30,
     batch_size: int = 32,
     num_workers: int = 15,
     log_level: str = "INFO",
 ):
+    """
+    Generate DataLoaders using sliding windows with a hold-out validation block
+    aligned with sequence model loaders.
+    """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     dataloader_dir.mkdir(parents=True, exist_ok=True)
     scalers_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- Prepare DataFrame ---
     df = (
         df[all_features]
         .sort_values(["start_date", "store_item"])
@@ -324,16 +330,19 @@ def generate_loaders(
     assert len(store_cluster) == 1
     assert len(item_cluster) == 1
     store_cluster, item_cluster = store_cluster[0], item_cluster[0]
+    cluster_key = f"{store_cluster}_{item_cluster}"
 
-    logger.info(
-        f"Preparing loaders from {len(df)} samples: {store_cluster}, {item_cluster}"
-    )
+    logger.info(f"Preparing loaders for cluster {cluster_key} with {len(df)} rows")
 
     if weight_col not in df.columns:
         df[weight_col] = 1.0
 
     num_samples = len(df)
     num_windows = num_samples - window_val
+    validation_cutoff = (
+        num_samples - val_horizon
+    )  # 🔹 windows ending after this go to validation
+
     if num_windows <= 0:
         logger.warning(f"No valid windows")
         empty = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
@@ -343,37 +352,37 @@ def generate_loaders(
             TensorDataset(empty, empty_y, empty_w), batch_size=batch_size, num_workers=0
         )
         meta_df = pd.DataFrame(columns=meta_cols)
-        torch.save(
-            loader, dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
-        )
-        torch.save(
-            loader, dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
-        )
-        meta_df.to_parquet(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
-        )
-        meta_df.to_parquet(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
-        )
+        for split in ["train", "val"]:
+            torch.save(loader, dataloader_dir / f"{cluster_key}_{split}_loader.pt")
+            meta_df.to_parquet(dataloader_dir / f"{cluster_key}_{split}_meta.parquet")
         return loader, loader
 
+    # --- Storage for windows ---
     X_train_raw, y_train_raw, W_train_raw, meta_train_raw = [], [], [], []
     X_val_raw, y_val_raw, W_val_raw, meta_val_raw = [], [], [], []
 
     for i in tqdm(range(num_windows), desc="Generating windows"):
         df_train = df.iloc[i : i + window_val].fillna(0)
-        df_val = df.iloc[[i + window_val]].fillna(0)
 
-        X_train_raw.append(df_train[x_feature_cols].values)
-        y_train_raw.append(df_train[label_cols].values)
-        W_train_raw.append(df_train[[weight_col]].values)
-        meta_train_raw.append(df_train[meta_cols])
+        X_win = df_train[x_feature_cols].values
+        y_win = df_train[label_cols].values
+        W_win = df_train[[weight_col]].values
+        meta_win = df_train[meta_cols]
 
-        X_val_raw.append(df_val[x_feature_cols].values)
-        y_val_raw.append(df_val[label_cols].values)
-        W_val_raw.append(df_val[[weight_col]].values)
-        meta_val_raw.append(df_val[meta_cols])
+        if i + window_val <= validation_cutoff:
+            # Training window
+            X_train_raw.append(X_win)
+            y_train_raw.append(y_win)
+            W_train_raw.append(W_win)
+            meta_train_raw.append(meta_win)
+        else:
+            # Validation window
+            X_val_raw.append(X_win)
+            y_val_raw.append(y_win)
+            W_val_raw.append(W_win)
+            meta_val_raw.append(meta_win)
 
+    # --- Stack arrays ---
     X_train = np.vstack(X_train_raw).astype(np.float32)
     y_train = np.vstack(y_train_raw).astype(np.float32)
     W_train = np.vstack(W_train_raw).astype(np.float32)
@@ -384,6 +393,7 @@ def generate_loaders(
     meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
     meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
 
+    # --- Feature indices for scaling ---
     col_x_index_map = {col: idx for idx, col in enumerate(x_feature_cols)}
     x_to_log_idx = [col_x_index_map[c] for c in x_to_log_features]
     x_log_idx = [col_x_index_map[c] for c in x_log_features]
@@ -393,6 +403,7 @@ def generate_loaders(
     y_to_log_idx = [col_y_index_map[c] for c in y_to_log_features]
     y_log_idx = [col_y_index_map[c] for c in y_log_features]
 
+    # --- Transform & Scale ---
     x_log1p_train = np.log1p(np.clip(X_train[:, x_to_log_idx], 0, None))
     x_log_raw_train = X_train[:, x_log_idx]
     x_cyc_train = X_train[:, x_cyc_idx]
@@ -426,6 +437,7 @@ def generate_loaders(
         ]
     )
 
+    # --- Create DataLoaders ---
     persistent = num_workers > 0
     train_loader = DataLoader(
         TensorDataset(
@@ -446,33 +458,214 @@ def generate_loaders(
         persistent_workers=persistent,
     )
 
-    cluster_key = f"{store_cluster}_{item_cluster}"
-    logger.info(f"Saving loaders for {cluster_key}")
-    fn = dataloader_dir / f"{cluster_key}_train_loader.pt"
-    torch.save(train_loader, fn)
-    logger.info(f"Saved train loader to {fn}")
-    fn = dataloader_dir / f"{cluster_key}_val_loader.pt"
-    torch.save(val_loader, fn)
-    logger.info(f"Saved val loader to {fn}")
-    fn = dataloader_dir / f"{cluster_key}_train_meta.parquet"
-    meta_train_df.to_parquet(fn)
-    logger.info(f"Saved train meta to {fn}")
-    fn = dataloader_dir / f"{cluster_key}_val_meta.parquet"
-    meta_val_df.to_parquet(fn)
-    logger.info(f"Saved val meta to {fn}")
+    # --- Save loaders and meta ---
+    for split, loader, meta_df in [
+        ("train", train_loader, meta_train_df),
+        ("val", val_loader, meta_val_df),
+    ]:
+        torch.save(loader, dataloader_dir / f"{cluster_key}_{split}_loader.pt")
+        meta_df.to_parquet(dataloader_dir / f"{cluster_key}_{split}_meta.parquet")
 
+    # --- Save scalers ---
     for scaler, name in zip(
         [scaler_log1p, scaler_log_raw, scaler_cyc], ["x_log1p", "x_log_raw", "x_cyc"]
     ):
         fn = scalers_dir / f"{cluster_key}_{name}_scaler.pkl"
         with open(fn, "wb") as f:
-            logger.info(f"Saving scaler {name} for {cluster_key} to {fn}")
             pickle.dump(scaler, f)
+        logger.info(f"Saved scaler {name} for {cluster_key} to {fn}")
 
     logger.info(
         f"Saved loaders and scalers for store_cluster={store_cluster}, item_cluster={item_cluster}"
     )
     return train_loader, val_loader
+
+
+# def generate_loaders(
+#     df: pd.DataFrame,
+#     all_features: List[str],
+#     meta_cols: List[str],
+#     x_feature_cols: List[str],
+#     x_to_log_features: List[str],
+#     x_log_features: List[str],
+#     x_cyclical_features: List[str],
+#     label_cols: List[str],
+#     y_log_features: List[str],
+#     y_to_log_features: List[str],
+#     dataloader_dir: Path,
+#     scalers_dir: Path,
+#     *,
+#     weight_col: str = "weight",
+#     window_val: int = 30,
+#     batch_size: int = 32,
+#     num_workers: int = 15,
+#     log_level: str = "INFO",
+# ):
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     dataloader_dir.mkdir(parents=True, exist_ok=True)
+#     scalers_dir.mkdir(parents=True, exist_ok=True)
+
+#     df = (
+#         df[all_features]
+#         .sort_values(["start_date", "store_item"])
+#         .reset_index(drop=True)
+#     )
+#     df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
+#     df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
+#     store_cluster = df["store_cluster"].unique()
+#     item_cluster = df["item_cluster"].unique()
+#     assert len(store_cluster) == 1
+#     assert len(item_cluster) == 1
+#     store_cluster, item_cluster = store_cluster[0], item_cluster[0]
+
+#     logger.info(
+#         f"Preparing loaders from {len(df)} samples: {store_cluster}, {item_cluster}"
+#     )
+
+#     if weight_col not in df.columns:
+#         df[weight_col] = 1.0
+
+#     num_samples = len(df)
+#     num_windows = num_samples - window_val
+#     if num_windows <= 0:
+#         logger.warning(f"No valid windows")
+#         empty = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
+#         empty_y = torch.empty((0, len(label_cols)), dtype=torch.float32)
+#         empty_w = torch.empty((0, 1), dtype=torch.float32)
+#         loader = DataLoader(
+#             TensorDataset(empty, empty_y, empty_w), batch_size=batch_size, num_workers=0
+#         )
+#         meta_df = pd.DataFrame(columns=meta_cols)
+#         torch.save(
+#             loader, dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"
+#         )
+#         torch.save(
+#             loader, dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"
+#         )
+#         meta_df.to_parquet(
+#             dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
+#         )
+#         meta_df.to_parquet(
+#             dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+#         )
+#         return loader, loader
+
+#     X_train_raw, y_train_raw, W_train_raw, meta_train_raw = [], [], [], []
+#     X_val_raw, y_val_raw, W_val_raw, meta_val_raw = [], [], [], []
+
+#     for i in tqdm(range(num_windows), desc="Generating windows"):
+#         df_train = df.iloc[i : i + window_val].fillna(0)
+#         df_val = df.iloc[[i + window_val]].fillna(0)
+
+#         X_train_raw.append(df_train[x_feature_cols].values)
+#         y_train_raw.append(df_train[label_cols].values)
+#         W_train_raw.append(df_train[[weight_col]].values)
+#         meta_train_raw.append(df_train[meta_cols])
+
+#         X_val_raw.append(df_val[x_feature_cols].values)
+#         y_val_raw.append(df_val[label_cols].values)
+#         W_val_raw.append(df_val[[weight_col]].values)
+#         meta_val_raw.append(df_val[meta_cols])
+
+#     X_train = np.vstack(X_train_raw).astype(np.float32)
+#     y_train = np.vstack(y_train_raw).astype(np.float32)
+#     W_train = np.vstack(W_train_raw).astype(np.float32)
+#     X_val = np.vstack(X_val_raw).astype(np.float32)
+#     y_val = np.vstack(y_val_raw).astype(np.float32)
+#     W_val = np.vstack(W_val_raw).astype(np.float32)
+
+#     meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
+#     meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
+
+#     col_x_index_map = {col: idx for idx, col in enumerate(x_feature_cols)}
+#     x_to_log_idx = [col_x_index_map[c] for c in x_to_log_features]
+#     x_log_idx = [col_x_index_map[c] for c in x_log_features]
+#     x_cyc_idx = [col_x_index_map[c] for c in x_cyclical_features]
+
+#     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+#     y_to_log_idx = [col_y_index_map[c] for c in y_to_log_features]
+#     y_log_idx = [col_y_index_map[c] for c in y_log_features]
+
+#     x_log1p_train = np.log1p(np.clip(X_train[:, x_to_log_idx], 0, None))
+#     x_log_raw_train = X_train[:, x_log_idx]
+#     x_cyc_train = X_train[:, x_cyc_idx]
+#     y_train = np.hstack(
+#         [np.log1p(np.clip(y_train[:, y_to_log_idx], 0, None)), y_train[:, y_log_idx]]
+#     )
+
+#     x_log1p_val = np.log1p(np.clip(X_val[:, x_to_log_idx], 0, None))
+#     x_log_raw_val = X_val[:, x_log_idx]
+#     x_cyc_val = X_val[:, x_cyc_idx]
+#     y_val = np.hstack(
+#         [np.log1p(np.clip(y_val[:, y_to_log_idx], 0, None)), y_val[:, y_log_idx]]
+#     )
+
+#     scaler_log1p = MinMaxScaler().fit(x_log1p_train)
+#     scaler_log_raw = MinMaxScaler().fit(x_log_raw_train)
+#     scaler_cyc = MinMaxScaler().fit(x_cyc_train)
+
+#     X_train_scaled = np.hstack(
+#         [
+#             scaler_log1p.transform(x_log1p_train),
+#             scaler_log_raw.transform(x_log_raw_train),
+#             scaler_cyc.transform(x_cyc_train),
+#         ]
+#     )
+#     X_val_scaled = np.hstack(
+#         [
+#             scaler_log1p.transform(x_log1p_val),
+#             scaler_log_raw.transform(x_log_raw_val),
+#             scaler_cyc.transform(x_cyc_val),
+#         ]
+#     )
+
+#     persistent = num_workers > 0
+#     train_loader = DataLoader(
+#         TensorDataset(
+#             torch.tensor(X_train_scaled), torch.tensor(y_train), torch.tensor(W_train)
+#         ),
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=num_workers,
+#         persistent_workers=persistent,
+#     )
+#     val_loader = DataLoader(
+#         TensorDataset(
+#             torch.tensor(X_val_scaled), torch.tensor(y_val), torch.tensor(W_val)
+#         ),
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=num_workers,
+#         persistent_workers=persistent,
+#     )
+
+#     cluster_key = f"{store_cluster}_{item_cluster}"
+#     logger.info(f"Saving loaders for {cluster_key}")
+#     fn = dataloader_dir / f"{cluster_key}_train_loader.pt"
+#     torch.save(train_loader, fn)
+#     logger.info(f"Saved train loader to {fn}")
+#     fn = dataloader_dir / f"{cluster_key}_val_loader.pt"
+#     torch.save(val_loader, fn)
+#     logger.info(f"Saved val loader to {fn}")
+#     fn = dataloader_dir / f"{cluster_key}_train_meta.parquet"
+#     meta_train_df.to_parquet(fn)
+#     logger.info(f"Saved train meta to {fn}")
+#     fn = dataloader_dir / f"{cluster_key}_val_meta.parquet"
+#     meta_val_df.to_parquet(fn)
+#     logger.info(f"Saved val meta to {fn}")
+
+#     for scaler, name in zip(
+#         [scaler_log1p, scaler_log_raw, scaler_cyc], ["x_log1p", "x_log_raw", "x_cyc"]
+#     ):
+#         fn = scalers_dir / f"{cluster_key}_{name}_scaler.pkl"
+#         with open(fn, "wb") as f:
+#             logger.info(f"Saving scaler {name} for {cluster_key} to {fn}")
+#             pickle.dump(scaler, f)
+
+#     logger.info(
+#         f"Saved loaders and scalers for store_cluster={store_cluster}, item_cluster={item_cluster}"
+#     )
+#     return train_loader, val_loader
 
 
 def dataloader_to_dataframe(

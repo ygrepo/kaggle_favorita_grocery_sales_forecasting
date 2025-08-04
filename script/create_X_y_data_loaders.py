@@ -27,6 +27,7 @@ def create_data_loaders(
     scalers_dir: Path,
     window_size: int,
     window_val: int,
+    val_horizon: int,
     log_level: str,
 ):
     """
@@ -44,6 +45,11 @@ def create_data_loaders(
         Size of the rolling window for feature creation.
     window_val : int
         Size of the validation window.
+        Validation window is the number of days to use for validation.
+        Validation window must be >= val_horizon.
+    val_horizon : int
+        Size of the validation horizon.
+        Validation horizon is the number of days to forecast.
     log_level : str
         Logging level for the script.
     """
@@ -98,6 +104,8 @@ def create_data_loaders(
             y_to_log_features=y_to_log_features,
             scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,
+            window_val=window_val,
+            val_horizon=val_horizon,
             log_level=log_level,
         )
         logger.info("Data loaded")
@@ -139,6 +147,12 @@ def parse_args():
         help="Size of the validation window",
     )
     parser.add_argument(
+        "--val_horizon",
+        type=int,
+        default=30,
+        help="Size of the validation horizon for the model",
+    )
+    parser.add_argument(
         "--log_dir",
         type=str,
         default="../output/logs",
@@ -176,11 +190,14 @@ def main():
         logger.info(f"  Scalers dir: {scalers_dir}")
         logger.info(f"  Window size: {window_size}")
         logger.info(f"  Window validation size: {args.window_val}")
+        logger.info(f"  Validation horizon: {args.val_horizon}")
+        logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Log dir: {log_dir}")
 
         create_data_loaders(
             window_size=window_size,
             window_val=int(args.window_val),
+            val_horizon=args.val_horizon,
             data_dir=data_dir,
             scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,

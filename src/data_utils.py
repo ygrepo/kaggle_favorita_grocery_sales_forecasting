@@ -9,8 +9,6 @@ import logging
 from tqdm import tqdm
 from pathlib import Path
 import gc
-import re
-import torch
 
 logging.basicConfig(
     level=logging.INFO,  # or DEBUG
