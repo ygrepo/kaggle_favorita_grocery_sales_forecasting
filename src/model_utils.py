@@ -135,8 +135,8 @@ def generate_loaders(
     log_level: str = "INFO",
 ):
     """
-    Generate DataLoaders using sliding windows with a hold-out validation block
-    aligned with sequence model loaders.
+    Generate DataLoaders row-aligned with original df.
+    Each row corresponds to the same store_item/date as input.
     """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     dataloader_dir.mkdir(parents=True, exist_ok=True)
@@ -148,6 +148,13 @@ def generate_loaders(
         .sort_values(["start_date", "store_item"])
         .reset_index(drop=True)
     )
+    # --- Assert uniqueness of rows ---
+    if df.duplicated(subset=["start_date", "store_item"]).any():
+        dups = df[df.duplicated(subset=["start_date", "store_item"], keep=False)]
+        raise ValueError(
+            f"Duplicate rows detected for date/store_item:\n{dups[['start_date', 'store_item']]}"
+        )
+
     df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
     df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
     store_cluster = df["store_cluster"].unique()
@@ -163,13 +170,10 @@ def generate_loaders(
         df[weight_col] = 1.0
 
     num_samples = len(df)
-    num_windows = num_samples - window_val
-    validation_cutoff = (
-        num_samples - val_horizon
-    )  # 🔹 windows ending after this go to validation
+    validation_cutoff = num_samples - val_horizon
 
-    if num_windows <= 0:
-        logger.warning("No valid windows")
+    if num_samples <= 0:
+        logger.warning("No valid samples")
         empty = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
         empty_y = torch.empty((0, len(label_cols)), dtype=torch.float32)
         empty_w = torch.empty((0, 1), dtype=torch.float32)
@@ -182,41 +186,21 @@ def generate_loaders(
             meta_df.to_parquet(dataloader_dir / f"{cluster_key}_{split}_meta.parquet")
         return loader, loader
 
-    # --- Storage for windows ---
-    X_train_raw, y_train_raw, W_train_raw, meta_train_raw = [], [], [], []
-    X_val_raw, y_val_raw, W_val_raw, meta_val_raw = [], [], [], []
+    # --- Features & labels ---
+    X = df[x_feature_cols].fillna(0).values.astype(np.float32)
+    Y = df[label_cols].fillna(0).values.astype(np.float32)
+    W = df[[weight_col]].values.astype(np.float32)
 
-    for i in tqdm(range(num_windows), desc="Generating windows"):
-        df_train = df.iloc[i : i + window_val].fillna(0)
+    # --- Split train / val ---
+    train_mask = np.arange(num_samples) < validation_cutoff
+    val_mask = ~train_mask
 
-        X_win = df_train[x_feature_cols].values
-        y_win = df_train[label_cols].values
-        W_win = df_train[[weight_col]].values
-        meta_win = df_train[meta_cols]
+    X_train, X_val = X[train_mask], X[val_mask]
+    Y_train, Y_val = Y[train_mask], Y[val_mask]
+    W_train, W_val = W[train_mask], W[val_mask]
 
-        if i + window_val <= validation_cutoff:
-            # Training window
-            X_train_raw.append(X_win)
-            y_train_raw.append(y_win)
-            W_train_raw.append(W_win)
-            meta_train_raw.append(meta_win)
-        else:
-            # Validation window
-            X_val_raw.append(X_win)
-            y_val_raw.append(y_win)
-            W_val_raw.append(W_win)
-            meta_val_raw.append(meta_win)
-
-    # --- Stack arrays ---
-    X_train = np.vstack(X_train_raw).astype(np.float32)
-    y_train = np.vstack(y_train_raw).astype(np.float32)
-    W_train = np.vstack(W_train_raw).astype(np.float32)
-    X_val = np.vstack(X_val_raw).astype(np.float32)
-    y_val = np.vstack(y_val_raw).astype(np.float32)
-    W_val = np.vstack(W_val_raw).astype(np.float32)
-
-    meta_train_df = pd.concat(meta_train_raw, ignore_index=True)
-    meta_val_df = pd.concat(meta_val_raw, ignore_index=True)
+    meta_train_df = df.loc[train_mask, meta_cols].reset_index(drop=True)
+    meta_val_df = df.loc[val_mask, meta_cols].reset_index(drop=True)
 
     # --- Feature indices for scaling ---
     col_x_index_map = {col: idx for idx, col in enumerate(x_feature_cols)}
@@ -229,44 +213,43 @@ def generate_loaders(
     y_log_idx = [col_y_index_map[c] for c in y_log_features]
 
     # --- Transform & Scale ---
-    x_log1p_train = np.log1p(np.clip(X_train[:, x_to_log_idx], 0, None))
-    x_log_raw_train = X_train[:, x_log_idx]
-    x_cyc_train = X_train[:, x_cyc_idx]
-    y_train = np.hstack(
-        [np.log1p(np.clip(y_train[:, y_to_log_idx], 0, None)), y_train[:, y_log_idx]]
-    )
+    def transform_xy(X_data, Y_data):
+        x_log1p = np.log1p(np.clip(X_data[:, x_to_log_idx], 0, None))
+        x_log_raw = X_data[:, x_log_idx]
+        x_cyc = X_data[:, x_cyc_idx]
+        y_transformed = np.hstack(
+            [np.log1p(np.clip(Y_data[:, y_to_log_idx], 0, None)), Y_data[:, y_log_idx]]
+        )
+        return x_log1p, x_log_raw, x_cyc, y_transformed
 
-    x_log1p_val = np.log1p(np.clip(X_val[:, x_to_log_idx], 0, None))
-    x_log_raw_val = X_val[:, x_log_idx]
-    x_cyc_val = X_val[:, x_cyc_idx]
-    y_val = np.hstack(
-        [np.log1p(np.clip(y_val[:, y_to_log_idx], 0, None)), y_val[:, y_log_idx]]
+    x_log1p_train, x_log_raw_train, x_cyc_train, Y_train = transform_xy(
+        X_train, Y_train
     )
+    x_log1p_val, x_log_raw_val, x_cyc_val, Y_val = transform_xy(X_val, Y_val)
 
+    # Fit scalers on train
     scaler_log1p = MinMaxScaler().fit(x_log1p_train)
     scaler_log_raw = MinMaxScaler().fit(x_log_raw_train)
     scaler_cyc = MinMaxScaler().fit(x_cyc_train)
 
-    X_train_scaled = np.hstack(
-        [
-            scaler_log1p.transform(x_log1p_train),
-            scaler_log_raw.transform(x_log_raw_train),
-            scaler_cyc.transform(x_cyc_train),
-        ]
-    )
-    X_val_scaled = np.hstack(
-        [
-            scaler_log1p.transform(x_log1p_val),
-            scaler_log_raw.transform(x_log_raw_val),
-            scaler_cyc.transform(x_cyc_val),
-        ]
-    )
+    # Apply scalers
+    def scale_x(x_log1p, x_log_raw, x_cyc):
+        return np.hstack(
+            [
+                scaler_log1p.transform(x_log1p),
+                scaler_log_raw.transform(x_log_raw),
+                scaler_cyc.transform(x_cyc),
+            ]
+        )
+
+    X_train_scaled = scale_x(x_log1p_train, x_log_raw_train, x_cyc_train)
+    X_val_scaled = scale_x(x_log1p_val, x_log_raw_val, x_cyc_val)
 
     # --- Create DataLoaders ---
     persistent = num_workers > 0
     train_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_train_scaled), torch.tensor(y_train), torch.tensor(W_train)
+            torch.tensor(X_train_scaled), torch.tensor(Y_train), torch.tensor(W_train)
         ),
         batch_size=batch_size,
         shuffle=False,
@@ -275,7 +258,7 @@ def generate_loaders(
     )
     val_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_val_scaled), torch.tensor(y_val), torch.tensor(W_val)
+            torch.tensor(X_val_scaled), torch.tensor(Y_val), torch.tensor(W_val)
         ),
         batch_size=batch_size,
         shuffle=False,
@@ -1326,7 +1309,7 @@ def train_model_unified(
         except (TypeError, AttributeError):
             # For datasets that don't implement __len__ properly
             num_samples = getattr(val_loader.dataset, "length", "unknown")
-        logger.info(f"Number of training samples: {num_samples}")
+        logger.info(f"Number of validation samples: {num_samples}")
 
         # Get input dimension from the first batch
         # For TensorDataset, we can access tensors directly
@@ -1337,7 +1320,7 @@ def train_model_unified(
             sample_batch = next(iter(train_loader))
             input_dim = sample_batch[0].shape[1]
         output_dim = len(label_cols)
-
+        logger.info(f"Input dimension: {input_dim}, Output dimension: {output_dim}")
         # Compute MAV for normalization
         col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
         y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
@@ -1346,7 +1329,7 @@ def train_model_unified(
         val_mav = compute_mav(val_loader, y_to_log_features_idx)
 
         # Build model and wrapper
-        base_model = model_factory(model_type, input_dim, output_dim)
+        base_model = model_factory(ModelType(model_type.value), input_dim, output_dim)
         base_model.apply(init_weights)
         lightning_model = LightningWrapper(
             base_model,
@@ -1374,8 +1357,8 @@ def train_model_unified(
             accelerator=get_device(),
             deterministic=True,
             max_epochs=epochs,
-            logger=True,
-            enable_progress_bar=True,
+            logger=train_logger,
+            enable_progress_bar=enable_progress_bar,
             callbacks=[checkpoint_callback],
         )
 
