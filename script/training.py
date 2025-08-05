@@ -180,7 +180,18 @@ def parse_args():
         default=True,
         help="Whether to use persistent workers for data loading",
     )
-
+    parser.add_argument(
+        "--enable_progress_bar",
+        type=str2bool,
+        default=True,
+        help="Whether to enable progress bar",
+    )
+    parser.add_argument(
+        "--train_logger",
+        type=str2bool,
+        default=False,
+        help="Whether to enable training logger",
+    )
     parser.add_argument(
         "--window_size",
         type=int,
