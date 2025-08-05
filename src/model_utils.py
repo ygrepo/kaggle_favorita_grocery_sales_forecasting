@@ -1454,6 +1454,7 @@ def train_model_unified(
 
     # Save history
     if history_dir:
+        logger.info(f"Saving history to {history_dir}")x
         history_fn = history_dir / f"{model_name}.csv"
         history = safe_append_to_history(history_fn, history)
 
