@@ -39,6 +39,8 @@ def train(
     seed: int,
     num_workers: int,
     persistent_workers: bool,
+    enable_progress_bar: bool,
+    train_logger: bool,
     history_dir: Path,
     log_level: str,
 ):
@@ -65,7 +67,11 @@ def train(
     num_workers : int
         Number of subprocesses to use for data loading.
     persistent_workers : bool
-        Whether to use persistent workers for data loading.s
+        Whether to use persistent workers for data loading.
+    enable_progress_bar : bool::
+        Whether to enable progress bar.
+    train_logger : bool
+        Whether to enable training logger.
     log_level : str
         Logging level (e.g., "INFO", "DEBUG").
     """
@@ -115,6 +121,8 @@ def train(
             seed=seed,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
+            enable_progress_bar=enable_progress_bar,
+            train_logger=train_logger,
             log_level=log_level,
         )
 
@@ -210,6 +218,8 @@ def main():
     log_dir = (project_root / args.log_dir).resolve()
     num_workers = args.num_workers
     persistent_workers = args.persistent_workers
+    enable_progress_bar = args.enable_progress_bar
+    train_logger = args.train_logger
 
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
@@ -227,6 +237,8 @@ def main():
         logger.info(f"  Seed: {args.seed}")
         logger.info(f"  Num workers: {num_workers}")
         logger.info(f"  Persistent workers: {persistent_workers}")
+        logger.info(f"  Enable progress bar: {enable_progress_bar}")
+        logger.info(f"  Train logger: {train_logger}")
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -249,6 +261,8 @@ def main():
             history_dir=history_dir,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
+            enable_progress_bar=enable_progress_bar,
+            train_logger=train_logger,
             log_level=args.log_level,
         )
         logger.info("Training completed successfully!")

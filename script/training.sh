@@ -12,7 +12,6 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_2014_2015_top_53_store_2000_item/"
-SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_item/"
 MODEL_DIR="${PROJECT_ROOT}/output/model_2014_2015_top_53_store_2000_item/"
 HISTORY_DIR="${PROJECT_ROOT}/output/data/history_2014_2015_top_53_store_2000_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -23,6 +22,8 @@ EPOCHS=100
 LR=3e-4
 NUM_WORKERS=15
 PERSISTENT_WORKERS=false
+ENABLE_PROGRESS_BAR=true
+TRAIN_LOGGER=false
 LOG_LEVEL="DEBUG"
 
 # Parse command line arguments
@@ -36,6 +37,9 @@ while [[ $# -gt 0 ]]; do
     --lr) LR="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
     --persistent_workers) PERSISTENT_WORKERS="$2"; shift 2 ;;
+    --enable_progress_bar) ENABLE_PROGRESS_BAR="$2"; shift 2 ;;
+    --train_logger) TRAIN_LOGGER="$2"; shift 2 ;;
+    --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -67,6 +71,8 @@ echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
 echo "  Learning rate: ${LR}" | tee -a "$LOG_FILE"
 echo "  Num workers: ${NUM_WORKERS}" | tee -a "$LOG_FILE"
 echo "  Persistent workers: ${PERSISTENT_WORKERS}" | tee -a "$LOG_FILE"
+echo "  Enable progress bar: ${ENABLE_PROGRESS_BAR}" | tee -a "$LOG_FILE"
+echo "  Train logger: ${TRAIN_LOGGER}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 nvidia-smi | tee -a "$LOG_FILE"
@@ -81,6 +87,8 @@ python "${SCRIPT_DIR}/training.py" \
   --lr "$LR" \
   --num_workers "$NUM_WORKERS" \
   --persistent_workers "$PERSISTENT_WORKERS" \
+  --enable_progress_bar "$ENABLE_PROGRESS_BAR" \
+  --train_logger "$TRAIN_LOGGER" \
   --log_level "$LOG_LEVEL" 2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script

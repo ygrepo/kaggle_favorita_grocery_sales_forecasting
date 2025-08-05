@@ -520,7 +520,6 @@ def train_all_models_for_cluster_pair(
                 train_logger=train_logger,
                 log_level=log_level,
             )
-            break
             # history = train_per_cluster_pair(
             #     model_dir=model_dir,
             #     model_type=model_type,
