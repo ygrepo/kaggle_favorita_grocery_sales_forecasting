@@ -1356,7 +1356,7 @@ def train_model_unified(
         checkpoint_dir = checkpoints_dir / model_name
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_callback = ModelCheckpoint(
-            monitor="best_train_avg_mae",
+            monitor="val_percent_mav",
             mode="min",
             save_top_k=1,
             dirpath=checkpoint_dir,
