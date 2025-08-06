@@ -33,6 +33,7 @@ from src.utils import setup_logging, str2bool
 def train(
     dataloader_dir: Path,
     model_dir: Path,
+    model_logger_dir: Path,
     window_size: int,
     epochs: int,
     lr: float,
@@ -54,6 +55,8 @@ def train(
         Directory to save dataloaders.
     model_dir : Path
         Directory to save trained models.
+    model_logger_dir : Path
+        Directory to save model logger.
     window_size : int
         Rolling window size for feature creation.
     history_dir : Path
@@ -110,6 +113,7 @@ def train(
         train_all_models_for_cluster_pair(
             model_types=MODEL_TYPES,
             model_dir=model_dir,
+            model_logger_dir=model_logger_dir,
             dataloader_dir=dataloader_dir,
             label_cols=label_cols,
             y_to_log_features=y_to_log_features,
@@ -122,7 +126,6 @@ def train(
             num_workers=num_workers,
             persistent_workers=persistent_workers,
             enable_progress_bar=enable_progress_bar,
-            train_logger=train_logger,
             log_level=log_level,
         )
 
@@ -137,6 +140,12 @@ def parse_args():
         type=str,
         default="./output/models",
         help="Directory to save trained models (relative to project root)",
+    )
+    parser.add_argument(
+        "--model_logger_dir",
+        type=str,
+        default="",
+        help="Directory to save model logger (relative to project root)",
     )
     parser.add_argument(
         "--dataloader_dir",
@@ -225,6 +234,7 @@ def main():
     project_root = Path(__file__).parent.parent
     dataloader_dir = (project_root / args.dataloader_dir).resolve()
     model_dir = (project_root / args.model_dir).resolve()
+    model_logger_dir = (project_root / args.model_logger_dir).resolve()
     history_dir = (project_root / args.history_dir).resolve()
     log_dir = (project_root / args.log_dir).resolve()
     num_workers = args.num_workers
@@ -241,6 +251,7 @@ def main():
         logger.info(f"  Project root: {project_root}")
         logger.info(f"  Dataloader directory: {dataloader_dir}")
         logger.info(f"  Model directory: {model_dir}")
+        logger.info(f"  Model logger directory: {model_logger_dir}")
         logger.info(f"  History directory: {history_dir}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
@@ -265,6 +276,7 @@ def main():
         train(
             dataloader_dir=dataloader_dir,
             model_dir=model_dir,
+            model_logger_dir=model_logger_dir,
             window_size=args.window_size,
             epochs=args.epochs,
             lr=args.lr,

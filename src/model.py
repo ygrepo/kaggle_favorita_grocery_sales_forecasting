@@ -7,6 +7,13 @@ from pathlib import Path
 from enum import Enum
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from torch.utils.data import TensorDataset, Dataset, DataLoader
+import torch
+from torchmetrics import Metric
+from torchmetrics.regression import MeanSquaredError
+
+import numpy as np
+from src.utils import get_logger
+
 
 logger = logging.getLogger(__name__)
 
@@ -148,21 +155,6 @@ def init_weights(m):
         nn.init.zeros_(m.bias)
 
 
-# class NWRMSLELoss(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         logger.setLevel(logging.INFO)
-
-#     def forward(self, y_pred, y_true, w):
-#         # add 1 to avoid log(0), clamp to eps to keep preds positive
-#         eps = 1e-6
-#         y_pred = torch.clamp(y_pred, min=eps)
-#         log_diff = torch.log(y_pred + 1.0) - torch.log(y_true + 1.0)
-#         num = torch.sum(w * log_diff**2)
-#         den = torch.sum(w)
-#         return torch.sqrt(num / den)
-
-
 class NWRMSLELoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -211,8 +203,7 @@ class LightningWrapper(pl.LightningModule):
         log_level: str = "INFO",
     ):
         super().__init__()
-        self.logger_ = logging.getLogger(f"{__name__}.{model_name}")
-        self.logger_.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+        self.logger_ = get_logger(f"{__name__}.{model_name}", log_level)
 
         # Ensure at least one handler exists
         if not self.logger_.handlers:
@@ -233,23 +224,13 @@ class LightningWrapper(pl.LightningModule):
         self.train_mav = train_mav
         self.val_mav = val_mav
         self.loss_fn = NWRMSLELoss()
+        self.train_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
+        self.val_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
+        self.train_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
+        self.val_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
 
         # Save all except model
         self.save_hyperparameters(ignore=["model"])
-
-        # Initialize metrics accumulators for each epoch
-        self.train_error_history = []
-        self.val_error_history = []
-        self.train_mae_history = []
-        self.val_mae_history = []
-        self.train_rmse_history = []
-        self.val_rmse_history = []
-        self.best_train_avg_mae = float("inf")
-        self.best_val_avg_mae = float("inf")
-        self.best_train_avg_rmse = float("inf")
-        self.best_val_avg_rmse = float("inf")
-        self.best_train_avg_percent_mav = float("inf")
-        self.best_val_avg_percent_mav = float("inf")
 
     def forward(self, x):
         return self.model(x)
@@ -290,18 +271,30 @@ class LightningWrapper(pl.LightningModule):
             self.logger_.debug("Targets sample:\n%s", yb[:5].detach().cpu().numpy())
             self.logger_.debug("Weights sample:\n%s", wb[:5].detach().cpu().numpy())
             raise ValueError("NaN loss detected!")
+        self.log(
+            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+        )
 
-        self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         # Compute training MAE for this batch
-        train_mae = compute_mae_from_preds(preds, yb, self.sales_idx)
-        train_rmse = compute_rmse(preds, yb, preds.device)
-        # self.logger_.info("Training Batch %d RMSE: %.6f", batch_idx, train_rmse.item())
-        self.train_error_history.append(loss)
-        self.train_mae_history.append(train_mae)
-        self.train_rmse_history.append(train_rmse)
-        self.log("train_mae", train_mae, prog_bar=True, sync_dist=True)
-        self.log("train_rmse", train_rmse, prog_bar=True, sync_dist=True)
+        self.train_mae_metric.update(preds, yb)
+        self.log(
+            "train_mae",
+            self.train_mae_metric,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
 
+        self.train_rmse_metric.update(preds, yb)
+        self.log(
+            "train_rmse",
+            self.train_rmse_metric,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -329,140 +322,80 @@ class LightningWrapper(pl.LightningModule):
             self.logger_.warning(f"Zero detected in targets at batch {batch_idx}")
         yb = torch.clamp(yb, min=1e-6)
         loss = self.loss_fn(preds, yb, wb)
-        # self.logger_.debug("Validation Batch %d loss: %.6f", batch_idx, loss.item())
 
-        # Compute validation MAE for this batch
-        val_mae = compute_mae_from_preds(xb, yb, self.sales_idx)
-        val_rmse = compute_rmse(preds, yb, preds.device)
-
-        self.val_error_history.append(loss)
-        self.val_mae_history.append(val_mae)
-        self.val_rmse_history.append(val_rmse)
-
-        # Log the batch loss, MAE, and accuracy
-        self.log("val_loss", loss, prog_bar=True, sync_dist=True)
-        self.log("val_mae", val_mae, prog_bar=True, sync_dist=True)
-        self.log("val_rmse", val_rmse, prog_bar=True, sync_dist=True)
-
+        self.log(
+            "val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+        )
+        self.val_mae_metric.update(preds, yb)
+        self.log(
+            "val_mae",
+            self.train_mae_metric,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        self.val_rmse_metric.update(preds, yb)
+        self.log(
+            "val_rmse",
+            self.train_rmse_metric,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
         return loss
 
     def on_epoch_start(self) -> None:
         self.logger_.info(
             f"\nModel: {self.model_name}-Epoch {self.current_epoch} started!"
         )
+        self.train_mae_metric.reset()
 
-    def on_train_epoch_end(self) -> None:
-        self.logger_.info(
-            f"\nModel: {self.model_name}-Epoch {self.current_epoch} ended!"
-        )
-        # Compute average metrics for the epoch
-        avg_train_mae = np.mean([_to_float(t) for t in self.train_mae_history])
-        avg_train_rmse = np.mean([_to_float(t) for t in self.train_rmse_history])
+    def on_validation_epoch_start(self):
+        self.val_mae_metric.reset()
+
+    def on_train_epoch_end(self):
+        avg_train_mae = self.train_mae_metric.compute().item()
+
         if self.train_mav == 0:
             self.logger_.warning(
-                f"Train mav is 0 for store {self.store} and item {self.item}"
+                f"Train MAV is 0 for store {self.store} and item {self.item}"
             )
             avg_train_percent_mav = float("inf")
         else:
             avg_train_percent_mav = avg_train_mae / self.train_mav * 100
 
-        avg_val_mae = np.mean([_to_float(t) for t in self.val_mae_history])
-        avg_val_rmse = np.mean([_to_float(t) for t in self.val_rmse_history])
+        self.log(
+            "train_percent_mav",
+            avg_train_percent_mav,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+
+    def on_validation_epoch_end(self):
+        # Compute epoch-average MAE
+        avg_val_mae = self.val_mae_metric.compute().item()
+
+        # Compute MAV% safely
         if self.val_mav == 0:
             self.logger_.warning(
-                f"Train mav is 0 for store {self.store} and item {self.item}"
+                f"Val MAV is 0 for store {self.store} and item {self.item}"
             )
             avg_val_percent_mav = float("inf")
         else:
             avg_val_percent_mav = avg_val_mae / self.val_mav * 100
 
-        # Log epoch-level metrics
-        self.log("avg_train_mav", self.train_mav, prog_bar=False, sync_dist=True)
+        # 🔹 Log as a scalar metric to CSVLogger/W&B
         self.log(
-            "avg_train_mae",
-            _to_float(avg_train_mae),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "avg_train_percent_mav",
-            _to_float(avg_train_percent_mav),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "avg_train_rmse",
-            _to_float(avg_train_rmse),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log("avg_val_mav", self.val_mav, prog_bar=False, sync_dist=True)
-        self.log("avg_val_mae", _to_float(avg_val_mae), prog_bar=False, sync_dist=True)
-        self.log(
-            "avg_val_percent_mav",
-            _to_float(avg_val_percent_mav),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "avg_val_rmse",
-            _to_float(avg_val_rmse),
-            prog_bar=False,
-            sync_dist=True,
-        )
-
-        # Reset accumulators for the next epoch
-        self.train_mae_history = []
-        self.val_mae_history = []
-        self.train_rmse_history = []
-        self.val_rmse_history = []
-
-        if avg_train_mae < self.best_train_avg_mae:
-            self.best_train_avg_mae = avg_train_mae
-            self.best_train_avg_mae_percent_mav = avg_train_percent_mav
-        if avg_train_rmse < self.best_train_avg_rmse:
-            self.best_train_avg_rmse = avg_train_rmse
-        if avg_val_mae < self.best_val_avg_mae:
-            self.best_val_avg_mae = avg_val_mae
-            self.best_val_avg_mae_percent_mav = avg_val_percent_mav
-        if avg_val_rmse < self.best_val_avg_rmse:
-            self.best_val_avg_rmse = avg_val_rmse
-
-        self.log(
-            "best_train_avg_mae",
-            _to_float(self.best_train_avg_mae),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_train_avg_mae_percent_mav",
-            _to_float(self.best_train_avg_mae_percent_mav),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_train_avg_rmse",
-            _to_float(self.best_train_avg_rmse),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_val_avg_mae",
-            _to_float(self.best_val_avg_mae),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_val_avg_mae_percent_mav",
-            _to_float(self.best_val_avg_mae_percent_mav),
-            prog_bar=False,
-            sync_dist=True,
-        )
-        self.log(
-            "best_val_avg_rmse",
-            _to_float(self.best_val_avg_rmse),
-            prog_bar=False,
-            sync_dist=True,
+            "val_percent_mav",
+            avg_val_percent_mav,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
         )
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
@@ -484,51 +417,53 @@ class LightningWrapper(pl.LightningModule):
 # ─────────────────────────────────────────────────────────────────────
 
 
-def compute_mae(
-    xb: torch.Tensor,
-    yb: torch.Tensor,
-    model: torch.nn.Module,
-    device: torch.device,
-    sales_idx: list[int],
-) -> float:
+class MeanAbsoluteErrorLog1p(Metric):
     """
-    Mean Absolute Error on SALES ONLY, expressed in original units.
-    Cyclical targets are excluded from the calculation.
-    Returns 0.0 if batch is empty or only zeros.
+    MAE in original units for log1p-scaled predictions & targets.
+    Aggregates across steps automatically.
     """
-    if xb.numel() == 0 or yb.numel() == 0:
-        logger.warning("Empty batch encountered in compute_mae. Returning 0.0.")
-        return 0.0
 
-    with torch.no_grad():
-        # ----- predictions -----
-        preds_np = model(xb.to(device)).cpu().numpy()
-        p_sales_units = preds_np[:, sales_idx]
-        p_sales_units = np.expm1(p_sales_units)
+    full_state_update = False  # avoids expensive DDP communication
 
-        # ----- ground truth ----
-        yb_np = yb.cpu().numpy()
-        y_sales_units = yb_np[:, sales_idx]
-        y_sales_units = np.expm1(y_sales_units)
+    def __init__(self, sales_idx: list[int], log_level: str = "INFO"):
+        super().__init__()
+        self.logger_ = get_logger(f"{__name__}.MeanAbsoluteErrorLog1p", log_level)
+        self.sales_idx = sales_idx
 
-        # ----- calculate batch-wise MAE -----
-        if y_sales_units.size == 0:
-            logger.warning("No sales values found in compute_mae. Returning 0.0.")
-            return 0.0
-        mask = y_sales_units > 0
-        logger.debug(f"Non-zero targets in batch: {mask.sum()} / {y_sales_units.size}")
+        # Buffers for sum of abs error and count
+        self.add_state("sum_abs_error", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        # Select relevant columns
+        preds = preds[:, self.sales_idx]
+        target = target[:, self.sales_idx]
+
+        # Revert log1p
+        preds = torch.expm1(preds)
+        target = torch.expm1(target)
+
+        # Mask zero targets
+        mask = target > 0
         if mask.sum() == 0:
-            logger.warning("All targets are zero in this batch. Skipping MAE.")
-            return 0.0
+            return
 
-    batch_mae = np.abs(p_sales_units[mask] - y_sales_units[mask]).mean()
+        abs_error = torch.abs(preds[mask] - target[mask]).sum()
+        self.sum_abs_error += abs_error
+        self.count += mask.sum()
 
-    return batch_mae
+    def compute(self):
+        if self.count == 0:
+            return torch.tensor(0.0, device=self.sum_abs_error.device)
+        self.logger_.debug(f"Sum abs error: {self.sum_abs_error.item()}")
+        return self.sum_abs_error / self.count
 
 
-def compute_mae_from_preds(
-    preds: torch.Tensor, yb: torch.Tensor, sales_idx: list[int]
+def compute_mae(
+    preds: torch.Tensor,
+    yb: torch.Tensor,
+    sales_idx: list[int],
+    logger: logging.Logger,
 ) -> float:
     """
     Compute Mean Absolute Error (MAE) in original units from predictions and targets.
@@ -542,15 +477,62 @@ def compute_mae_from_preds(
 
     mask = yb_np > 0
     if mask.sum() == 0:
+        logger.warning("All targets are zero in this batch. Skipping MAE.")
         return 0.0
 
     batch_mae = np.abs(preds_np[mask] - yb_np[mask]).mean()
+    logger.debug(f"MAE: {batch_mae:.6f}")
     return float(batch_mae)
+
+
+class RootMeanSquaredErrorLog1p(Metric):
+    """
+    RMSE in original units for log1p-scaled predictions & targets.
+    Aggregates across steps automatically.
+    """
+
+    full_state_update = False  # avoids expensive DDP communication
+
+    def __init__(self, sales_idx: list[int], log_level: str = "INFO"):
+        super().__init__()
+        self.logger_ = get_logger(f"{__name__}.RootMeanSquaredErrorLog1p", log_level)
+        self.sales_idx = sales_idx
+
+        # Buffers for sum of squared error and count
+        self.add_state(
+            "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
+        )
+        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        # Select relevant columns
+        preds = preds[:, self.sales_idx]
+        target = target[:, self.sales_idx]
+
+        # Revert log1p
+        preds = torch.expm1(preds)
+        target = torch.expm1(target)
+
+        # Mask zero targets
+        mask = target > 0
+        if mask.sum() == 0:
+            return
+
+        squared_error = torch.square(preds[mask] - target[mask]).sum()
+        self.sum_squared_error += squared_error
+        self.count += mask.sum()  # ✅ increment count before compute()
+
+    def compute(self):
+        if self.count == 0:
+            return torch.tensor(0.0, device=self.sum_squared_error.device)
+        return torch.sqrt(self.sum_squared_error / self.count)
 
 
 def compute_rmse(
     preds: torch.Tensor,
     targets: torch.Tensor,
+    logger: logging.Logger,
+    *,
     device: torch.device = torch.device("cpu"),
 ) -> torch.Tensor:
     """Compute Root Mean Squared Error (RMSE)."""
@@ -570,12 +552,14 @@ def compute_rmse(
 
     # Return the square root of MSE (RMSE)
     rmse = torch.sqrt(mse)
+    logger.debug(f"RMSE: {rmse.item():.6f}")
     return rmse
 
 
 def compute_mav(
     loader: DataLoader,
     sales_idx: list[int],
+    logger: logging.Logger,
 ) -> float:
     """
     Mean absolute value of the sales targets in original units.
@@ -589,13 +573,6 @@ def compute_mav(
         for _, yb, _ in loader:
             y_np = yb.cpu().numpy()
             sales = np.expm1(y_np[:, sales_idx])  # Undo log1p
-
-            # nonzero_count = np.count_nonzero(sales)
-            # logger.debug(
-            #     f"Sales: shape={sales.shape}, non-zero={nonzero_count}, "
-            #     f"min={np.min(sales):.2f}, max={np.max(sales):.2f}, mean={np.mean(sales):.2f}"
-            # )
-
             abs_sum += np.abs(sales).sum()
             count += sales.size
 

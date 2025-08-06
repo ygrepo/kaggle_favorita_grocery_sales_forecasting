@@ -4,6 +4,7 @@ from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader
 from sklearn.preprocessing import MinMaxScaler
 import lightning.pytorch as pl
+from lightning.pytorch.callbacks import ModelCheckpoint
 import random
 import logging
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -20,11 +21,18 @@ from typing import Optional
 from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting import TemporalFusionTransformer
 from pytorch_forecasting.metrics import RMSE
-from pytorch_lightning import Trainer
+from pytorch_lightning import Trainer, LightningModule
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
-from src.model import LightningWrapper, ModelType
-from src.model import compute_mav, model_factory, init_weights, model_factory_from_str
 from torch.utils.data import TensorDataset, Dataset, DataLoader
+from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.loggers import WandbLogger
+from src.model import LightningWrapper, ModelType
+from src.model import (
+    compute_mav,
+    model_factory,
+    init_weights,
+    model_factory_from_str,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -478,6 +486,7 @@ def train_all_models_for_cluster_pair(
     model_types: List[ModelType],
     model_dir: Path,
     dataloader_dir: Path,
+    model_logger_dir: Path,
     label_cols: list[str],
     y_to_log_features: list[str],
     store_cluster: int,
@@ -490,7 +499,6 @@ def train_all_models_for_cluster_pair(
     num_workers: int = 15,
     persistent_workers: bool = True,
     enable_progress_bar: bool = True,
-    train_logger: bool = False,
     log_level: str = "INFO",
 ) -> pd.DataFrame:
     """
@@ -505,6 +513,7 @@ def train_all_models_for_cluster_pair(
                 model_dir=model_dir,
                 model_type=model_type,
                 dataloader_dir=dataloader_dir,
+                model_logger_dir=model_logger_dir,
                 model_family="feedforward",
                 label_cols=label_cols,
                 y_to_log_features=y_to_log_features,
@@ -517,7 +526,6 @@ def train_all_models_for_cluster_pair(
                 num_workers=num_workers,
                 persistent_workers=persistent_workers,
                 enable_progress_bar=enable_progress_bar,
-                train_logger=train_logger,
                 log_level=log_level,
             )
             # history = train_per_cluster_pair(
@@ -632,8 +640,8 @@ def train_per_cluster_pair(
     logger.debug(f"Checking label order consistency: {col_y_index_map}")
 
     y_log_idx = [col_y_index_map[c] for c in y_log_features]
-    train_mav = compute_mav(train_loader, y_log_idx)
-    val_mav = compute_mav(val_loader, y_log_idx)
+    train_mav = compute_mav(train_loader, y_log_idx, logger)
+    val_mav = compute_mav(val_loader, y_log_idx, logger)
 
     base_model = model_factory(model_type, input_dim, output_dim)
     base_model.apply(init_weights)
@@ -661,11 +669,14 @@ def train_per_cluster_pair(
     )
 
     logger.info("Training model...")
+    logger = CSVLogger("logs", name="my_exp_name")
+    trainer = Trainer(logger=logger)
+
     trainer = pl.Trainer(
         accelerator=get_device(),
         deterministic=True,
         max_epochs=epochs,
-        logger=train_logger,
+        logger=logger,
         enable_progress_bar=enable_progress_bar,
         callbacks=[checkpoint_callback],
     )
@@ -1221,6 +1232,7 @@ def train_sequence_model(
 def train_model_unified(
     model_dir: Path,
     dataloader_dir: Path,
+    model_logger_dir: Path,
     model_type: ModelType,  # Your enum for feedforward models
     model_family: str,  # "feedforward" or "sequence"
     label_cols: list[str],
@@ -1235,9 +1247,8 @@ def train_model_unified(
     num_workers: int = 15,
     persistent_workers: bool = True,
     enable_progress_bar: bool = True,
-    train_logger: bool = False,
     log_level: str = "INFO",
-) -> pd.DataFrame:
+) -> None:
     """
     Unified training for feedforward per-cluster models and sequence models.
     """
@@ -1245,7 +1256,7 @@ def train_model_unified(
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     pl.seed_everything(seed)
     checkpoints_dir = model_dir / "checkpoints"
-    for d in [checkpoints_dir, history_dir]:
+    for d in [checkpoints_dir, history_dir, model_logger_dir]:
         if d is not None:
             d.mkdir(parents=True, exist_ok=True)
 
@@ -1269,7 +1280,7 @@ def train_model_unified(
             logger.warning(
                 f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
             )
-            return pd.DataFrame()
+            return
 
         train_loader = torch.load(
             dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
@@ -1324,8 +1335,8 @@ def train_model_unified(
         col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
         y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
         logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
-        train_mav = compute_mav(train_loader, y_to_log_features_idx)
-        val_mav = compute_mav(val_loader, y_to_log_features_idx)
+        train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
+        val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
 
         # Build model and wrapper
         base_model = model_factory(ModelType(model_type.value), input_dim, output_dim)
@@ -1352,36 +1363,20 @@ def train_model_unified(
             filename=model_name,
         )
 
+        # Initialize CSV logger
+        csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
+        csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
         trainer = pl.Trainer(
             accelerator=get_device(),
             deterministic=True,
             max_epochs=epochs,
-            logger=train_logger,
+            logger=csv_logger,
             enable_progress_bar=enable_progress_bar,
             callbacks=[checkpoint_callback],
         )
 
         logger.info(f"Training feedforward model: {model_name}")
         trainer.fit(lightning_model, train_loader, val_loader)
-
-        # Collect training history
-        history = pd.DataFrame(
-            [
-                {
-                    "model_name": model_name,
-                    "store_cluster": store_cluster,
-                    "item_cluster": item_cluster,
-                    "train_mav": train_mav,
-                    "val_mav": val_mav,
-                    "best_train_avg_mae": lightning_model.best_train_avg_mae,
-                    "best_val_avg_mae": lightning_model.best_val_avg_mae,
-                    "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
-                    "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
-                    "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
-                    "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
-                }
-            ]
-        )
 
     # --------------------------------------------------------
     # 2) SEQUENCE MODEL BRANCH (TFT or other)
@@ -1451,11 +1446,3 @@ def train_model_unified(
 
     else:
         raise ValueError("`model_family` must be either 'feedforward' or 'sequence'")
-
-    # Save history
-    if history_dir:
-        logger.info(f"Saving history to {history_dir}")
-        history_fn = history_dir / f"{model_name}.csv"
-        history = safe_append_to_history(history_fn, history)
-
-    return history
