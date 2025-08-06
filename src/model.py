@@ -424,7 +424,6 @@ class MeanAbsoluteErrorLog1p(Metric):
     def compute(self):
         if self.count == 0:
             return torch.tensor(0.0, device=self.sum_abs_error.device)
-        self.logger_.debug(f"Sum abs error: {self.sum_abs_error.item()}")
         return self.sum_abs_error / self.count
 
 
@@ -450,7 +449,6 @@ def compute_mae(
         return 0.0
 
     batch_mae = np.abs(preds_np[mask] - yb_np[mask]).mean()
-    logger.debug(f"MAE: {batch_mae:.6f}")
     return float(batch_mae)
 
 
