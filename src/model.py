@@ -5,13 +5,11 @@ import logging
 import numpy as np
 from pathlib import Path
 from enum import Enum
-from lightning.pytorch.utilities.types import OptimizerLRScheduler
-from torch.utils.data import TensorDataset, Dataset, DataLoader
-import torch
+from torch.utils.data import DataLoader
 from torchmetrics import Metric
-from torchmetrics.regression import MeanSquaredError
+import math
+from typing import List
 
-import numpy as np
 from src.utils import get_logger
 
 
@@ -186,8 +184,10 @@ class HybridLoss(nn.Module):
 # ─────────────────────────────────────────────────────────────────────
 # LightningWrapper
 # ─────────────────────────────────────────────────────────────────────
+
+
 class LightningWrapper(pl.LightningModule):
-    """Minimal Lightning module wrapping the forecasting model."""
+    """Lightning module wrapping the forecasting model with full metric logging."""
 
     def __init__(
         self,
@@ -195,7 +195,7 @@ class LightningWrapper(pl.LightningModule):
         model_name: str,
         store: int,
         item: int,
-        sales_idx: list[int],
+        sales_idx: List[int],
         train_mav: float,
         val_mav: float,
         *,
@@ -223,59 +223,38 @@ class LightningWrapper(pl.LightningModule):
         self.sales_idx = sales_idx
         self.train_mav = train_mav
         self.val_mav = val_mav
+
+        # Loss and metrics
         self.loss_fn = NWRMSLELoss()
         self.train_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.val_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.train_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
         self.val_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
 
-        # Save all except model
+        # Save hparams (ignoring model object)
         self.save_hyperparameters(ignore=["model"])
+
+    # ---------------------------
+    # Core Methods
+    # ---------------------------
 
     def forward(self, x):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
         xb, yb, wb = batch
-
-        # --- Check inputs ---
-        if torch.any(torch.isnan(xb)):
-            self.logger_.error(f"NaN detected in input features at batch {batch_idx}")
-            raise ValueError("NaN in input features detected!")
-        if torch.any(torch.isinf(xb)):
-            self.logger_.error(f"Inf detected in input features at batch {batch_idx}")
-            raise ValueError("Inf in input features detected!")
-
-        # --- Forward pass ---
         preds = self.model(xb)
-
-        # --- Detect NaNs in predictions ---
-        if torch.any(torch.isnan(preds)):
-            self.logger_.error(f"NaN detected in predictions at batch {batch_idx}")
-            self.logger_.debug(
-                "Sample predictions:\n%s", preds[:5].detach().cpu().numpy()
-            )
-            self.logger_.debug("Input sample:\n%s", xb[:5].detach().cpu().numpy())
-            raise ValueError("NaN in predictions detected!")
-
         preds = torch.clamp(preds, min=1e-6)
 
-        # --- Compute loss ---
+        # Compute loss
         loss = self.loss_fn(preds, yb, wb)
-        # self.logger_.debug("Training Batch %d loss: %.6f", batch_idx, loss.item())
 
-        # --- Detect NaNs in loss ---
-        if torch.isnan(loss):
-            self.logger_.error(f"NaN detected in loss at batch {batch_idx}")
-            self.logger_.debug("Preds sample:\n%s", preds[:5].detach().cpu().numpy())
-            self.logger_.debug("Targets sample:\n%s", yb[:5].detach().cpu().numpy())
-            self.logger_.debug("Weights sample:\n%s", wb[:5].detach().cpu().numpy())
-            raise ValueError("NaN loss detected!")
+        # Log training loss
         self.log(
             "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
         )
 
-        # Compute training MAE for this batch
+        # Update & log MAE
         self.train_mae_metric.update(preds, yb)
         self.log(
             "train_mae",
@@ -286,6 +265,7 @@ class LightningWrapper(pl.LightningModule):
             logger=True,
         )
 
+        # Update & log RMSE
         self.train_rmse_metric.update(preds, yb)
         self.log(
             "train_rmse",
@@ -295,76 +275,69 @@ class LightningWrapper(pl.LightningModule):
             prog_bar=True,
             logger=True,
         )
+
         return loss
 
     def validation_step(self, batch, batch_idx):
         xb, yb, wb = batch
-        if (
-            torch.any(torch.isnan(xb))
-            or torch.any(torch.isnan(yb))
-            or torch.any(torch.isnan(wb))
-        ):
-            self.logger_.info(f"NaN detected in data at batch {batch_idx}")
-            raise ValueError("NaN detected in validation data!")
-        if (
-            torch.any(torch.isinf(xb))
-            or torch.any(torch.isinf(yb))
-            or torch.any(torch.isinf(wb))
-        ):
-            self.logger_.info(f"Inf detected in data at batch {batch_idx}")
-            raise ValueError("Inf detected in validation data!")
-
         preds = self.model(xb)
-        if torch.any(torch.isnan(preds)):
-            self.logger_.warning(f"NaN detected in predictions at batch {batch_idx}")
         preds = torch.clamp(preds, min=1e-6)
-        if torch.all(torch.eq(yb, 0)):
-            self.logger_.warning(f"Zero detected in targets at batch {batch_idx}")
         yb = torch.clamp(yb, min=1e-6)
-        loss = self.loss_fn(preds, yb, wb)
 
+        # Compute loss
+        loss = self.loss_fn(preds, yb, wb)
         self.log(
             "val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
         )
+
+        # Update & log MAE
         self.val_mae_metric.update(preds, yb)
         self.log(
             "val_mae",
-            self.train_mae_metric,
+            self.val_mae_metric,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
             logger=True,
         )
+
+        # Update & log RMSE
         self.val_rmse_metric.update(preds, yb)
         self.log(
             "val_rmse",
-            self.train_rmse_metric,
+            self.val_rmse_metric,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
             logger=True,
         )
+
         return loss
 
-    def on_epoch_start(self) -> None:
+    # ---------------------------
+    # Metric Reset Hooks
+    # ---------------------------
+
+    def on_epoch_start(self):
         self.logger_.info(
             f"\nModel: {self.model_name}-Epoch {self.current_epoch} started!"
         )
         self.train_mae_metric.reset()
+        self.train_rmse_metric.reset()
 
     def on_validation_epoch_start(self):
         self.val_mae_metric.reset()
+        self.val_rmse_metric.reset()
+
+    # ---------------------------
+    # Epoch-End Hooks for %MAV
+    # ---------------------------
 
     def on_train_epoch_end(self):
         avg_train_mae = self.train_mae_metric.compute().item()
-
-        if self.train_mav == 0:
-            self.logger_.warning(
-                f"Train MAV is 0 for store {self.store} and item {self.item}"
-            )
-            avg_train_percent_mav = float("inf")
-        else:
-            avg_train_percent_mav = avg_train_mae / self.train_mav * 100
+        avg_train_percent_mav = (
+            math.nan if self.train_mav == 0 else avg_train_mae / self.train_mav * 100
+        )
 
         self.log(
             "train_percent_mav",
@@ -376,19 +349,11 @@ class LightningWrapper(pl.LightningModule):
         )
 
     def on_validation_epoch_end(self):
-        # Compute epoch-average MAE
         avg_val_mae = self.val_mae_metric.compute().item()
+        avg_val_percent_mav = (
+            math.nan if self.val_mav == 0 else avg_val_mae / self.val_mav * 100
+        )
 
-        # Compute MAV% safely
-        if self.val_mav == 0:
-            self.logger_.warning(
-                f"Val MAV is 0 for store {self.store} and item {self.item}"
-            )
-            avg_val_percent_mav = float("inf")
-        else:
-            avg_val_percent_mav = avg_val_mae / self.val_mav * 100
-
-        # 🔹 Log as a scalar metric to CSVLogger/W&B
         self.log(
             "val_percent_mav",
             avg_val_percent_mav,
@@ -398,7 +363,11 @@ class LightningWrapper(pl.LightningModule):
             logger=True,
         )
 
-    def configure_optimizers(self) -> OptimizerLRScheduler:
+    # ---------------------------
+    # Optimizer
+    # ---------------------------
+
+    def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="min", factor=0.5, patience=4, min_lr=1e-5

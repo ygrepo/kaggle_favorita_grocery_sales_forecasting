@@ -1359,6 +1359,14 @@ def train_model_unified(
             monitor="val_percent_mav",
             mode="min",
             save_top_k=1,
+            save_last=True,   # ✅ saves last epoch too
+            dirpath=checkpoint_dir,
+            filename=model_name,
+        )
+        checkpoint_callback = ModelCheckpoint(
+            monitor="val_percent_mav",
+            mode="min",
+            save_top_k=1,
             dirpath=checkpoint_dir,
             filename=model_name,
         )
