@@ -1363,14 +1363,7 @@ def train_model_unified(
             dirpath=checkpoint_dir,
             filename=model_name,
         )
-        checkpoint_callback = ModelCheckpoint(
-            monitor="val_percent_mav",
-            mode="min",
-            save_top_k=1,
-            dirpath=checkpoint_dir,
-            filename=model_name,
-        )
-
+       
         # Initialize CSV logger
         csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
         csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
