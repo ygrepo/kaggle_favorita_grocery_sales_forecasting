@@ -34,7 +34,6 @@ from src.model import (
     model_factory_from_str,
 )
 
-logger = logging.getLogger(__name__)
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -500,16 +499,15 @@ def train_all_models_for_cluster_pair(
     persistent_workers: bool = True,
     enable_progress_bar: bool = True,
     log_level: str = "INFO",
-) -> pd.DataFrame:
+) -> None:
     """
     Train multiple model types for a single (store_cluster, item_cluster) pair,
     appending results to the same history CSV.
     """
-    all_histories = []
 
     for model_type in model_types:
         try:
-            history = train_model_unified(
+            train_model_unified(
                 model_dir=model_dir,
                 model_type=model_type,
                 dataloader_dir=dataloader_dir,
@@ -546,16 +544,10 @@ def train_all_models_for_cluster_pair(
             #     train_logger=train_logger,
             #     log_level=log_level,
             # )
-            all_histories.append(history)
         except Exception as e:
             logger.exception(
                 f"Failed to train {model_type.value} for ({store_cluster}, {item_cluster}): {e}"
             )
-
-    if all_histories:
-        return pd.concat(all_histories, ignore_index=True)
-    else:
-        return pd.DataFrame()
 
 
 def train_per_cluster_pair(
@@ -1359,11 +1351,11 @@ def train_model_unified(
             monitor="val_percent_mav",
             mode="min",
             save_top_k=1,
-            save_last=True,   # ✅ saves last epoch too
+            save_last=True,  # ✅ saves last epoch too
             dirpath=checkpoint_dir,
             filename=model_name,
         )
-       
+
         # Initialize CSV logger
         csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
         csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
