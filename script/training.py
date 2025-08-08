@@ -38,10 +38,14 @@ def train(
     epochs: int,
     lr: float,
     seed: int,
+    hidden_dim: int,
+    h1: int,
+    h2: int,
+    depth: int,
+    dropout: float,
     num_workers: int,
     persistent_workers: bool,
     enable_progress_bar: bool,
-    train_logger: bool,
     history_dir: Path,
     log_level: str,
 ):
@@ -73,8 +77,6 @@ def train(
         Whether to use persistent workers for data loading.
     enable_progress_bar : bool::
         Whether to enable progress bar.
-    train_logger : bool
-        Whether to enable training logger.
     log_level : str
         Logging level (e.g., "INFO", "DEBUG").
     """
@@ -123,6 +125,11 @@ def train(
             lr=lr,
             epochs=epochs,
             seed=seed,
+            hidden_dim=hidden_dim,
+            h1=h1,
+            h2=h2,
+            depth=depth,
+            dropout=dropout,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
             enable_progress_bar=enable_progress_bar,
@@ -166,6 +173,36 @@ def parse_args():
         help="Learning rate",
     )
     parser.add_argument(
+        "--hidden_dim",
+        type=int,
+        default=32,
+        help="Hidden dimension",
+    )
+    parser.add_argument(
+        "--h1",
+        type=int,
+        default=64,
+        help="Hidden dimension 1",
+    )
+    parser.add_argument(
+        "--h2",
+        type=int,
+        default=32,
+        help="Hidden dimension 2",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=3,
+        help="Depth",
+    )
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.4,
+        help="Dropout rate",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=2025,
@@ -194,12 +231,6 @@ def parse_args():
         type=str2bool,
         default=True,
         help="Whether to enable progress bar",
-    )
-    parser.add_argument(
-        "--train_logger",
-        type=str2bool,
-        default=False,
-        help="Whether to enable training logger",
     )
     parser.add_argument(
         "--window_size",
@@ -240,7 +271,6 @@ def main():
     num_workers = args.num_workers
     persistent_workers = args.persistent_workers
     enable_progress_bar = args.enable_progress_bar
-    train_logger = args.train_logger
 
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
@@ -256,11 +286,15 @@ def main():
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
         logger.info(f"  Learning rate: {args.lr}")
+        logger.info(f"  Hidden dimension: {args.hidden_dim}")
+        logger.info(f"  Hidden dimension 1: {args.h1}")
+        logger.info(f"  Hidden dimension 2: {args.h2}")
+        logger.info(f"  Depth: {args.depth}")
+        logger.info(f"  Dropout rate: {args.dropout}")
         logger.info(f"  Seed: {args.seed}")
         logger.info(f"  Num workers: {num_workers}")
         logger.info(f"  Persistent workers: {persistent_workers}")
         logger.info(f"  Enable progress bar: {enable_progress_bar}")
-        logger.info(f"  Train logger: {train_logger}")
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -280,12 +314,16 @@ def main():
             window_size=args.window_size,
             epochs=args.epochs,
             lr=args.lr,
+            hidden_dim=args.hidden_dim,
+            h1=args.h1,
+            h2=args.h2,
+            depth=args.depth,
+            dropout=args.dropout,
             seed=args.seed,
             history_dir=history_dir,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
             enable_progress_bar=enable_progress_bar,
-            train_logger=train_logger,
             log_level=args.log_level,
         )
         logger.info("Training completed successfully!")
