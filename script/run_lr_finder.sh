@@ -151,7 +151,7 @@ fi
 
 # Run the learning rate finder
 echo "Running Learning Rate Finder..." | tee -a "$LOG_FILE"
-python "${SCRIPT_DIR}/lr_finder.py" \
+python "src/lr_finder.py" \
     --dataloader_dir "$DATALOADER_DIR" \
     --store_cluster "$STORE_CLUSTER" \
     --item_cluster "$ITEM_CLUSTER" \
