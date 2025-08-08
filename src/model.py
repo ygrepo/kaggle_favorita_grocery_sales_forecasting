@@ -13,16 +13,8 @@ from typing import List
 from src.utils import get_logger
 
 
-logger = logging.getLogger(__name__)
-
 # Set up logger
 logger = logging.getLogger(__name__)
-
-
-def _to_float(x):
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().item()
-    return float(x)
 
 
 def extract_model_name(model_name_chkp: Path) -> str:
