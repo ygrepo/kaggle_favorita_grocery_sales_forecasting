@@ -80,17 +80,19 @@ class TwoLayerNN(nn.Module):
 
 
 class ResidualMLP(nn.Module):
-    def __init__(self, input_dim, output_dim=3, hidden=128, depth=3, dropout=0.2):
+    def __init__(
+        self, input_dim, output_dim=3, hidden_dim: int = 128, depth=3, dropout=0.2
+    ):
         super().__init__()
         self.blocks = nn.ModuleList()
         for _ in range(depth):
             self.blocks.append(
                 nn.Sequential(
-                    nn.Linear(input_dim, hidden),
-                    nn.LayerNorm(hidden),  # changed from BatchNorm1d
+                    nn.Linear(input_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),  # changed from BatchNorm1d
                     nn.ReLU(),
                     nn.Dropout(dropout),
-                    nn.Linear(hidden, input_dim),  # residual connection
+                    nn.Linear(hidden_dim, input_dim),  # residual connection
                 )
             )
         self.out_proj = nn.Linear(input_dim, output_dim)
@@ -113,28 +115,44 @@ MODEL_TYPES = list(ModelType)
 
 
 # Model Factory Function
-def model_factory(model_type: ModelType, input_dim: int, output_dim: int) -> nn.Module:
+def model_factory(
+    model_type: ModelType,
+    input_dim: int,
+    hidden_dim: int,
+    h1: int,
+    h2: int,
+    depth: int,
+    output_dim: int,
+    dropout: float,
+) -> nn.Module:
     """Factory function to return the correct model based on the model_type."""
     if model_type == ModelType.SHALLOW_NN:
-        return ShallowNN(input_dim, output_dim)
+        return ShallowNN(input_dim, hidden_dim, output_dim, dropout)
     elif model_type == ModelType.TWO_LAYER_NN:
-        return TwoLayerNN(input_dim, output_dim)
+        return TwoLayerNN(input_dim, output_dim, h1, h2, dropout)
     elif model_type == ModelType.RESIDUAL_MLP:
-        return ResidualMLP(input_dim, output_dim)
+        return ResidualMLP(input_dim, output_dim, hidden_dim, depth, dropout)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
 
 def model_factory_from_str(
-    model_type: str, input_dim: int, output_dim: int
+    model_type: str,
+    input_dim: int,
+    hidden_dim: int,
+    h1: int,
+    h2: int,
+    depth: int,
+    output_dim: int,
+    dropout: float,
 ) -> nn.Module:
     """Factory function to return the correct model based on the model_type."""
     if model_type == "ShallowNN":
-        return ShallowNN(input_dim, output_dim)
+        return ShallowNN(input_dim, hidden_dim, output_dim, dropout)
     elif model_type == "TwoLayerNN":
-        return TwoLayerNN(input_dim, output_dim)
+        return TwoLayerNN(input_dim, output_dim, h1, h2, dropout)
     elif model_type == "ResidualMLP":
-        return ResidualMLP(input_dim, output_dim)
+        return ResidualMLP(input_dim, output_dim, hidden_dim, depth, dropout)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 

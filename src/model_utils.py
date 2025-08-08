@@ -637,7 +637,16 @@ def train_per_cluster_pair(
     train_mav = compute_mav(train_loader, y_log_idx, logger)
     val_mav = compute_mav(val_loader, y_log_idx, logger)
 
-    base_model = model_factory(model_type, input_dim, output_dim)
+    base_model = model_factory(
+        model_type,
+        input_dim,
+        hidden_dim=128,  # default
+        h1=64,  # default
+        h2=32,  # default
+        depth=3,  # default
+        output_dim=output_dim,
+        dropout=0.0,  # default
+    )
     base_model.apply(init_weights)
     model_name = f"{store_cluster}_{item_cluster}_{model_type.value}"
 
@@ -735,7 +744,16 @@ def load_latest_model(
     model_dict = {}
     for (sc, ic), versioned_ckpts in candidates.items():
         try:
-            model = model_factory_from_str(model_name, input_dim, output_dim)
+            model = model_factory_from_str(
+                model_name,
+                input_dim,
+                hidden_dim=128,  # default
+                h1=64,  # default
+                h2=32,  # default
+                depth=3,  # default
+                output_dim=output_dim,
+                dropout=0.0,  # default
+            )
             wrapper = LightningWrapper.load_from_checkpoint(
                 best_ckpt, model=model, strict=False
             )
@@ -811,7 +829,14 @@ def load_lightning_wrapper(ckpt_path: Path) -> LightningWrapper:
     hparams = checkpoint["hyper_parameters"]
     model_name = extract_model_name(hparams["model_name"])
     model = model_factory_from_str(
-        model_name, hparams["input_dim"], hparams["output_dim"]
+        model_name,
+        hparams["input_dim"],
+        hidden_dim=128,  # default
+        h1=64,  # default
+        h2=32,  # default
+        depth=3,  # default
+        output_dim=hparams["output_dim"],
+        dropout=0.0,  # default
     )
     # Load the wrapper with model injected
     wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
@@ -847,7 +872,16 @@ def load_latest_models_from_checkpoints(
     for (sc, ic), versioned_ckpts in candidates.items():
         version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
         try:
-            model = model_factory_from_str(model_name, input_dim, output_dim)
+            model = model_factory_from_str(
+                model_name,
+                input_dim,
+                hidden_dim=128,  # default
+                h1=64,  # default
+                h2=32,  # default
+                depth=3,  # default
+                output_dim=output_dim,
+                dropout=0.0,  # default
+            )
             wrapper = LightningWrapper.load_from_checkpoint(
                 best_ckpt, model=model, strict=False
             )
@@ -1236,6 +1270,11 @@ def train_model_unified(
     *,
     history_dir: Optional[Path] = None,
     lr: float = 3e-4,
+    hidden_dim: int = 128,
+    h1: int = 64,
+    h2: int = 32,
+    depth: int = 3,
+    dropout: float = 0.0,
     epochs: int = 30,
     seed: int = 2025,
     num_workers: int = 15,
@@ -1333,7 +1372,16 @@ def train_model_unified(
         val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
 
         # Build model and wrapper
-        base_model = model_factory(ModelType(model_type.value), input_dim, output_dim)
+        base_model = model_factory(
+            ModelType(model_type.value),
+            input_dim,
+            hidden_dim,
+            h1,
+            h2,
+            depth,
+            output_dim,
+            dropout,
+        )
         base_model.apply(init_weights)
         lightning_model = LightningWrapper(
             base_model,
