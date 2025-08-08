@@ -28,12 +28,14 @@ from pytorch_forecasting.metrics import RMSE
 from pytorch_lightning import Trainer, LightningModule
 
 from lightning.pytorch.loggers import CSVLogger
-from src.model import LightningWrapper, ModelType
 from src.model import (
+    LightningWrapper,
+    MODEL_TYPE,
+    FF_MODEL_TYPES,
+    SEQ_MODEL_TYPES,
     compute_mav,
     model_factory,
     init_weights,
-    model_factory_from_str,
 )
 
 
@@ -47,56 +49,6 @@ def get_device():
     else:
         accelerator = "cpu"
     return accelerator
-
-
-def safe_append_to_history(history_fn: Path, new_history: pd.DataFrame) -> pd.DataFrame:
-    """
-    Safely appends new training history to an existing CSV file if it exists and is valid.
-
-    Parameters
-    ----------
-    history_fn : Path
-        Path to the CSV history file.
-    new_history : pd.DataFrame
-        New training history to append.
-
-    Returns
-    -------
-    pd.DataFrame
-        The combined history DataFrame.
-    """
-    if (
-        history_fn is not None
-        and history_fn.exists()
-        and os.path.getsize(history_fn) > 0
-    ):
-        try:
-            previous_history = pd.read_csv(history_fn)
-
-            # Check for valid structure
-            if not previous_history.empty and set(new_history.columns).issubset(
-                previous_history.columns
-            ):
-                combined_history = pd.concat(
-                    [previous_history, new_history], ignore_index=True
-                )
-            else:
-                combined_history = new_history
-
-        except Exception as e:
-            print(
-                f"Warning: Failed to read or validate {history_fn}. Using new history only. Reason: {e}"
-            )
-            combined_history = new_history
-    else:
-        combined_history = new_history
-
-    # Save combined history
-    if history_fn is not None:
-        logger.info(f"Saving history to {history_fn}")
-        combined_history.to_csv(history_fn, index=False)
-
-    return combined_history
 
 
 class StoreItemDataset(Dataset):
@@ -406,85 +358,85 @@ def dataloader_to_dataframe(
     return df
 
 
-def combine_loaders_to_dataframe(
-    dataloader_dir: Path,
-    x_feature_cols: List[str],
-    label_cols: List[str],
-    *,
-    store_cluster: Optional[int] = None,
-    item_cluster: Optional[int] = None,
-    loader_type: str = "val",  # or "train"
-    log_level: str = "INFO",
-) -> pd.DataFrame:
-    """
-    Combines multiple loaders and meta files into a single DataFrame for a given store or item cluster.
+# def combine_loaders_to_dataframe(
+#     dataloader_dir: Path,
+#     x_feature_cols: List[str],
+#     label_cols: List[str],
+#     *,
+#     store_cluster: Optional[int] = None,
+#     item_cluster: Optional[int] = None,
+#     loader_type: str = "val",  # or "train"
+#     log_level: str = "INFO",
+# ) -> pd.DataFrame:
+#     """
+#     Combines multiple loaders and meta files into a single DataFrame for a given store or item cluster.
 
-    Parameters
-    ----------
-    dataloader_dir : Path
-        Directory containing the *_loader.pt and *_meta.parquet files.
-    x_feature_cols : List[str]
-        Column names for input features.
-    label_cols : List[str]
-        Column names for label features.
-    store_cluster : Optional[int]
-        If set, only include files with this store cluster.
-    item_cluster : Optional[int]
-        If set, only include files with this item cluster.
-    loader_type : str
-        'train' or 'val' to indicate which type of loader to load.
-    log_level : str
-        Logging level for the logger.
+#     Parameters
+#     ----------
+#     dataloader_dir : Path
+#         Directory containing the *_loader.pt and *_meta.parquet files.
+#     x_feature_cols : List[str]
+#         Column names for input features.
+#     label_cols : List[str]
+#         Column names for label features.
+#     store_cluster : Optional[int]
+#         If set, only include files with this store cluster.
+#     item_cluster : Optional[int]
+#         If set, only include files with this item cluster.
+#     loader_type : str
+#         'train' or 'val' to indicate which type of loader to load.
+#     log_level : str
+#         Logging level for the logger.
 
-    Returns
-    -------
-    pd.DataFrame
-        Concatenated DataFrame from all matching loaders and meta files.
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     Returns
+#     -------
+#     pd.DataFrame
+#         Concatenated DataFrame from all matching loaders and meta files.
+#     """
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    assert (store_cluster is None) != (
-        item_cluster is None
-    ), "Provide only one of store_cluster or item_cluster"
-    pattern = re.compile(r"(\d+)_(\d+)_" + re.escape(loader_type) + r"_loader\.pt")
-    logger.info(f"Loading {dataloader_dir}")
-    logger.info(f"Loader type: {loader_type}")
-    logger.info(f"Store cluster: {store_cluster}")
-    logger.info(f"Item cluster: {item_cluster}")
-    dfs = []
-    for file in dataloader_dir.glob(f"*_{loader_type}_loader.pt"):
-        match = pattern.match(file.name)
-        if not match:
-            logger.warning(f"Skipping {file.name}")
-            continue
+#     assert (store_cluster is None) != (
+#         item_cluster is None
+#     ), "Provide only one of store_cluster or item_cluster"
+#     pattern = re.compile(r"(\d+)_(\d+)_" + re.escape(loader_type) + r"_loader\.pt")
+#     logger.info(f"Loading {dataloader_dir}")
+#     logger.info(f"Loader type: {loader_type}")
+#     logger.info(f"Store cluster: {store_cluster}")
+#     logger.info(f"Item cluster: {item_cluster}")
+#     dfs = []
+#     for file in dataloader_dir.glob(f"*_{loader_type}_loader.pt"):
+#         match = pattern.match(file.name)
+#         if not match:
+#             logger.warning(f"Skipping {file.name}")
+#             continue
 
-        sc, ic = int(match.group(1)), int(match.group(2))
-        logger.info(f"Loading {file.name} (store_cluster={sc}, item_cluster={ic})")
-        if store_cluster is not None and sc != store_cluster:
-            logger.warning(f"Skipping {file.name} (store_cluster={sc})")
-            continue
-        if item_cluster is not None and ic != item_cluster:
-            logger.warning(f"Skipping {file.name} (item_cluster={ic})")
-            continue
+#         sc, ic = int(match.group(1)), int(match.group(2))
+#         logger.info(f"Loading {file.name} (store_cluster={sc}, item_cluster={ic})")
+#         if store_cluster is not None and sc != store_cluster:
+#             logger.warning(f"Skipping {file.name} (store_cluster={sc})")
+#             continue
+#         if item_cluster is not None and ic != item_cluster:
+#             logger.warning(f"Skipping {file.name} (item_cluster={ic})")
+#             continue
 
-        logger.info(f"Loading {file.name}")
-        df = dataloader_to_dataframe(file, x_feature_cols, label_cols, "weight")
-        meta_path = dataloader_dir / f"{sc}_{ic}_{loader_type}_meta.parquet"
-        logger.info(f"Loading {meta_path}")
-        if meta_path.exists():
-            meta_df = pd.read_parquet(meta_path)
-            df = pd.concat(
-                [meta_df.reset_index(drop=True), df.reset_index(drop=True)], axis=1
-            )
-        else:
-            logger.warning(f"Meta file not found for {file.name}")
-        dfs.append(df)
+#         logger.info(f"Loading {file.name}")
+#         df = dataloader_to_dataframe(file, x_feature_cols, label_cols, "weight")
+#         meta_path = dataloader_dir / f"{sc}_{ic}_{loader_type}_meta.parquet"
+#         logger.info(f"Loading {meta_path}")
+#         if meta_path.exists():
+#             meta_df = pd.read_parquet(meta_path)
+#             df = pd.concat(
+#                 [meta_df.reset_index(drop=True), df.reset_index(drop=True)], axis=1
+#             )
+#         else:
+#             logger.warning(f"Meta file not found for {file.name}")
+#         dfs.append(df)
 
-    return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
+#     return pd.concat(dfs, axis=0, ignore_index=True) if dfs else pd.DataFrame()
 
 
 def train_all_models_for_cluster_pair(
-    model_types: List[ModelType],
+    model_types: List[MODEL_TYPE],
     model_dir: Path,
     dataloader_dir: Path,
     model_logger_dir: Path,
@@ -493,7 +445,6 @@ def train_all_models_for_cluster_pair(
     store_cluster: int,
     item_cluster: int,
     *,
-    history_dir: Optional[Path] = None,
     lr: float = 3e-4,
     epochs: int = 5,
     seed: int = 2025,
@@ -502,8 +453,6 @@ def train_all_models_for_cluster_pair(
     h2: int = 32,
     depth: int = 3,
     dropout: float = 0.4,
-    num_workers: int = 15,
-    persistent_workers: bool = True,
     enable_progress_bar: bool = True,
     log_level: str = "INFO",
 ) -> None:
@@ -519,7 +468,6 @@ def train_all_models_for_cluster_pair(
                 model_type=model_type,
                 dataloader_dir=dataloader_dir,
                 model_logger_dir=model_logger_dir,
-                model_family="feedforward",
                 label_cols=label_cols,
                 y_to_log_features=y_to_log_features,
                 store_cluster=store_cluster,
@@ -533,8 +481,6 @@ def train_all_models_for_cluster_pair(
                 h2=h2,
                 depth=depth,
                 dropout=dropout,
-                num_workers=num_workers,
-                persistent_workers=persistent_workers,
                 enable_progress_bar=enable_progress_bar,
                 log_level=log_level,
             )
@@ -546,7 +492,7 @@ def train_all_models_for_cluster_pair(
 
 def train_per_cluster_pair(
     model_dir: Path,
-    model_type: ModelType,
+    model_type: MODEL_TYPE,
     dataloader_dir: Path,
     label_cols: list[str],
     y_log_features: list[str],
@@ -706,54 +652,54 @@ def train_per_cluster_pair(
     return history
 
 
-def load_latest_model(
-    checkpoints_dir: Path,
-    input_dim: int,
-    output_dim: int,
-    model_type: ModelType,
-    *,
-    log_level: str = "INFO",
-) -> dict[tuple[int, int], LightningWrapper]:
-    """
-    Load the latest checkpoint per (store_cluster, item_cluster).
-    Prioritizes -v3 > -v2 > -v1 > base (version=0).
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+# def load_latest_model(
+#     checkpoints_dir: Path,
+#     input_dim: int,
+#     output_dim: int,
+#     model_type: MODEL_TYPE,
+#     *,
+#     log_level: str = "INFO",
+# ) -> dict[tuple[int, int], LightningWrapper]:
+#     """
+#     Load the latest checkpoint per (store_cluster, item_cluster).
+#     Prioritizes -v3 > -v2 > -v1 > base (version=0).
+#     """
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    candidates = defaultdict(list)
-    pattern = re.compile(r"model_(\d+)_(\d+)_([A-Za-z0-9]+)(?:-v(\d+))?")
-    version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
+#     candidates = defaultdict(list)
+#     pattern = re.compile(r"model_(\d+)_(\d+)_([A-Za-z0-9]+)(?:-v(\d+))?")
+#     version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
 
-    for ckpt_path in checkpoints_dir.rglob("*.ckpt"):
-        match = pattern.match(ckpt_path.parent.name)  # match folder name
-        if not match:
-            continue
-        sc, ic = int(match[1]), int(match[2])
-        model_name = match[3]
-        version = int(match[4]) if match[4] is not None else 0
-        candidates[(sc, ic)].append((version, ckpt_path, model_name))
+#     for ckpt_path in checkpoints_dir.rglob("*.ckpt"):
+#         match = pattern.match(ckpt_path.parent.name)  # match folder name
+#         if not match:
+#             continue
+#         sc, ic = int(match[1]), int(match[2])
+#         model_name = match[3]
+#         version = int(match[4]) if match[4] is not None else 0
+#         candidates[(sc, ic)].append((version, ckpt_path, model_name))
 
-    model_dict = {}
-    for (sc, ic), versioned_ckpts in candidates.items():
-        try:
-            model = model_factory_from_str(
-                model_name,
-                input_dim,
-                hidden_dim=128,  # default
-                h1=64,  # default
-                h2=32,  # default
-                depth=3,  # default
-                output_dim=output_dim,
-                dropout=0.0,  # default
-            )
-            wrapper = LightningWrapper.load_from_checkpoint(
-                best_ckpt, model=model, strict=False
-            )
-            model_dict[(sc, ic)] = wrapper
-        except Exception as e:
-            logger.warning(f"Skipping {best_ckpt.name}: {e}")
+#     model_dict = {}
+#     for (sc, ic), versioned_ckpts in candidates.items():
+#         try:
+#             model = model_factory_from_str(
+#                 model_name,
+#                 input_dim,
+#                 hidden_dim=128,  # default
+#                 h1=64,  # default
+#                 h2=32,  # default
+#                 depth=3,  # default
+#                 output_dim=output_dim,
+#                 dropout=0.0,  # default
+#             )
+#             wrapper = LightningWrapper.load_from_checkpoint(
+#                 best_ckpt, model=model, strict=False
+#             )
+#             model_dict[(sc, ic)] = wrapper
+#         except Exception as e:
+#             logger.warning(f"Skipping {best_ckpt.name}: {e}")
 
-    return model_dict
+#     return model_dict
 
 
 def load_scalers(
@@ -802,109 +748,109 @@ def load_scalers(
     return scaler_dict
 
 
-def load_lightning_wrapper(ckpt_path: Path) -> LightningWrapper:
-    """
-    Load a LightningWrapper from checkpoint with automatic model creation.
+# def load_lightning_wrapper(ckpt_path: Path) -> LightningWrapper:
+#     """
+#     Load a LightningWrapper from checkpoint with automatic model creation.
 
-    Parameters
-    ----------
-    ckpt_path : Path
-        Path to the .ckpt file.
+#     Parameters
+#     ----------
+#     ckpt_path : Path
+#         Path to the .ckpt file.
 
-    Returns
-    -------
-    LightningWrapper
-        Loaded LightningWrapper instance with restored weights.
-    """
-    # Load just the hyperparameters first
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
-    hparams = checkpoint["hyper_parameters"]
-    model_name = extract_model_name(hparams["model_name"])
-    model = model_factory_from_str(
-        model_name,
-        hparams["input_dim"],
-        hidden_dim=128,  # default
-        h1=64,  # default
-        h2=32,  # default
-        depth=3,  # default
-        output_dim=hparams["output_dim"],
-        dropout=0.0,  # default
-    )
-    # Load the wrapper with model injected
-    wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
-    return wrapper
-
-
-def load_latest_models_from_checkpoints(
-    checkpoints_dir: Path,
-    input_dim: int,
-    output_dim: int,
-    *,
-    log_level: str = "INFO",
-) -> dict[tuple[int, int], LightningWrapper]:
-    """
-    Load the latest checkpoint per (store_cluster, item_cluster).
-    Prioritizes -v3 > -v2 > -v1 > base (version=0).
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-    candidates = defaultdict(list)
-    pattern = re.compile(r"model_(\d+)_(\d+)_([A-Za-z0-9]+)(?:-v(\d+))?")
-
-    for ckpt_path in checkpoints_dir.rglob("*.ckpt"):
-        match = pattern.match(ckpt_path.parent.name)  # match folder name
-        if not match:
-            continue
-        sc, ic = int(match[1]), int(match[2])
-        model_name = match[3]
-        version = int(match[4]) if match[4] is not None else 0
-        candidates[(sc, ic)].append((version, ckpt_path, model_name))
-
-    model_dict = {}
-    for (sc, ic), versioned_ckpts in candidates.items():
-        version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
-        try:
-            model = model_factory_from_str(
-                model_name,
-                input_dim,
-                hidden_dim=128,  # default
-                h1=64,  # default
-                h2=32,  # default
-                depth=3,  # default
-                output_dim=output_dim,
-                dropout=0.0,  # default
-            )
-            wrapper = LightningWrapper.load_from_checkpoint(
-                best_ckpt, model=model, strict=False
-            )
-            model_dict[(sc, ic)] = wrapper
-        except Exception as e:
-            logger.warning(f"Skipping {best_ckpt.name}: {e}")
-
-    return model_dict
+#     Returns
+#     -------
+#     LightningWrapper
+#         Loaded LightningWrapper instance with restored weights.
+#     """
+#     # Load just the hyperparameters first
+#     checkpoint = torch.load(ckpt_path, map_location="cpu")
+#     hparams = checkpoint["hyper_parameters"]
+#     model_name = extract_model_name(hparams["model_name"])
+#     model = model_factory_from_str(
+#         model_name,
+#         hparams["input_dim"],
+#         hidden_dim=128,  # default
+#         h1=64,  # default
+#         h2=32,  # default
+#         depth=3,  # default
+#         output_dim=hparams["output_dim"],
+#         dropout=0.0,  # default
+#     )
+#     # Load the wrapper with model injected
+#     wrapper = LightningWrapper.load_from_checkpoint(ckpt_path, model=model)
+#     return wrapper
 
 
-def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
-    """
-    Loads models from the specified directory, optionally filtering by date_str.
-    Returns a dictionary mapping store_item identifiers to their model and feature columns.
+# def load_latest_models_from_checkpoints(
+#     checkpoints_dir: Path,
+#     input_dim: int,
+#     output_dim: int,
+#     *,
+#     log_level: str = "INFO",
+# ) -> dict[tuple[int, int], LightningWrapper]:
+#     """
+#     Load the latest checkpoint per (store_cluster, item_cluster).
+#     Prioritizes -v3 > -v2 > -v1 > base (version=0).
+#     """
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    Args:
-        model_dir (str): Directory containing saved model files.
-        date_str (str): Date string to filter models (e.g., '2025-05-29'). If empty, loads all.
+#     candidates = defaultdict(list)
+#     pattern = re.compile(r"model_(\d+)_(\d+)_([A-Za-z0-9]+)(?:-v(\d+))?")
 
-    Returns:
-        dict: Mapping store_item ID -> (model, feature_cols)
-    """
-    models = {}
-    for filename in os.listdir(model_dir):
-        if filename.endswith(".pth"):
-            if date_str and not filename.endswith(f"_{date_str}.pth"):
-                continue  # Skip non-matching date files
-            model_path = os.path.join(model_dir, filename)
-            sid, model, feature_cols = load_model(model_path)
-            models[sid] = (model, feature_cols)
-    return models
+#     for ckpt_path in checkpoints_dir.rglob("*.ckpt"):
+#         match = pattern.match(ckpt_path.parent.name)  # match folder name
+#         if not match:
+#             continue
+#         sc, ic = int(match[1]), int(match[2])
+#         model_name = match[3]
+#         version = int(match[4]) if match[4] is not None else 0
+#         candidates[(sc, ic)].append((version, ckpt_path, model_name))
+
+#     model_dict = {}
+#     for (sc, ic), versioned_ckpts in candidates.items():
+#         version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
+#         try:
+#             model = model_factory_from_str(
+#                 model_name,
+#                 input_dim,
+#                 hidden_dim=128,  # default
+#                 h1=64,  # default
+#                 h2=32,  # default
+#                 depth=3,  # default
+#                 output_dim=output_dim,
+#                 dropout=0.0,  # default
+#             )
+#             wrapper = LightningWrapper.load_from_checkpoint(
+#                 best_ckpt, model=model, strict=False
+#             )
+#             model_dict[(sc, ic)] = wrapper
+#         except Exception as e:
+#             logger.warning(f"Skipping {best_ckpt.name}: {e}")
+
+#     return model_dict
+
+
+# def load_models_from_dir(model_dir="../output/models/", date_str: str = ""):
+#     """
+#     Loads models from the specified directory, optionally filtering by date_str.
+#     Returns a dictionary mapping store_item identifiers to their model and feature columns.
+
+#     Args:
+#         model_dir (str): Directory containing saved model files.
+#         date_str (str): Date string to filter models (e.g., '2025-05-29'). If empty, loads all.
+
+#     Returns:
+#         dict: Mapping store_item ID -> (model, feature_cols)
+#     """
+#     models = {}
+#     for filename in os.listdir(model_dir):
+#         if filename.endswith(".pth"):
+#             if date_str and not filename.endswith(f"_{date_str}.pth"):
+#                 continue  # Skip non-matching date files
+#             model_path = os.path.join(model_dir, filename)
+#             sid, model, feature_cols = load_model(model_path)
+#             models[sid] = (model, feature_cols)
+#     return models
 
 
 def batch_predict_all_store_items(
@@ -1169,98 +1115,16 @@ def generate_sequence_model_loaders(
     return train_loader, val_loader
 
 
-def train_sequence_model(
-    df: pd.DataFrame,
-    meta_cols: list[str],
-    x_historical_cols: list[str],
-    x_cyclical_cols: list[str],
-    label_cols: list[str],
-    dataloader_dir: Path,
-) -> Tuple[DataLoader, DataLoader]:
-    """
-    Train a sequence-to-sequence model using PyTorch Lightning and TorchForecasting.
-    This function prepares the data, defines the model, and trains it.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        The input DataFrame containing time series data.
-    meta_cols : list[str]
-        List of metadata columns.
-    x_historical_cols : list[str]
-        List of historical feature columns.
-    x_cyclical_cols : list[str]
-        List of cyclical feature columns.
-    label_cols : list[str]
-        List of label columns to predict.
-    dataloader_dir : Path
-        Directory to save the DataLoaders.
-
-    Returns
-    ----------
-    Tuple[DataLoader, DataLoader]
-    """
-
-    # --- Get the underlying TimeSeriesDataSet from train loader ---
-    training_dataset = train_loader.dataset.dataset  # DataLoader -> TimeSeriesDataSet
-    # Get number of training samples - handle different dataset types
-    try:
-        num_samples = len(training_dataset)
-    except (TypeError, AttributeError):
-        # For datasets that don't implement __len__ properly
-        num_samples = getattr(training_dataset, "length", "unknown")
-    print("Training samples:", num_samples)
-
-    # --- Define TemporalFusionTransformer model ---
-    tft = TemporalFusionTransformer.from_dataset(
-        training_dataset,
-        learning_rate=1e-3,
-        hidden_size=32,  # number of LSTM units
-        attention_head_size=4,
-        dropout=0.1,
-        hidden_continuous_size=16,  # size for continuous variables
-        output_size=len(label_cols),  # multi-target
-        loss=RMSE(),  # or QuantileLoss([0.1,0.5,0.9]) for probabilistic
-        log_interval=10,
-        reduce_on_plateau_patience=3,
-    )
-
-    print(f"Number of parameters in model: {tft.size()/1e3:.1f}k")
-
-    # --- Define PyTorch Lightning Trainer ---
-    early_stop_callback = EarlyStopping(monitor="val_loss", patience=5, mode="min")
-    lr_logger = LearningRateMonitor()
-
-    trainer = Trainer(
-        max_epochs=30,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1,
-        gradient_clip_val=0.1,
-        callbacks=[early_stop_callback, lr_logger],
-        enable_progress_bar=True,
-        deterministic=True,
-    )
-
-    # --- Train the model ---
-    trainer.fit(
-        tft,
-        train_dataloaders=train_loader,
-        val_dataloaders=val_loader,
-    )
-
-
 def train_model_unified(
     model_dir: Path,
     dataloader_dir: Path,
     model_logger_dir: Path,
-    model_type: ModelType,  # Your enum for feedforward models
-    model_family: str,  # "feedforward" or "sequence"
+    model_type: MODEL_TYPE,  # Unified model type enum
     label_cols: list[str],
     y_to_log_features: list[str],
     store_cluster: int,
     item_cluster: int,
     *,
-    history_dir: Optional[Path] = None,
     lr: float = 3e-4,
     hidden_dim: int = 128,
     h1: int = 64,
@@ -1269,112 +1133,68 @@ def train_model_unified(
     dropout: float = 0.0,
     epochs: int = 30,
     seed: int = 2025,
-    num_workers: int = 15,
-    persistent_workers: bool = True,
     enable_progress_bar: bool = True,
     log_level: str = "INFO",
+    # Sequence model specific parameters
+    attention_head_size: int = 4,
+    hidden_continuous_size: int = 16,
 ) -> None:
     """
-    Unified training for feedforward per-cluster models and sequence models.
+    Unified training for all model types using the unified model_factory.
     """
 
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     pl.seed_everything(seed)
     checkpoints_dir = model_dir / "checkpoints"
-    for d in [checkpoints_dir, history_dir, model_logger_dir]:
+    for d in [checkpoints_dir, model_logger_dir]:
         if d is not None:
             d.mkdir(parents=True, exist_ok=True)
 
-    model_name = f"{store_cluster}_{item_cluster}_{model_type.value if model_family=='feedforward' else model_family}"
+    model_name = f"{store_cluster}_{item_cluster}_{model_type.value}"
 
-    # --------------------------------------------------------
-    # 1) FEEDFORWARD MODEL BRANCH
-    # --------------------------------------------------------
-    if model_family == "feedforward":
-        # Load pre-saved metadata and loaders
-        train_meta_fn = (
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
-        )
-        val_meta_fn = (
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
-        )
-        meta_df = pd.read_parquet(train_meta_fn)
-        val_meta_df = pd.read_parquet(val_meta_fn)
+    # ========================================
+    # COMMON DATA LOADING
+    # ========================================
+    train_loader = torch.load(
+        dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
+        weights_only=False,
+    )
+    val_loader = torch.load(
+        dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
+        weights_only=False,
+    )
 
-        if meta_df.empty or val_meta_df.empty:
-            logger.warning(
-                f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
-            )
-            return
-
-        train_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
-            weights_only=False,
-        )
-        val_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
-            weights_only=False,
-        )
-
-        inferred_batch_size = train_loader.batch_size or 32
-        logger.info(f"Inferred batch size: {inferred_batch_size}")
-        train_loader = DataLoader(
-            train_loader.dataset,
-            batch_size=inferred_batch_size,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
-            pin_memory=True,
-        )
-        # Get number of training samples - handle different dataset types
-        try:
-            num_samples = len(train_loader.dataset)
-        except (TypeError, AttributeError):
-            # For datasets that don't implement __len__ properly
-            num_samples = getattr(train_loader.dataset, "length", "unknown")
-        logger.info(f"Number of training samples: {num_samples}")
-        val_loader = DataLoader(
-            val_loader.dataset,
-            batch_size=inferred_batch_size,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
-            pin_memory=True,
-        )
-        try:
-            num_samples = len(val_loader.dataset)
-        except (TypeError, AttributeError):
-            # For datasets that don't implement __len__ properly
-            num_samples = getattr(val_loader.dataset, "length", "unknown")
-        logger.info(f"Number of validation samples: {num_samples}")
-
-        # Get input dimension from the first batch
-        # For TensorDataset, we can access tensors directly
+    # ========================================
+    # UNIFIED MODEL CREATION
+    # ========================================
+    # Create model using unified factory
+    if model_type in FF_MODEL_TYPES:
+        # Get input dimension for feedforward models
         if hasattr(train_loader.dataset, "tensors"):
             input_dim = train_loader.dataset.tensors[0].shape[1]
         else:
-            # Fallback: get from first batch
             sample_batch = next(iter(train_loader))
             input_dim = sample_batch[0].shape[1]
-        output_dim = len(label_cols)
-        logger.info(f"Input dimension: {input_dim}, Output dimension: {output_dim}")
-        # Compute MAV for normalization
+
+        # Create feedforward model
+        base_model = model_factory(
+            model_type=model_type,
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            h1=h1,
+            h2=h2,
+            depth=depth,
+            output_dim=len(label_cols),
+            dropout=dropout,
+        )
+        base_model.apply(init_weights)
+
+        # Compute MAV and wrap in Lightning module
         col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
         y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
-        logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
         train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
         val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
 
-        # Build model and wrapper
-        base_model = model_factory(
-            ModelType(model_type.value),
-            input_dim,
-            hidden_dim,
-            h1,
-            h2,
-            depth,
-            output_dim,
-            dropout,
-        )
-        base_model.apply(init_weights)
         lightning_model = LightningWrapper(
             base_model,
             model_name=model_name,
@@ -1387,102 +1207,57 @@ def train_model_unified(
             log_level=log_level,
         )
 
-        checkpoint_dir = checkpoints_dir / model_name
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            mode="min",
-            save_top_k=1,
-            save_last=True,
-            dirpath=checkpoint_dir,
-            filename=model_name,
-        )
+    elif model_type in SEQ_MODEL_TYPES:
+        # Get training dataset for sequence models
+        training_dataset = train_loader.dataset  # TimeSeriesDataSet
 
-        early_stop = EarlyStopping(
-            monitor="val_loss", patience=2, mode="min", min_delta=1e-4
-        )
-        lr_monitor = LearningRateMonitor(logging_interval="epoch")
-
-        # Initialize CSV logger
-        csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
-        csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
-        trainer = pl.Trainer(
-            accelerator=get_device(),
-            deterministic=True,
-            max_epochs=epochs,
-            logger=csv_logger,
-            enable_progress_bar=enable_progress_bar,
-            callbacks=[checkpoint_callback, lr_monitor, early_stop],
-        )
-
-        logger.info(f"Training feedforward model: {model_name}")
-        trainer.fit(lightning_model, train_loader, val_loader)
-
-    # --------------------------------------------------------
-    # 2) SEQUENCE MODEL BRANCH (TFT or other)
-    # --------------------------------------------------------
-    elif model_family == "sequence":
-
-        # Load dataloaders from disk (assume generated by generate_sequence_model_loaders)
-        train_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
-            weights_only=False,
-        )
-        val_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
-            weights_only=False,
-        )
-
-        training_dataset = train_loader.dataset.dataset  # underlying TimeSeriesDataSet
-        # Get number of training samples - handle different dataset types
-        try:
-            num_samples = len(training_dataset)
-        except (TypeError, AttributeError):
-            # For datasets that don't implement __len__ properly
-            num_samples = getattr(training_dataset, "length", "unknown")
-        logger.info(f"Training samples: {num_samples}")
-
-        # Build TFT model
-        tft = TemporalFusionTransformer.from_dataset(
-            training_dataset,
+        # Create sequence model (already a Lightning module)
+        lightning_model = model_factory(
+            model_type=model_type,
+            training_dataset=training_dataset,
             learning_rate=lr,
-            hidden_size=32,
-            attention_head_size=4,
-            dropout=0.1,
-            hidden_continuous_size=16,
-            output_size=len(label_cols),
-            loss=RMSE(),
-            log_interval=10,
-            reduce_on_plateau_patience=3,
-        )
-        logger.info(f"TFT model params: {tft.size()/1e3:.1f}k")
-
-        # Callbacks and Trainer
-        early_stop = EarlyStopping(monitor="val_loss", patience=5, mode="min")
-        trainer = pl.Trainer(
-            max_epochs=epochs,
-            accelerator=get_device(),
-            deterministic=True,
-            enable_progress_bar=enable_progress_bar,
-            callbacks=[early_stop],
-        )
-
-        logger.info(f"Training sequence model: {model_name}")
-        trainer.fit(tft, train_loader, val_loader)
-
-        # Collect history
-        history = pd.DataFrame(
-            [
-                {
-                    "model_name": model_name,
-                    "store_cluster": store_cluster,
-                    "item_cluster": item_cluster,
-                    "best_val_loss": trainer.callback_metrics.get(
-                        "val_loss", float("nan")
-                    ).item(),
-                }
-            ]
+            hidden_dim=hidden_dim,
+            attention_head_size=attention_head_size,
+            dropout=dropout,
+            hidden_continuous_size=hidden_continuous_size,
         )
 
     else:
-        raise ValueError("`model_family` must be either 'feedforward' or 'sequence'")
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    # ========================================
+    # COMMON TRAINING SETUP
+    # ========================================
+    checkpoint_dir = checkpoints_dir / model_name
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        save_last=True,
+        dirpath=checkpoint_dir,
+        filename=model_name,
+    )
+
+    early_stop = EarlyStopping(
+        monitor="val_loss", patience=2, mode="min", min_delta=1e-4
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
+
+    # CSV logger
+    csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
+    csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
+
+    # Trainer
+    trainer = pl.Trainer(
+        accelerator=get_device(),
+        deterministic=True,
+        max_epochs=epochs,
+        logger=csv_logger,
+        enable_progress_bar=enable_progress_bar,
+        callbacks=[checkpoint_callback, early_stop, lr_monitor],
+    )
+
+    # Train the model
+    logger.info(f"Training {model_type.value} model: {model_name}")
+    trainer.fit(lightning_model, train_loader, val_loader)

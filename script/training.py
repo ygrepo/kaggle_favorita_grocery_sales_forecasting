@@ -23,7 +23,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.model import (
-    MODEL_TYPES,
+    MODEL_TYPE,
+    FF_MODEL_TYPES,
 )
 from src.model_utils import train_all_models_for_cluster_pair
 from src.data_utils import build_feature_and_label_cols
@@ -43,8 +44,6 @@ def train(
     h2: int,
     depth: int,
     dropout: float,
-    num_workers: int,
-    persistent_workers: bool,
     enable_progress_bar: bool,
     history_dir: Path,
     log_level: str,
@@ -71,10 +70,6 @@ def train(
         Learning rate.
     seed : int
         Random seed.
-    num_workers : int
-        Number of subprocesses to use for data loading.
-    persistent_workers : bool
-        Whether to use persistent workers for data loading.
     enable_progress_bar : bool::
         Whether to enable progress bar.
     log_level : str
@@ -113,7 +108,7 @@ def train(
         logger.info(f"Store cluster: {store_cluster}")
         logger.info(f"Item cluster: {item_cluster}")
         train_all_models_for_cluster_pair(
-            model_types=MODEL_TYPES,
+            model_types=FF_MODEL_TYPES,
             model_dir=model_dir,
             model_logger_dir=model_logger_dir,
             dataloader_dir=dataloader_dir,
@@ -130,8 +125,6 @@ def train(
             h2=h2,
             depth=depth,
             dropout=dropout,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
             enable_progress_bar=enable_progress_bar,
             log_level=log_level,
         )
@@ -214,18 +207,7 @@ def parse_args():
         default="",
         help="Directory to save training history (relative to project root)",
     )
-    parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=0,
-        help="Number of subprocesses to use for data loading",
-    )
-    parser.add_argument(
-        "--persistent_workers",
-        type=str2bool,
-        default=True,
-        help="Whether to use persistent workers for data loading",
-    )
+
     parser.add_argument(
         "--enable_progress_bar",
         type=str2bool,
@@ -268,8 +250,6 @@ def main():
     model_logger_dir = (project_root / args.model_logger_dir).resolve()
     history_dir = (project_root / args.history_dir).resolve()
     log_dir = (project_root / args.log_dir).resolve()
-    num_workers = args.num_workers
-    persistent_workers = args.persistent_workers
     enable_progress_bar = args.enable_progress_bar
 
     # Set up logging
@@ -292,8 +272,6 @@ def main():
         logger.info(f"  Depth: {args.depth}")
         logger.info(f"  Dropout rate: {args.dropout}")
         logger.info(f"  Seed: {args.seed}")
-        logger.info(f"  Num workers: {num_workers}")
-        logger.info(f"  Persistent workers: {persistent_workers}")
         logger.info(f"  Enable progress bar: {enable_progress_bar}")
         torch.cuda.empty_cache()
         gc.collect()
@@ -321,8 +299,6 @@ def main():
             dropout=args.dropout,
             seed=args.seed,
             history_dir=history_dir,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
             enable_progress_bar=enable_progress_bar,
             log_level=args.log_level,
         )

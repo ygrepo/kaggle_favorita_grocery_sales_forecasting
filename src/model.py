@@ -8,9 +8,20 @@ from enum import Enum
 from torch.utils.data import DataLoader
 from torchmetrics import Metric
 import math
-from typing import List
+from typing import List, Optional, Dict, Any, Union
 
 from src.utils import get_logger
+
+# PyTorch Forecasting imports
+try:
+    from pytorch_forecasting import TemporalFusionTransformer, NBeats, DeepAR
+    from pytorch_forecasting.models import LSTM as PytorchForecastingLSTM
+    from pytorch_forecasting.metrics import RMSE, MAE, MAPE
+
+    PYTORCH_FORECASTING_AVAILABLE = True
+except ImportError:
+    PYTORCH_FORECASTING_AVAILABLE = False
+    print("Warning: pytorch_forecasting not available. Sequence models will not work.")
 
 
 # Set up logger
@@ -104,55 +115,112 @@ class ResidualMLP(nn.Module):
         return self.out_proj(out)
 
 
-# Enum for model types
-class ModelType(Enum):
+# Unified model types enum
+class MODEL_TYPE(str, Enum):
+    # Feedforward models
     SHALLOW_NN = "ShallowNN"
     TWO_LAYER_NN = "TwoLayerNN"
     RESIDUAL_MLP = "ResidualMLP"
 
+    # Sequence models
+    TFT = "TFT"
+    NBEATS = "NBEATS"
+    DEEPAR = "DEEPAR"
+    LSTM = "LSTM"
 
-MODEL_TYPES = list(ModelType)
+
+# Model type lists for convenience
+FF_MODEL_TYPES = [
+    MODEL_TYPE.SHALLOW_NN,
+    MODEL_TYPE.TWO_LAYER_NN,
+    MODEL_TYPE.RESIDUAL_MLP,
+]
+SEQ_MODEL_TYPES = [
+    MODEL_TYPE.TFT,
+    MODEL_TYPE.NBEATS,
+    MODEL_TYPE.DEEPAR,
+    MODEL_TYPE.LSTM,
+]
 
 
-# Model Factory Function
+# Unified Model Factory Function
 def model_factory(
-    model_type: ModelType,
-    input_dim: int,
-    hidden_dim: int,
-    h1: int,
-    h2: int,
-    depth: int,
-    output_dim: int,
-    dropout: float,
-) -> nn.Module:
-    """Factory function to return the correct model based on the model_type."""
-    if model_type == ModelType.SHALLOW_NN:
-        return ShallowNN(input_dim, hidden_dim, output_dim, dropout)
-    elif model_type == ModelType.TWO_LAYER_NN:
-        return TwoLayerNN(input_dim, output_dim, h1, h2, dropout)
-    elif model_type == ModelType.RESIDUAL_MLP:
-        return ResidualMLP(input_dim, output_dim, hidden_dim, depth, dropout)
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
+    model_type: MODEL_TYPE,
+    input_dim: int = None,
+    hidden_dim: int = 128,
+    h1: int = 64,
+    h2: int = 32,
+    depth: int = 3,
+    output_dim: int = 1,
+    dropout: float = 0.0,
+    # Sequence model specific parameters
+    training_dataset=None,
+    learning_rate: float = 1e-3,
+    attention_head_size: int = 4,
+    hidden_continuous_size: int = 16,
+    **kwargs,
+) -> Union[nn.Module, pl.LightningModule]:
+    """Unified factory function for both feedforward and sequence models."""
 
-
-def model_factory_from_str(
-    model_type: str,
-    input_dim: int,
-    hidden_dim: int,
-    h1: int,
-    h2: int,
-    depth: int,
-    output_dim: int,
-    dropout: float,
-) -> nn.Module:
-    """Factory function to return the correct model based on the model_type."""
-    if model_type == "ShallowNN":
+    # Feedforward models
+    if model_type == MODEL_TYPE.SHALLOW_NN:
         return ShallowNN(input_dim, hidden_dim, output_dim, dropout)
-    elif model_type == "TwoLayerNN":
+    elif model_type == MODEL_TYPE.TWO_LAYER_NN:
         return TwoLayerNN(input_dim, output_dim, h1, h2, dropout)
-    elif model_type == "ResidualMLP":
+    elif model_type == MODEL_TYPE.RESIDUAL_MLP:
         return ResidualMLP(input_dim, output_dim, hidden_dim, depth, dropout)
+
+    # Sequence models
+    elif model_type == MODEL_TYPE.TFT:
+        if not PYTORCH_FORECASTING_AVAILABLE:
+            raise ImportError("pytorch_forecasting is required for sequence models")
+        return TemporalFusionTransformer.from_dataset(
+            training_dataset,
+            learning_rate=learning_rate,
+            hidden_size=hidden_dim,
+            attention_head_size=attention_head_size,
+            dropout=dropout,
+            hidden_continuous_size=hidden_continuous_size,
+            loss=RMSE(),
+            log_interval=10,
+            reduce_on_plateau_patience=3,
+            **kwargs,
+        )
+    elif model_type == MODEL_TYPE.NBEATS:
+        if not PYTORCH_FORECASTING_AVAILABLE:
+            raise ImportError("pytorch_forecasting is required for sequence models")
+        return NBeats.from_dataset(
+            training_dataset,
+            learning_rate=learning_rate,
+            hidden_size=hidden_dim,
+            loss=RMSE(),
+            log_interval=10,
+            **kwargs,
+        )
+    elif model_type == MODEL_TYPE.DEEPAR:
+        if not PYTORCH_FORECASTING_AVAILABLE:
+            raise ImportError("pytorch_forecasting is required for sequence models")
+        return DeepAR.from_dataset(
+            training_dataset,
+            learning_rate=learning_rate,
+            hidden_size=hidden_dim,
+            dropout=dropout,
+            loss=RMSE(),
+            log_interval=10,
+            **kwargs,
+        )
+    elif model_type == MODEL_TYPE.LSTM:
+        if not PYTORCH_FORECASTING_AVAILABLE:
+            raise ImportError("pytorch_forecasting is required for sequence models")
+        return PytorchForecastingLSTM.from_dataset(
+            training_dataset,
+            learning_rate=learning_rate,
+            hidden_size=hidden_dim,
+            dropout=dropout,
+            loss=RMSE(),
+            log_interval=10,
+            **kwargs,
+        )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -196,7 +264,7 @@ class HybridLoss(nn.Module):
 
 
 class LightningWrapper(pl.LightningModule):
-    """Lightning module wrapping the forecasting model with full metric logging."""
+    """Lightning module wrapping both feedforward and sequence models with full metric logging."""
 
     def __init__(
         self,
@@ -210,6 +278,7 @@ class LightningWrapper(pl.LightningModule):
         *,
         lr: float = 3e-4,
         log_level: str = "INFO",
+        is_sequence_model: bool = False,
     ):
         super().__init__()
         self.logger_ = get_logger(f"{__name__}.{model_name}", log_level)
@@ -232,9 +301,12 @@ class LightningWrapper(pl.LightningModule):
         self.sales_idx = sales_idx
         self.train_mav = train_mav
         self.val_mav = val_mav
+        self.is_sequence_model = is_sequence_model
 
-        # Loss and metrics
-        self.loss_fn = NWRMSLELoss()
+        # Loss and metrics (only for feedforward models)
+        if not is_sequence_model:
+            self.loss_fn = NWRMSLELoss()
+
         self.train_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.val_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.train_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
