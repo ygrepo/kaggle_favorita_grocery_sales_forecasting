@@ -52,7 +52,8 @@ class ShallowNN(nn.Module):
 
 
 class TwoLayerNN(nn.Module):
-    def __init__(self, input_dim, output_dim=3, h1=128, h2=64, dropout=0.2):
+    def __init__(self, input_dim, output_dim=3, h1=64, h2=32, dropout=0.4):
+        # def __init__(self, input_dim, output_dim=3, h1=128, h2=64, dropout=0.2):
         """
         Two-layer feedforward NN for log-transformed targets.
         All outputs are unbounded real values, no final activation.
@@ -71,7 +72,7 @@ class TwoLayerNN(nn.Module):
             nn.LeakyReLU(),
             dropout_layer,
             nn.Linear(h2, output_dim),
-            nn.Identity(),  # no activation
+            nn.Softplus(beta=1.0),  # guarantees strictly positive outputs
         )
 
     def forward(self, x):
@@ -151,8 +152,6 @@ class NWRMSLELoss(nn.Module):
         logger.setLevel(logging.INFO)
 
     def forward(self, y_pred, y_true, w):
-        eps = 1e-6
-        y_pred = torch.clamp(y_pred, min=eps)
         log_diff = y_pred - y_true  # Already log-scaled
         num = torch.sum(w * log_diff**2)
         den = torch.sum(w)
@@ -236,14 +235,24 @@ class LightningWrapper(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         xb, yb, wb = batch
         preds = self.model(xb)
-        preds = torch.clamp(preds, min=1e-6)
 
         # Compute loss
         loss = self.loss_fn(preds, yb, wb)
 
         # Log training loss
+
+        # keep per-batch logging **if you want it**
+        self.log("train_loss_step", loss, on_step=True, on_epoch=False, prog_bar=False)
+
+        # add epoch-level logging for the LR scheduler
         self.log(
-            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+            "train_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            batch_size=xb.size(0),
         )
 
         # Update & log MAE
@@ -273,13 +282,21 @@ class LightningWrapper(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         xb, yb, wb = batch
         preds = self.model(xb)
-        preds = torch.clamp(preds, min=1e-6)
-        yb = torch.clamp(yb, min=1e-6)
 
         # Compute loss
         loss = self.loss_fn(preds, yb, wb)
+        # keep per-batch logging **if you want it**
+        self.log("val_loss_step", loss, on_step=True, on_epoch=False, prog_bar=False)
+
+        # add epoch-level logging for the LR scheduler
         self.log(
-            "val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            batch_size=xb.size(0),
         )
 
         # Update & log MAE
@@ -360,15 +377,19 @@ class LightningWrapper(pl.LightningModule):
     # ---------------------------
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(
+            self.model.parameters(), weight_decay=1e-5, lr=self.lr
+        )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=4, min_lr=1e-5
+            optimizer, mode="min", factor=0.7, patience=5, min_lr=1e-5, threshold=1e-4
         )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
                 "monitor": "val_loss",
+                "frequency": 1,
+                "interval": "epoch",
             },
         }
 

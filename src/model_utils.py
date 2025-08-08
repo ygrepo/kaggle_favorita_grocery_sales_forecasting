@@ -7,7 +7,11 @@ import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
 import random
 import logging
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateMonitor,
+)
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
@@ -22,10 +26,8 @@ from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting import TemporalFusionTransformer
 from pytorch_forecasting.metrics import RMSE
 from pytorch_lightning import Trainer, LightningModule
-from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
-from torch.utils.data import TensorDataset, Dataset, DataLoader
+
 from lightning.pytorch.loggers import CSVLogger
-from lightning.pytorch.loggers import WandbLogger
 from src.model import LightningWrapper, ModelType
 from src.model import (
     compute_mav,
@@ -1348,13 +1350,18 @@ def train_model_unified(
         checkpoint_dir = checkpoints_dir / model_name
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_callback = ModelCheckpoint(
-            monitor="val_percent_mav",
+            monitor="val_loss",
             mode="min",
             save_top_k=1,
-            save_last=True,  # ✅ saves last epoch too
+            save_last=True,
             dirpath=checkpoint_dir,
             filename=model_name,
         )
+
+        early_stop = EarlyStopping(
+            monitor="val_loss", patience=2, mode="min", min_delta=1e-4
+        )
+        lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
         # Initialize CSV logger
         csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
@@ -1365,7 +1372,7 @@ def train_model_unified(
             max_epochs=epochs,
             logger=csv_logger,
             enable_progress_bar=enable_progress_bar,
-            callbacks=[checkpoint_callback],
+            callbacks=[checkpoint_callback, lr_monitor, early_stop],
         )
 
         logger.info(f"Training feedforward model: {model_name}")
