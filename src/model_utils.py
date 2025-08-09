@@ -49,56 +49,6 @@ def get_device():
     return accelerator
 
 
-def safe_append_to_history(history_fn: Path, new_history: pd.DataFrame) -> pd.DataFrame:
-    """
-    Safely appends new training history to an existing CSV file if it exists and is valid.
-
-    Parameters
-    ----------
-    history_fn : Path
-        Path to the CSV history file.
-    new_history : pd.DataFrame
-        New training history to append.
-
-    Returns
-    -------
-    pd.DataFrame
-        The combined history DataFrame.
-    """
-    if (
-        history_fn is not None
-        and history_fn.exists()
-        and os.path.getsize(history_fn) > 0
-    ):
-        try:
-            previous_history = pd.read_csv(history_fn)
-
-            # Check for valid structure
-            if not previous_history.empty and set(new_history.columns).issubset(
-                previous_history.columns
-            ):
-                combined_history = pd.concat(
-                    [previous_history, new_history], ignore_index=True
-                )
-            else:
-                combined_history = new_history
-
-        except Exception as e:
-            print(
-                f"Warning: Failed to read or validate {history_fn}. Using new history only. Reason: {e}"
-            )
-            combined_history = new_history
-    else:
-        combined_history = new_history
-
-    # Save combined history
-    if history_fn is not None:
-        logger.info(f"Saving history to {history_fn}")
-        combined_history.to_csv(history_fn, index=False)
-
-    return combined_history
-
-
 class StoreItemDataset(Dataset):
     def __init__(self, df, store_item_id, feature_cols, target_col, weight_col):
         self.store_df = df[df["store_item"] == store_item_id].reset_index(drop=True)
@@ -137,7 +87,6 @@ def generate_loaders(
     scalers_dir: Path,
     *,
     weight_col: str = "weight",
-    window_val: int = 30,
     val_horizon: int = 30,
     batch_size: int = 32,
     num_workers: int = 15,
@@ -493,9 +442,13 @@ def train_all_models_for_cluster_pair(
     store_cluster: int,
     item_cluster: int,
     *,
-    history_dir: Optional[Path] = None,
     lr: float = 3e-4,
     epochs: int = 5,
+    hidden_dim: int = 128,
+    h1: int = 64,
+    h2: int = 32,
+    depth: int = 3,
+    dropout: float = 0.0,
     seed: int = 2025,
     num_workers: int = 15,
     persistent_workers: bool = True,
@@ -509,80 +462,70 @@ def train_all_models_for_cluster_pair(
 
     for model_type in model_types:
         try:
-            train_model_unified(
+            train(
                 model_dir=model_dir,
                 model_type=model_type,
                 dataloader_dir=dataloader_dir,
                 model_logger_dir=model_logger_dir,
-                model_family="feedforward",
                 label_cols=label_cols,
                 y_to_log_features=y_to_log_features,
                 store_cluster=store_cluster,
                 item_cluster=item_cluster,
-                history_dir=history_dir,
                 lr=lr,
                 epochs=epochs,
+                hidden_dim=hidden_dim,
+                h1=h1,
+                h2=h2,
+                depth=depth,
+                dropout=dropout,
                 seed=seed,
                 num_workers=num_workers,
                 persistent_workers=persistent_workers,
                 enable_progress_bar=enable_progress_bar,
                 log_level=log_level,
             )
-            # history = train_per_cluster_pair(
-            #     model_dir=model_dir,
-            #     model_type=model_type,
-            #     dataloader_dir=dataloader_dir,
-            #     label_cols=label_cols,
-            #     y_log_features=y_log_features,
-            #     store_cluster=store_cluster,
-            #     item_cluster=item_cluster,
-            #     history_dir=history_dir,
-            #     lr=lr,
-            #     epochs=epochs,
-            #     seed=seed,
-            #     num_workers=num_workers,
-            #     persistent_workers=persistent_workers,
-            #     enable_progress_bar=enable_progress_bar,
-            #     train_logger=train_logger,
-            #     log_level=log_level,
-            # )
         except Exception as e:
             logger.exception(
                 f"Failed to train {model_type.value} for ({store_cluster}, {item_cluster}): {e}"
             )
 
 
-def train_per_cluster_pair(
+def train(
     model_dir: Path,
-    model_type: ModelType,
     dataloader_dir: Path,
+    model_logger_dir: Path,
+    model_type: ModelType,  # Your enum for feedforward models
     label_cols: list[str],
-    y_log_features: list[str],
+    y_to_log_features: list[str],
     store_cluster: int,
     item_cluster: int,
     *,
-    history_dir: Optional[Path] = None,
     lr: float = 3e-4,
-    epochs: int = 5,
+    hidden_dim: int = 128,
+    h1: int = 64,
+    h2: int = 32,
+    depth: int = 3,
+    dropout: float = 0.0,
+    epochs: int = 30,
     seed: int = 2025,
     num_workers: int = 15,
     persistent_workers: bool = True,
     enable_progress_bar: bool = True,
-    train_logger: bool = False,
     log_level: str = "INFO",
-) -> pd.DataFrame:
+) -> None:
+    """
+    Unified training for feedforward per-cluster models and sequence models.
+    """
+
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     pl.seed_everything(seed)
-    logger.info(
-        f"Training model: {model_type.value} for cluster pair: ({store_cluster}, {item_cluster})"
-    )
-
-    # Setup paths
     checkpoints_dir = model_dir / "checkpoints"
-    for d in [checkpoints_dir, history_dir]:
-        d.mkdir(parents=True, exist_ok=True)
+    for d in [checkpoints_dir, model_logger_dir]:
+        if d is not None:
+            d.mkdir(parents=True, exist_ok=True)
 
-    # Load pre-saved metadata
+    model_name = f"{store_cluster}_{item_cluster}_{model_type.value}"
+    # Load pre-saved metadata and loaders
     train_meta_fn = (
         dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
     )
@@ -594,9 +537,8 @@ def train_per_cluster_pair(
         logger.warning(
             f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
         )
-        return pd.DataFrame()
+        return
 
-    # Load pre-filtered dataloaders
     train_loader = torch.load(
         dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
         weights_only=False,
@@ -608,110 +550,105 @@ def train_per_cluster_pair(
 
     inferred_batch_size = train_loader.batch_size or 32
     logger.info(f"Inferred batch size: {inferred_batch_size}")
-
-    train_dataset = train_loader.dataset
-    val_dataset = val_loader.dataset
-
     train_loader = DataLoader(
-        train_dataset,
+        train_loader.dataset,
         batch_size=inferred_batch_size,
         num_workers=num_workers,
         persistent_workers=persistent_workers,
         pin_memory=True,
     )
+    # Get number of training samples - handle different dataset types
+    try:
+        num_samples = len(train_loader.dataset)
+    except (TypeError, AttributeError):
+        # For datasets that don't implement __len__ properly
+        num_samples = getattr(train_loader.dataset, "length", "unknown")
+    logger.info(f"Number of training samples: {num_samples}")
     val_loader = DataLoader(
-        val_dataset,
+        val_loader.dataset,
         batch_size=inferred_batch_size,
         num_workers=num_workers,
         persistent_workers=persistent_workers,
         pin_memory=True,
     )
+    try:
+        num_samples = len(val_loader.dataset)
+    except (TypeError, AttributeError):
+        # For datasets that don't implement __len__ properly
+        num_samples = getattr(val_loader.dataset, "length", "unknown")
+    logger.info(f"Number of validation samples: {num_samples}")
 
-    input_dim = train_dataset.tensors[0].shape[1]
+    # Get input dimension from the first batch
+    # For TensorDataset, we can access tensors directly
+    if hasattr(train_loader.dataset, "tensors"):
+        input_dim = train_loader.dataset.tensors[0].shape[1]
+    else:
+        # Fallback: get from first batch
+        sample_batch = next(iter(train_loader))
+        input_dim = sample_batch[0].shape[1]
     output_dim = len(label_cols)
-
+    logger.info(f"Input dimension: {input_dim}, Output dimension: {output_dim}")
+    # Compute MAV for normalization
     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-    logger.debug(f"Checking label order consistency: {col_y_index_map}")
+    y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
+    logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
+    train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
+    val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
 
-    y_log_idx = [col_y_index_map[c] for c in y_log_features]
-    train_mav = compute_mav(train_loader, y_log_idx, logger)
-    val_mav = compute_mav(val_loader, y_log_idx, logger)
-
+    # Build model and wrapper
     base_model = model_factory(
-        model_type,
+        ModelType(model_type.value),
         input_dim,
-        hidden_dim=128,  # default
-        h1=64,  # default
-        h2=32,  # default
-        depth=3,  # default
-        output_dim=output_dim,
-        dropout=0.0,  # default
+        hidden_dim,
+        h1,
+        h2,
+        depth,
+        output_dim,
+        dropout,
     )
     base_model.apply(init_weights)
-    model_name = f"{store_cluster}_{item_cluster}_{model_type.value}"
-
     lightning_model = LightningWrapper(
         base_model,
         model_name=model_name,
         store=store_cluster,
         item=item_cluster,
-        sales_idx=y_log_idx,
+        sales_idx=y_to_log_features_idx,
         train_mav=train_mav,
         val_mav=val_mav,
         lr=lr,
         log_level=log_level,
     )
+
     checkpoint_dir = checkpoints_dir / model_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = ModelCheckpoint(
-        monitor="best_train_avg_mae",
+        monitor="val_loss",
         mode="min",
         save_top_k=1,
+        save_last=True,
         dirpath=checkpoint_dir,
         filename=model_name,
     )
 
-    logger.info("Training model...")
-    logger = CSVLogger("logs", name="my_exp_name")
-    trainer = Trainer(logger=logger)
+    early_stop = EarlyStopping(
+        monitor="val_loss", patience=2, mode="min", min_delta=1e-4
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
+    # Initialize CSV logger
+    csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
+    csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
     trainer = pl.Trainer(
         accelerator=get_device(),
         deterministic=True,
         max_epochs=epochs,
-        logger=logger,
+        logger=csv_logger,
         enable_progress_bar=enable_progress_bar,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, lr_monitor, early_stop],
     )
 
+    logger.info(f"Training feedforward model: {model_name}")
     trainer.fit(lightning_model, train_loader, val_loader)
-
-    # Collect history
-    history = pd.DataFrame(
-        [
-            {
-                "model_name": model_name,
-                "store_cluster": store_cluster,
-                "item_cluster": item_cluster,
-                "train_mav": train_mav,
-                "val_mav": val_mav,
-                "best_train_avg_mae": lightning_model.best_train_avg_mae,
-                "best_val_avg_mae": lightning_model.best_val_avg_mae,
-                "best_train_avg_rmse": lightning_model.best_train_avg_rmse,
-                "best_val_avg_rmse": lightning_model.best_val_avg_rmse,
-                "best_train_avg_mae_percent_mav": lightning_model.best_train_avg_mae_percent_mav,
-                "best_val_avg_mae_percent_mav": lightning_model.best_val_avg_mae_percent_mav,
-            }
-        ]
-    )
-
-    # Save history
-    if history_dir:
-        history_fn = (
-            history_dir / f"{store_cluster}_{item_cluster}_{model_type.value}.csv"
-        )
-        history = safe_append_to_history(history_fn, history)
-    return history
 
 
 def load_latest_model(
@@ -1041,456 +978,3 @@ def predict_next_days_for_sids(
             logger.info(f"Skipping {sid} due to error: {e}")
 
     return pd.concat(all_preds, ignore_index=True)
-
-
-# ------------------------
-# Sequence to Sequence
-# ------------------------
-
-
-def generate_sequence_model_loaders(
-    df: pd.DataFrame,
-    meta_cols: List[str],
-    all_features: List[str],
-    x_feature_cols: List[str],  # multi-input x
-    label_cols: List[str],  # multi-target y
-    dataloader_dir: Path,
-    *,
-    weight_col: str = "weight",
-    max_encoder_length: int = 30,  # historical window size, e.g., 30 days
-    max_prediction_length: int = 1,  # usually 1 for next-day forecasting
-    val_horizon: int = 30,  # Last N days for validation
-    batch_size: int = 64,
-    num_workers: int = 8,
-    log_level: str = "INFO",
-):
-    """
-    Generate PyTorch Forecasting DataLoaders (train & val) for TFT.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Full DataFrame with meta, features, and labels for 2 years.
-    meta_cols : list of str
-        Columns like ['start_date','store_item','store_cluster','item_cluster'].
-    x_sales_cols : list of str
-        Time-varying unknown features (sales, lags, medians, etc.).
-    x_cyclical_cols : list of str
-        Time-varying known future features (calendar/cyclical).
-    label_cols : list of str
-        Multi-target y columns (e.g., sales + logpct changes).
-    dataloader_dir : Path
-        Directory to save loaders and meta.
-    weight_col : str
-        Optional weight column for loss.
-    max_encoder_length : int
-        Days of history for the encoder (like your old window_size).
-    max_prediction_length : int
-        Days to predict (usually 1 for next-day forecasting).
-    val_horizon : int
-        How many last days to keep for validation.
-    batch_size : int
-        Loader batch size.
-    num_workers : int
-        DataLoader workers.
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    dataloader_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- Prepare and sort DF ---
-    df = (
-        df[all_features]
-        .sort_values(["start_date", "store_item"])
-        .reset_index(drop=True)
-    )
-    df["store_cluster"] = df["store_cluster"].astype(str)
-    df["item_cluster"] = df["item_cluster"].astype(str)
-
-    store_cluster = df["store_cluster"].unique()
-    item_cluster = df["item_cluster"].unique()
-    assert len(store_cluster) == 1
-    assert len(item_cluster) == 1
-    store_cluster, item_cluster = store_cluster[0], item_cluster[0]
-    cluster_key = f"{store_cluster}_{item_cluster}"
-    logger.info(
-        f"Preparing Sequence loaders for cluster {cluster_key} with {len(df)} rows"
-    )
-
-    # --- Create time index per series ---
-    df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-    df["time_idx"] = df.groupby("store_item").cumcount()
-
-    if weight_col not in df.columns:
-        df[weight_col] = 1.0
-
-    # --- Train/validation split ---
-    validation_cutoff = df["time_idx"].max() - val_horizon
-    train_df = df[df.time_idx <= validation_cutoff]
-
-    training = TimeSeriesDataSet(
-        train_df,
-        time_idx="time_idx",
-        group_ids=["store_item"],
-        weight=weight_col,
-        max_encoder_length=max_encoder_length,
-        max_prediction_length=max_prediction_length,
-        time_varying_known_reals=x_feature_cols,
-        time_varying_unknown_reals=label_cols,
-        target=label_cols,
-        static_categoricals=["store_cluster", "item_cluster"],
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
-    )
-
-    # --- Validation using same scaling & encoding ---
-    validation = TimeSeriesDataSet.from_dataset(
-        training, df, predict=True, stop_randomization=True
-    )
-
-    # --- Convert to DataLoaders ---
-    train_loader = training.to_dataloader(
-        train=True,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        persistent_workers=num_workers > 0,
-    )
-    val_loader = validation.to_dataloader(
-        train=False,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        persistent_workers=num_workers > 0,
-    )
-
-    # --- Save loaders and meta ---
-    torch.save(train_loader, dataloader_dir / f"{cluster_key}_seq_train_loader.pt")
-    torch.save(val_loader, dataloader_dir / f"{cluster_key}_seq_val_loader.pt")
-
-    df[df.time_idx <= validation_cutoff][meta_cols].to_parquet(
-        dataloader_dir / f"{cluster_key}_seq_train_meta.parquet"
-    )
-    df[df.time_idx > validation_cutoff][meta_cols].to_parquet(
-        dataloader_dir / f"{cluster_key}_seq_val_meta.parquet"
-    )
-
-    logger.info(f"Saved Sequence Model loaders and meta for {cluster_key}")
-    return train_loader, val_loader
-
-
-def train_sequence_model(
-    df: pd.DataFrame,
-    meta_cols: list[str],
-    x_historical_cols: list[str],
-    x_cyclical_cols: list[str],
-    label_cols: list[str],
-    dataloader_dir: Path,
-) -> Tuple[DataLoader, DataLoader]:
-    """
-    Train a sequence-to-sequence model using PyTorch Lightning and TorchForecasting.
-    This function prepares the data, defines the model, and trains it.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        The input DataFrame containing time series data.
-    meta_cols : list[str]
-        List of metadata columns.
-    x_historical_cols : list[str]
-        List of historical feature columns.
-    x_cyclical_cols : list[str]
-        List of cyclical feature columns.
-    label_cols : list[str]
-        List of label columns to predict.
-    dataloader_dir : Path
-        Directory to save the DataLoaders.
-
-    Returns
-    ----------
-    Tuple[DataLoader, DataLoader]
-    """
-
-    # --- Get the underlying TimeSeriesDataSet from train loader ---
-    training_dataset = train_loader.dataset.dataset  # DataLoader -> TimeSeriesDataSet
-    # Get number of training samples - handle different dataset types
-    try:
-        num_samples = len(training_dataset)
-    except (TypeError, AttributeError):
-        # For datasets that don't implement __len__ properly
-        num_samples = getattr(training_dataset, "length", "unknown")
-    print("Training samples:", num_samples)
-
-    # --- Define TemporalFusionTransformer model ---
-    tft = TemporalFusionTransformer.from_dataset(
-        training_dataset,
-        learning_rate=1e-3,
-        hidden_size=32,  # number of LSTM units
-        attention_head_size=4,
-        dropout=0.1,
-        hidden_continuous_size=16,  # size for continuous variables
-        output_size=len(label_cols),  # multi-target
-        loss=RMSE(),  # or QuantileLoss([0.1,0.5,0.9]) for probabilistic
-        log_interval=10,
-        reduce_on_plateau_patience=3,
-    )
-
-    print(f"Number of parameters in model: {tft.size()/1e3:.1f}k")
-
-    # --- Define PyTorch Lightning Trainer ---
-    early_stop_callback = EarlyStopping(monitor="val_loss", patience=5, mode="min")
-    lr_logger = LearningRateMonitor()
-
-    trainer = Trainer(
-        max_epochs=30,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1,
-        gradient_clip_val=0.1,
-        callbacks=[early_stop_callback, lr_logger],
-        enable_progress_bar=True,
-        deterministic=True,
-    )
-
-    # --- Train the model ---
-    trainer.fit(
-        tft,
-        train_dataloaders=train_loader,
-        val_dataloaders=val_loader,
-    )
-
-
-def train_model_unified(
-    model_dir: Path,
-    dataloader_dir: Path,
-    model_logger_dir: Path,
-    model_type: ModelType,  # Your enum for feedforward models
-    model_family: str,  # "feedforward" or "sequence"
-    label_cols: list[str],
-    y_to_log_features: list[str],
-    store_cluster: int,
-    item_cluster: int,
-    *,
-    history_dir: Optional[Path] = None,
-    lr: float = 3e-4,
-    hidden_dim: int = 128,
-    h1: int = 64,
-    h2: int = 32,
-    depth: int = 3,
-    dropout: float = 0.0,
-    epochs: int = 30,
-    seed: int = 2025,
-    num_workers: int = 15,
-    persistent_workers: bool = True,
-    enable_progress_bar: bool = True,
-    log_level: str = "INFO",
-) -> None:
-    """
-    Unified training for feedforward per-cluster models and sequence models.
-    """
-
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    pl.seed_everything(seed)
-    checkpoints_dir = model_dir / "checkpoints"
-    for d in [checkpoints_dir, history_dir, model_logger_dir]:
-        if d is not None:
-            d.mkdir(parents=True, exist_ok=True)
-
-    model_name = f"{store_cluster}_{item_cluster}_{model_type.value if model_family=='feedforward' else model_family}"
-
-    # --------------------------------------------------------
-    # 1) FEEDFORWARD MODEL BRANCH
-    # --------------------------------------------------------
-    if model_family == "feedforward":
-        # Load pre-saved metadata and loaders
-        train_meta_fn = (
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
-        )
-        val_meta_fn = (
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
-        )
-        meta_df = pd.read_parquet(train_meta_fn)
-        val_meta_df = pd.read_parquet(val_meta_fn)
-
-        if meta_df.empty or val_meta_df.empty:
-            logger.warning(
-                f"Skipping pair ({store_cluster}, {item_cluster}) due to insufficient data."
-            )
-            return
-
-        train_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
-            weights_only=False,
-        )
-        val_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
-            weights_only=False,
-        )
-
-        inferred_batch_size = train_loader.batch_size or 32
-        logger.info(f"Inferred batch size: {inferred_batch_size}")
-        train_loader = DataLoader(
-            train_loader.dataset,
-            batch_size=inferred_batch_size,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
-            pin_memory=True,
-        )
-        # Get number of training samples - handle different dataset types
-        try:
-            num_samples = len(train_loader.dataset)
-        except (TypeError, AttributeError):
-            # For datasets that don't implement __len__ properly
-            num_samples = getattr(train_loader.dataset, "length", "unknown")
-        logger.info(f"Number of training samples: {num_samples}")
-        val_loader = DataLoader(
-            val_loader.dataset,
-            batch_size=inferred_batch_size,
-            num_workers=num_workers,
-            persistent_workers=persistent_workers,
-            pin_memory=True,
-        )
-        try:
-            num_samples = len(val_loader.dataset)
-        except (TypeError, AttributeError):
-            # For datasets that don't implement __len__ properly
-            num_samples = getattr(val_loader.dataset, "length", "unknown")
-        logger.info(f"Number of validation samples: {num_samples}")
-
-        # Get input dimension from the first batch
-        # For TensorDataset, we can access tensors directly
-        if hasattr(train_loader.dataset, "tensors"):
-            input_dim = train_loader.dataset.tensors[0].shape[1]
-        else:
-            # Fallback: get from first batch
-            sample_batch = next(iter(train_loader))
-            input_dim = sample_batch[0].shape[1]
-        output_dim = len(label_cols)
-        logger.info(f"Input dimension: {input_dim}, Output dimension: {output_dim}")
-        # Compute MAV for normalization
-        col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-        y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
-        logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
-        train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
-        val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
-
-        # Build model and wrapper
-        base_model = model_factory(
-            ModelType(model_type.value),
-            input_dim,
-            hidden_dim,
-            h1,
-            h2,
-            depth,
-            output_dim,
-            dropout,
-        )
-        base_model.apply(init_weights)
-        lightning_model = LightningWrapper(
-            base_model,
-            model_name=model_name,
-            store=store_cluster,
-            item=item_cluster,
-            sales_idx=y_to_log_features_idx,
-            train_mav=train_mav,
-            val_mav=val_mav,
-            lr=lr,
-            log_level=log_level,
-        )
-
-        checkpoint_dir = checkpoints_dir / model_name
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            mode="min",
-            save_top_k=1,
-            save_last=True,
-            dirpath=checkpoint_dir,
-            filename=model_name,
-        )
-
-        early_stop = EarlyStopping(
-            monitor="val_loss", patience=2, mode="min", min_delta=1e-4
-        )
-        lr_monitor = LearningRateMonitor(logging_interval="epoch")
-
-        # Initialize CSV logger
-        csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
-        csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
-        trainer = pl.Trainer(
-            accelerator=get_device(),
-            deterministic=True,
-            max_epochs=epochs,
-            logger=csv_logger,
-            enable_progress_bar=enable_progress_bar,
-            callbacks=[checkpoint_callback, lr_monitor, early_stop],
-        )
-
-        logger.info(f"Training feedforward model: {model_name}")
-        trainer.fit(lightning_model, train_loader, val_loader)
-
-    # --------------------------------------------------------
-    # 2) SEQUENCE MODEL BRANCH (TFT or other)
-    # --------------------------------------------------------
-    elif model_family == "sequence":
-
-        # Load dataloaders from disk (assume generated by generate_sequence_model_loaders)
-        train_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
-            weights_only=False,
-        )
-        val_loader = torch.load(
-            dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
-            weights_only=False,
-        )
-
-        training_dataset = train_loader.dataset.dataset  # underlying TimeSeriesDataSet
-        # Get number of training samples - handle different dataset types
-        try:
-            num_samples = len(training_dataset)
-        except (TypeError, AttributeError):
-            # For datasets that don't implement __len__ properly
-            num_samples = getattr(training_dataset, "length", "unknown")
-        logger.info(f"Training samples: {num_samples}")
-
-        # Build TFT model
-        tft = TemporalFusionTransformer.from_dataset(
-            training_dataset,
-            learning_rate=lr,
-            hidden_size=32,
-            attention_head_size=4,
-            dropout=0.1,
-            hidden_continuous_size=16,
-            output_size=len(label_cols),
-            loss=RMSE(),
-            log_interval=10,
-            reduce_on_plateau_patience=3,
-        )
-        logger.info(f"TFT model params: {tft.size()/1e3:.1f}k")
-
-        # Callbacks and Trainer
-        early_stop = EarlyStopping(monitor="val_loss", patience=5, mode="min")
-        trainer = pl.Trainer(
-            max_epochs=epochs,
-            accelerator=get_device(),
-            deterministic=True,
-            enable_progress_bar=enable_progress_bar,
-            callbacks=[early_stop],
-        )
-
-        logger.info(f"Training sequence model: {model_name}")
-        trainer.fit(tft, train_loader, val_loader)
-
-        # Collect history
-        history = pd.DataFrame(
-            [
-                {
-                    "model_name": model_name,
-                    "store_cluster": store_cluster,
-                    "item_cluster": item_cluster,
-                    "best_val_loss": trainer.callback_metrics.get(
-                        "val_loss", float("nan")
-                    ).item(),
-                }
-            ]
-        )
-
-    else:
-        raise ValueError("`model_family` must be either 'feedforward' or 'sequence'")

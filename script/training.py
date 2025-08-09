@@ -37,12 +37,15 @@ def train(
     window_size: int,
     epochs: int,
     lr: float,
+    hidden_dim: int,
+    h1: int,
+    h2: int,
+    depth: int,
+    dropout: float,
     seed: int,
     num_workers: int,
     persistent_workers: bool,
     enable_progress_bar: bool,
-    train_logger: bool,
-    history_dir: Path,
     log_level: str,
 ):
     """
@@ -59,12 +62,20 @@ def train(
         Directory to save model logger.
     window_size : int
         Rolling window size for feature creation.
-    history_dir : Path
-        Directory to save training history.
     epochs : int
         Number of training epochs.
     lr : float
         Learning rate.
+    hidden_dim : int
+        Hidden dimension for shallow and medium models.
+    h1 : int
+        Hidden dimension for shallow and medium models.
+    h2: int
+        Hidden dimension for shallow and medium models.
+    depth: int
+        Depth for shallow and medium models.
+    dropout: float
+        Dropout rate for shallow and medium models.
     seed : int
         Random seed.
     num_workers : int
@@ -73,8 +84,6 @@ def train(
         Whether to use persistent workers for data loading.
     enable_progress_bar : bool::
         Whether to enable progress bar.
-    train_logger : bool
-        Whether to enable training logger.
     log_level : str
         Logging level (e.g., "INFO", "DEBUG").
     """
@@ -119,9 +128,13 @@ def train(
             y_to_log_features=y_to_log_features,
             store_cluster=store_cluster,
             item_cluster=item_cluster,
-            history_dir=history_dir,
             lr=lr,
             epochs=epochs,
+            hidden_dim=hidden_dim,
+            h1=h1,
+            h2=h2,
+            depth=depth,
+            dropout=dropout,
             seed=seed,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
@@ -166,16 +179,40 @@ def parse_args():
         help="Learning rate",
     )
     parser.add_argument(
+        "--hidden_dim",
+        type=int,
+        default=128,
+        help="Hidden dimension for shallow and medium models",
+    )
+    parser.add_argument(
+        "--h1",
+        type=int,
+        default=64,
+        help="Hidden dimension for shallow and medium models",
+    )
+    parser.add_argument(
+        "--h2",
+        type=int,
+        default=32,
+        help="Hidden dimension for shallow and medium models",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=3,
+        help="Depth for shallow and medium models",
+    )
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.0,
+        help="Dropout rate for shallow and medium models",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=2025,
         help="Random seed",
-    )
-    parser.add_argument(
-        "--history_dir",
-        type=str,
-        default="",
-        help="Directory to save training history (relative to project root)",
     )
     parser.add_argument(
         "--num_workers",
@@ -194,12 +231,6 @@ def parse_args():
         type=str2bool,
         default=True,
         help="Whether to enable progress bar",
-    )
-    parser.add_argument(
-        "--train_logger",
-        type=str2bool,
-        default=False,
-        help="Whether to enable training logger",
     )
     parser.add_argument(
         "--window_size",
@@ -235,12 +266,10 @@ def main():
     dataloader_dir = (project_root / args.dataloader_dir).resolve()
     model_dir = (project_root / args.model_dir).resolve()
     model_logger_dir = (project_root / args.model_logger_dir).resolve()
-    history_dir = (project_root / args.history_dir).resolve()
     log_dir = (project_root / args.log_dir).resolve()
     num_workers = args.num_workers
     persistent_workers = args.persistent_workers
     enable_progress_bar = args.enable_progress_bar
-    train_logger = args.train_logger
 
     # Set up logging
     logger = setup_logging(log_dir, args.log_level)
@@ -252,22 +281,25 @@ def main():
         logger.info(f"  Dataloader directory: {dataloader_dir}")
         logger.info(f"  Model directory: {model_dir}")
         logger.info(f"  Model logger directory: {model_logger_dir}")
-        logger.info(f"  History directory: {history_dir}")
         logger.info(f"  Window size: {args.window_size}")
         logger.info(f"  Epochs: {args.epochs}")
         logger.info(f"  Learning rate: {args.lr}")
+        logger.info(f"  Hidden dimension: {args.hidden_dim}")
+        logger.info(f"  H1: {args.h1}")
+        logger.info(f"  H2: {args.h2}")
+        logger.info(f"  Depth: {args.depth}")
+        logger.info(f"  Dropout: {args.dropout}")
         logger.info(f"  Seed: {args.seed}")
         logger.info(f"  Num workers: {num_workers}")
         logger.info(f"  Persistent workers: {persistent_workers}")
         logger.info(f"  Enable progress bar: {enable_progress_bar}")
-        logger.info(f"  Train logger: {train_logger}")
         torch.cuda.empty_cache()
         gc.collect()
 
         if not torch.cuda.is_available():
-            logger.warning("⚠️ CUDA not available. Training will run on CPU.")
+            logger.warning("CUDA not available. Training will run on CPU.")
         else:
-            logger.info("✅ CUDA is available. Proceeding with GPU training.")
+            logger.info("CUDA is available. Proceeding with GPU training.")
 
         # mp.set_sharing_strategy("file_system")
         torch.multiprocessing.set_sharing_strategy("file_system")
@@ -280,12 +312,15 @@ def main():
             window_size=args.window_size,
             epochs=args.epochs,
             lr=args.lr,
+            hidden_dim=args.hidden_dim,
+            h1=args.h1,
+            h2=args.h2,
+            depth=args.depth,
+            dropout=args.dropout,
             seed=args.seed,
-            history_dir=history_dir,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
             enable_progress_bar=enable_progress_bar,
-            train_logger=train_logger,
             log_level=args.log_level,
         )
         logger.info("Training completed successfully!")

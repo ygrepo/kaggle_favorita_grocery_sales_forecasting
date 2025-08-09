@@ -14,17 +14,20 @@ cd "$PROJECT_ROOT"
 DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_2014_2015_top_53_store_2000_item/"
 MODEL_DIR="${PROJECT_ROOT}/output/model_2014_2015_top_53_store_2000_item/"
 MODEL_LOGGER_DIR="${PROJECT_ROOT}/output/logs/model_logger_2014_2015_top_53_store_2000_item/"
-HISTORY_DIR="${PROJECT_ROOT}/output/data/history_2014_2015_top_53_store_2000_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 WINDOW_SIZE=1
 EPOCHS=40
 LR=3e-4
+HIDDEN_DIM=128
+H1=64
+H2=32
+DEPTH=3
+DROPOUT=0.4
 NUM_WORKERS=15
 PERSISTENT_WORKERS=false
 ENABLE_PROGRESS_BAR=true
-TRAIN_LOGGER=false
 LOG_LEVEL="DEBUG"
 
 # Parse command line arguments
@@ -37,6 +40,11 @@ while [[ $# -gt 0 ]]; do
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
     --epochs) EPOCHS="$2"; shift 2 ;;
     --lr) LR="$2"; shift 2 ;;
+    --hidden_dim) HIDDEN_DIM="$2"; shift 2 ;;
+    --h1) H1="$2"; shift 2 ;;
+    --h2) H2="$2"; shift 2 ;;
+    --depth) DEPTH="$2"; shift 2 ;;
+    --dropout) DROPOUT="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
     --persistent_workers) PERSISTENT_WORKERS="$2"; shift 2 ;;
     --enable_progress_bar) ENABLE_PROGRESS_BAR="$2"; shift 2 ;;
@@ -68,14 +76,17 @@ echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Dataloader directory: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Model directory: ${MODEL_DIR}" | tee -a "$LOG_FILE"
 echo "  Model logger directory: ${MODEL_LOGGER_DIR}" | tee -a "$LOG_FILE"
-echo "  History directory: ${HISTORY_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
 echo "  Learning rate: ${LR}" | tee -a "$LOG_FILE"
+echo "  Hidden dimension: ${HIDDEN_DIM}" | tee -a "$LOG_FILE"
+echo "  H1: ${H1}" | tee -a "$LOG_FILE"
+echo "  H2: ${H2}" | tee -a "$LOG_FILE"
+echo "  Depth: ${DEPTH}" | tee -a "$LOG_FILE"
+echo "  Dropout: ${DROPOUT}" | tee -a "$LOG_FILE"
 echo "  Num workers: ${NUM_WORKERS}" | tee -a "$LOG_FILE"
 echo "  Persistent workers: ${PERSISTENT_WORKERS}" | tee -a "$LOG_FILE"
 echo "  Enable progress bar: ${ENABLE_PROGRESS_BAR}" | tee -a "$LOG_FILE"
-echo "  Train logger: ${TRAIN_LOGGER}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 nvidia-smi | tee -a "$LOG_FILE"
@@ -85,24 +96,27 @@ python "${SCRIPT_DIR}/training.py" \
   --dataloader_dir "$DATALOADER_DIR" \
   --model_dir "$MODEL_DIR" \
   --model_logger_dir "$MODEL_LOGGER_DIR" \
-  --history_dir "$HISTORY_DIR" \
   --window_size "$WINDOW_SIZE" \
   --epochs "$EPOCHS" \
   --lr "$LR" \
+  --hidden_dim "$HIDDEN_DIM" \
+  --h1 "$H1" \
+  --h2 "$H2" \
+  --depth "$DEPTH" \
+  --dropout "$DROPOUT" \
   --num_workers "$NUM_WORKERS" \
   --persistent_workers "$PERSISTENT_WORKERS" \
   --enable_progress_bar "$ENABLE_PROGRESS_BAR" \
-  --train_logger "$TRAIN_LOGGER" \
   --log_level "$LOG_LEVEL" 2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script
 EXIT_CODE=${PIPESTATUS[0]}
 
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "Training completed successfully at $(date)" | tee -a "$LOG_FILE"
+    echo " Script completed successfully at $(date)" | tee -a "$LOG_FILE"
     exit 0
 else
-    echo "Error: Training failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
+    echo "Error: Script failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
     echo "Check the log file for details: $LOG_FILE"
     exit $EXIT_CODE
 fi
