@@ -17,10 +17,6 @@ import pandas as pd
 from typing import List, Tuple, Dict
 import pickle
 from pathlib import Path
-from enum import Enum
-from tqdm import tqdm
-from collections import defaultdict
-import re
 from typing import Optional
 from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting import TemporalFusionTransformer
@@ -1069,13 +1065,13 @@ def generate_sequence_model_loaders(
         train_df,
         time_idx="time_idx",
         group_ids=["store_item"],
-        weight=weight_col,
         max_encoder_length=max_encoder_length,
         max_prediction_length=max_prediction_length,
         time_varying_known_reals=x_feature_cols,
         time_varying_unknown_reals=label_cols,
         target=label_cols,
         static_categoricals=["store_cluster", "item_cluster"],
+        static_reals=[weight_col],  # Item weight (perishable vs non-perishable)
         add_relative_time_idx=True,
         add_target_scales=True,
         add_encoder_length=True,
@@ -1211,7 +1207,7 @@ def train_model_unified(
         # Get training dataset for sequence models
         training_dataset = train_loader.dataset  # TimeSeriesDataSet
 
-        # Create sequence model (already a Lightning module)
+        # Create sequence model (use directly - no wrapper to avoid logging conflicts)
         lightning_model = model_factory(
             model_type=model_type,
             training_dataset=training_dataset,
@@ -1248,14 +1244,40 @@ def train_model_unified(
     csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
     csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
 
-    # Trainer
+    # Trainer with appropriate callbacks
+    callbacks = [checkpoint_callback, early_stop, lr_monitor]
+
+    # Add custom metrics callback for sequence models
+    if model_type in SEQ_MODEL_TYPES:
+        # Compute MAV for consistent metrics
+        col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
+        y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
+
+        # For sequence models, compute MAV from the data loaders
+        train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
+        val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
+
+        # Add custom metrics callback
+        from src.model import SequenceModelMetricsCallback
+
+        metrics_callback = SequenceModelMetricsCallback(
+            model_name=model_name,
+            store=store_cluster,
+            item=item_cluster,
+            sales_idx=y_to_log_features_idx,
+            train_mav=train_mav,
+            val_mav=val_mav,
+            log_level=log_level,
+        )
+        callbacks.append(metrics_callback)
+
     trainer = pl.Trainer(
         accelerator=get_device(),
         deterministic=True,
         max_epochs=epochs,
         logger=csv_logger,
         enable_progress_bar=enable_progress_bar,
-        callbacks=[checkpoint_callback, early_stop, lr_monitor],
+        callbacks=callbacks,
     )
 
     # Train the model

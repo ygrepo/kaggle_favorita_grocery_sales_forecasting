@@ -323,11 +323,48 @@ class LightningWrapper(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        xb, yb, wb = batch
-        preds = self.model(xb)
+        if self.is_sequence_model:
+            # Let the sequence model handle its native training and logging
+            result = self.model.training_step(batch, batch_idx)
 
-        # Compute loss
-        loss = self.loss_fn(preds, yb, wb)
+            # Extract predictions and targets for our custom metrics
+            try:
+                x, y = batch
+                with torch.no_grad():
+                    # Get predictions from the model
+                    output = self.model(x)
+                    if isinstance(output, dict):
+                        preds = output.get("prediction", output.get("output", None))
+                    else:
+                        preds = output
+
+                    # Extract targets - sequence models use different format
+                    if isinstance(y, dict):
+                        yb = y.get("target", y.get("decoder_target", None))
+                    else:
+                        yb = y
+
+                    # Compute our custom metrics if we have valid predictions and targets
+                    if preds is not None and yb is not None:
+                        # Ensure shapes are compatible
+                        if preds.dim() > 2:
+                            preds = preds.view(-1, preds.size(-1))
+                        if yb.dim() > 2:
+                            yb = yb.view(-1, yb.size(-1))
+
+                        # Update our custom metrics
+                        self.train_mae_metric.update(preds, yb)
+                        self.train_rmse_metric.update(preds, yb)
+            except Exception as e:
+                # If metric extraction fails, just continue with native metrics
+                self.logger_.debug(f"Could not extract metrics for sequence model: {e}")
+
+            return result
+        else:
+            # For feedforward models, use the original logic
+            xb, yb, wb = batch
+            preds = self.model(xb)
+            loss = self.loss_fn(preds, yb, wb)
 
         # Log training loss
 
@@ -345,38 +382,61 @@ class LightningWrapper(pl.LightningModule):
             batch_size=xb.size(0),
         )
 
-        # Update & log MAE
-        self.train_mae_metric.update(preds, yb)
-        self.log(
-            "train_mae",
-            self.train_mae_metric,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
-
-        # Update & log RMSE
-        self.train_rmse_metric.update(preds, yb)
-        self.log(
-            "train_rmse",
-            self.train_rmse_metric,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
+        # Update MAE and RMSE (only for feedforward models - sequence models handle this in their step methods)
+        if not self.is_sequence_model:
+            self.train_mae_metric.update(preds, yb)
+            self.train_rmse_metric.update(preds, yb)
 
         return loss
 
     def validation_step(self, batch, batch_idx):
-        xb, yb, wb = batch
-        preds = self.model(xb)
+        if self.is_sequence_model:
+            # Let the sequence model handle its native validation and logging
+            result = self.model.validation_step(batch, batch_idx)
 
-        # Compute loss
-        loss = self.loss_fn(preds, yb, wb)
-        # keep per-batch logging **if you want it**
-        self.log("val_loss_step", loss, on_step=True, on_epoch=False, prog_bar=False)
+            # Extract predictions and targets for our custom metrics
+            try:
+                x, y = batch
+                with torch.no_grad():
+                    # Get predictions from the model
+                    output = self.model(x)
+                    if isinstance(output, dict):
+                        preds = output.get("prediction", output.get("output", None))
+                    else:
+                        preds = output
+
+                    # Extract targets - sequence models use different format
+                    if isinstance(y, dict):
+                        yb = y.get("target", y.get("decoder_target", None))
+                    else:
+                        yb = y
+
+                    # Compute our custom metrics if we have valid predictions and targets
+                    if preds is not None and yb is not None:
+                        # Ensure shapes are compatible
+                        if preds.dim() > 2:
+                            preds = preds.view(-1, preds.size(-1))
+                        if yb.dim() > 2:
+                            yb = yb.view(-1, yb.size(-1))
+
+                        # Update our custom metrics
+                        self.val_mae_metric.update(preds, yb)
+                        self.val_rmse_metric.update(preds, yb)
+            except Exception as e:
+                # If metric extraction fails, just continue with native metrics
+                self.logger_.debug(f"Could not extract metrics for sequence model: {e}")
+
+            return result
+        else:
+            # For feedforward models, use the original logic
+            xb, yb, wb = batch
+            preds = self.model(xb)
+            loss = self.loss_fn(preds, yb, wb)
+
+            # keep per-batch logging **if you want it**
+            self.log(
+                "val_loss_step", loss, on_step=True, on_epoch=False, prog_bar=False
+            )
 
         # add epoch-level logging for the LR scheduler
         self.log(
@@ -389,27 +449,10 @@ class LightningWrapper(pl.LightningModule):
             batch_size=xb.size(0),
         )
 
-        # Update & log MAE
-        self.val_mae_metric.update(preds, yb)
-        self.log(
-            "val_mae",
-            self.val_mae_metric,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
-
-        # Update & log RMSE
-        self.val_rmse_metric.update(preds, yb)
-        self.log(
-            "val_rmse",
-            self.val_rmse_metric,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
+        # Update MAE and RMSE (only for feedforward models - sequence models handle this in their step methods)
+        if not self.is_sequence_model:
+            self.val_mae_metric.update(preds, yb)
+            self.val_rmse_metric.update(preds, yb)
 
         return loss
 
@@ -433,34 +476,84 @@ class LightningWrapper(pl.LightningModule):
     # ---------------------------
 
     def on_train_epoch_end(self):
-        avg_train_mae = self.train_mae_metric.compute().item()
-        avg_train_percent_mav = (
-            math.nan if self.train_mav == 0 else avg_train_mae / self.train_mav * 100
-        )
+        # Compute custom metrics for both feedforward and sequence models
+        try:
+            avg_train_mae = self.train_mae_metric.compute().item()
+            avg_train_percent_mav = (
+                math.nan
+                if self.train_mav == 0
+                else avg_train_mae / self.train_mav * 100
+            )
 
-        self.log(
-            "train_percent_mav",
-            avg_train_percent_mav,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
+            self.log(
+                "train_percent_mav",
+                avg_train_percent_mav,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+
+            # Also log the custom MAE and RMSE for consistency
+            self.log(
+                "train_mae",
+                self.train_mae_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+
+            self.log(
+                "train_rmse",
+                self.train_rmse_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+        except Exception as e:
+            # If metric computation fails (e.g., no data), skip
+            self.logger_.debug(f"Could not compute train metrics: {e}")
 
     def on_validation_epoch_end(self):
-        avg_val_mae = self.val_mae_metric.compute().item()
-        avg_val_percent_mav = (
-            math.nan if self.val_mav == 0 else avg_val_mae / self.val_mav * 100
-        )
+        # Compute custom metrics for both feedforward and sequence models
+        try:
+            avg_val_mae = self.val_mae_metric.compute().item()
+            avg_val_percent_mav = (
+                math.nan if self.val_mav == 0 else avg_val_mae / self.val_mav * 100
+            )
 
-        self.log(
-            "val_percent_mav",
-            avg_val_percent_mav,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
+            self.log(
+                "val_percent_mav",
+                avg_val_percent_mav,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+
+            # Also log the custom MAE and RMSE for consistency
+            self.log(
+                "val_mae",
+                self.val_mae_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+
+            self.log(
+                "val_rmse",
+                self.val_rmse_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+        except Exception as e:
+            # If metric computation fails (e.g., no data), skip
+            self.logger_.debug(f"Could not compute val metrics: {e}")
 
     # ---------------------------
     # Optimizer
@@ -658,3 +751,178 @@ def compute_mav(
         logger.warning("MAV computation: All sales are zero. Returning 0.0.")
 
     return mav
+
+
+# Custom callback for sequence models to compute feedforward-style metrics
+class SequenceModelMetricsCallback(pl.Callback):
+    """Callback to compute custom MAE, RMSE, and %MAV metrics for sequence models."""
+
+    def __init__(
+        self,
+        model_name: str,
+        store: int,
+        item: int,
+        sales_idx: List[int],
+        train_mav: float = 1.0,
+        val_mav: float = 1.0,
+        log_level: str = "INFO",
+    ):
+        super().__init__()
+        self.model_name = model_name
+        self.store = store
+        self.item = item
+        self.sales_idx = sales_idx
+        self.train_mav = train_mav
+        self.val_mav = val_mav
+        self.logger_ = get_logger(f"{__name__}.{model_name}", log_level)
+
+        # Initialize metrics
+        self.train_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
+        self.val_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
+        self.train_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
+        self.val_rmse_metric = RootMeanSquaredErrorLog1p(sales_idx, log_level)
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        """Extract predictions and targets from sequence model and update metrics."""
+        try:
+            x, y = batch
+            with torch.no_grad():
+                # Get predictions from the model
+                output = pl_module(x)
+                if isinstance(output, dict):
+                    preds = output.get("prediction", output.get("output", None))
+                else:
+                    preds = output
+
+                # Extract targets
+                if isinstance(y, dict):
+                    yb = y.get("target", y.get("decoder_target", None))
+                else:
+                    yb = y
+
+                # Update metrics if we have valid data
+                if preds is not None and yb is not None:
+                    # Ensure shapes are compatible
+                    if preds.dim() > 2:
+                        preds = preds.view(-1, preds.size(-1))
+                    if yb.dim() > 2:
+                        yb = yb.view(-1, yb.size(-1))
+
+                    self.train_mae_metric.update(preds, yb)
+                    self.train_rmse_metric.update(preds, yb)
+        except Exception as e:
+            self.logger_.debug(f"Could not extract train metrics: {e}")
+
+    def on_validation_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0
+    ):
+        """Extract predictions and targets from sequence model and update metrics."""
+        try:
+            x, y = batch
+            with torch.no_grad():
+                # Get predictions from the model
+                output = pl_module(x)
+                if isinstance(output, dict):
+                    preds = output.get("prediction", output.get("output", None))
+                else:
+                    preds = output
+
+                # Extract targets
+                if isinstance(y, dict):
+                    yb = y.get("target", y.get("decoder_target", None))
+                else:
+                    yb = y
+
+                # Update metrics if we have valid data
+                if preds is not None and yb is not None:
+                    # Ensure shapes are compatible
+                    if preds.dim() > 2:
+                        preds = preds.view(-1, preds.size(-1))
+                    if yb.dim() > 2:
+                        yb = yb.view(-1, yb.size(-1))
+
+                    self.val_mae_metric.update(preds, yb)
+                    self.val_rmse_metric.update(preds, yb)
+        except Exception as e:
+            self.logger_.debug(f"Could not extract val metrics: {e}")
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Log custom training metrics."""
+        try:
+            avg_train_mae = self.train_mae_metric.compute().item()
+            avg_train_percent_mav = (
+                math.nan
+                if self.train_mav == 0
+                else avg_train_mae / self.train_mav * 100
+            )
+
+            # Log custom metrics
+            pl_module.log(
+                "train_percent_mav",
+                avg_train_percent_mav,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+            pl_module.log(
+                "train_mae_custom",
+                self.train_mae_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+            pl_module.log(
+                "train_rmse_custom",
+                self.train_rmse_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+        except Exception as e:
+            self.logger_.debug(f"Could not compute train metrics: {e}")
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        """Log custom validation metrics."""
+        try:
+            avg_val_mae = self.val_mae_metric.compute().item()
+            avg_val_percent_mav = (
+                math.nan if self.val_mav == 0 else avg_val_mae / self.val_mav * 100
+            )
+
+            # Log custom metrics
+            pl_module.log(
+                "val_percent_mav",
+                avg_val_percent_mav,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+            pl_module.log(
+                "val_mae_custom",
+                self.val_mae_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+            pl_module.log(
+                "val_rmse_custom",
+                self.val_rmse_metric,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+        except Exception as e:
+            self.logger_.debug(f"Could not compute val metrics: {e}")
+
+    def on_epoch_start(self, trainer, pl_module):
+        """Reset metrics at the start of each epoch."""
+        self.train_mae_metric.reset()
+        self.val_mae_metric.reset()
+        self.train_rmse_metric.reset()
+        self.val_rmse_metric.reset()
