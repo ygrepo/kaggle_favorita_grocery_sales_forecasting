@@ -36,7 +36,6 @@ while [[ $# -gt 0 ]]; do
     --dataloader_dir) DATALOADER_DIR="$2"; shift 2 ;;
     --model_dir) MODEL_DIR="$2"; shift 2 ;;
     --model_logger_dir) MODEL_LOGGER_DIR="$2"; shift 2 ;;
-    --history_dir) HISTORY_DIR="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
     --epochs) EPOCHS="$2"; shift 2 ;;
     --lr) LR="$2"; shift 2 ;;
@@ -57,7 +56,6 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$MODEL_DIR"
-mkdir -p "$HISTORY_DIR"
 mkdir -p "$LOG_DIR"
 
 # Optional: add header if needed
