@@ -30,7 +30,6 @@ from pytorch_lightning import Trainer, LightningModule
 from lightning.pytorch.loggers import CSVLogger
 from src.model import LightningWrapper, ModelType
 from src.model import (
-    compute_mav,
     model_factory,
     init_weights,
     model_factory_from_str,
@@ -543,9 +542,15 @@ def train(
         dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt",
         weights_only=False,
     )
+    logger.info(
+        f"Loaded train loader from {dataloader_dir / f"{store_cluster}_{item_cluster}_train_loader.pt"}"
+    )
     val_loader = torch.load(
         dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt",
         weights_only=False,
+    )
+    logger.info(
+        f"Loaded val loader from {dataloader_dir / f"{store_cluster}_{item_cluster}_val_loader.pt"}"
     )
 
     inferred_batch_size = train_loader.batch_size or 32
@@ -592,8 +597,8 @@ def train(
     col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
     y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
     logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
-    train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
-    val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
+    # train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
+    # val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
 
     # Build model and wrapper
     base_model = model_factory(
@@ -613,8 +618,8 @@ def train(
         store=store_cluster,
         item=item_cluster,
         sales_idx=y_to_log_features_idx,
-        train_mav=train_mav,
-        val_mav=val_mav,
+        # train_mav=train_mav,
+        # val_mav=val_mav,
         lr=lr,
         log_level=log_level,
     )
