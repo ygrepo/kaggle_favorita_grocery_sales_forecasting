@@ -8,7 +8,9 @@ from typing import List, Optional, Iterator
 import logging
 from tqdm import tqdm
 from pathlib import Path
+import re
 import gc
+
 
 logging.basicConfig(
     level=logging.INFO,  # or DEBUG
@@ -262,7 +264,7 @@ def load_full_data(
             }
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
-            ) 
+            )
         (
             meta_cols,
             _,
@@ -368,7 +370,7 @@ def load_X_y_data(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
             )
         (meta_cols, _, _, x_feature_cols, _, _, label_cols, _, _, _) = (
-               build_feature_and_label_cols(window_size=window_size)
+            build_feature_and_label_cols(window_size=window_size)
         )
         df = df[meta_cols + x_feature_cols + label_cols]
         df["start_date"] = pd.to_datetime(df["start_date"])
@@ -522,7 +524,7 @@ def generate_cyclical_features(
             {
                 "year": years - (months == 1).astype("uint16"),
                 "month": np.where(months > 1, months - 1, 12),
-                "day": 1,
+                "day": np.ones_like(years, dtype="uint8"),
             }
         )
         + pd.offsets.MonthEnd(0),
@@ -541,9 +543,21 @@ def generate_cyclical_features(
     df["paycycle_cos"] = np.cos(2 * np.pi * paycycle_ratio).astype("float32")
 
     # Season
-    spring_equinox = pd.to_datetime(dict(year=years, month=3, day=20))
+    spring_equinox = pd.to_datetime(
+        {
+            "year": years,
+            "month": np.full_like(years, 3, dtype="uint8"),
+            "day": np.full_like(years, 20, dtype="uint8"),
+        }
+    )
     adjusted_years = np.where(dates < spring_equinox, years - 1, years)
-    adjusted_equinox = pd.to_datetime(dict(year=adjusted_years, month=3, day=20))
+    adjusted_equinox = pd.to_datetime(
+        {
+            "year": adjusted_years,
+            "month": np.full_like(adjusted_years, 3, dtype="uint8"),
+            "day": np.full_like(adjusted_years, 20, dtype="uint8"),
+        }
+    )
     days_since = (dates - adjusted_equinox).dt.days.astype("float32")
     season_ratio = ((days_since % 365) / 365).astype("float32")
     df["season_sin"] = np.sin(2 * np.pi * season_ratio).astype("float32")
@@ -604,6 +618,67 @@ def generate_cyclical_features(
         logger.info(f"Saving cyclical features to {output_path}")
 
     return df
+
+def add_rolling_sales_summaries(
+    df: pd.DataFrame,
+    windows=(3, 7, 14, 30, 60, 140),
+    decay: float = 0.9,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    """
+    Add rolling features computed from long-form `unit_sales`:
+      mean_i, median_i, min_i, max_i, std_i, mean_i_decay, diff_i_mean
+
+    Semantics:
+      - Computed over the **most recent i past days** for each (store_item),
+        excluding the current day: uses `unit_sales.shift(1)` before rolling.
+      - `mean_i_decay` = sum(x[t-k] * decay^k, k=0..i-1); newest gets weight 1.0.
+      - `diff_i_mean`  = (x[t-1] - x[t-i]) / (i-1)  (momentum-ish).
+      - Produces NaNs for the first i rows of each series (no leakage).
+
+    Requires columns: ['store_item', 'start_date', 'unit_sales'].
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    need = {"store_item", "start_date", "unit_sales"}
+    missing = need - set(df.columns)
+    if missing:
+        raise KeyError(f"Missing required columns: {sorted(missing)}")
+
+    out = df.sort_values(["store_item", "start_date"]).copy()
+    g = out.groupby("store_item", sort=False)
+
+    # Past-only series: exclude current day to avoid leakage
+    past = g["unit_sales"].shift(1)
+
+    for i in windows:
+        logger.info(f"Adding unit_sales rolling features (window={i})")
+
+        roll = past.rolling(i, min_periods=i)
+
+        out[f"mean_{i}"] = roll.mean()
+        out[f"median_{i}"] = roll.median()
+        out[f"min_{i}"] = roll.min()
+        out[f"max_{i}"] = roll.max()
+        out[f"std_{i}"] = roll.std(ddof=1)
+
+        # Decay-weighted sum over last i days; newest weight = 1.0
+        w = (decay ** np.arange(i)[::-1]).astype(np.float64)  # [decay^(i-1),...,1]
+        out[f"mean_{i}_decay"] = (
+            g["unit_sales"]
+            .shift(1)
+            .transform(
+                lambda s: s.rolling(i, min_periods=i).apply(
+                    lambda x: np.dot(x, w), raw=True
+                )
+            )
+        )
+
+        # Average day-to-day change over the window: (newest - oldest) / (i - 1)
+        # newest = past[t] = unit_sales[t-1], oldest = unit_sales[t-i]
+        out[f"diff_{i}_mean"] = (past - past.shift(i - 1)) / (i - 1) if i > 1 else 0.0
+
+    return out
 
 
 def generate_sales_features(

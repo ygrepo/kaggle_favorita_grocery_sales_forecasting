@@ -5,10 +5,9 @@ import logging
 import numpy as np
 from pathlib import Path
 from enum import Enum
-from torch.nn import functional as F
 from torchmetrics import Metric
-from typing import List
-import pandas as pd
+from torch.cuda.amp import autocast
+from typing import List, Callable
 
 from src.utils import get_logger
 
@@ -22,7 +21,7 @@ def extract_model_name(model_name_chkp: Path) -> str:
     Extract the model name without store/item cluster prefix.
     E.g. from "7_7_ShallowNN.ckpt" → "ShallowNN"
     """
-    parts = model_name_chkp.split("_")
+    parts = model_name_chkp.stem.split("_")
     if len(parts) < 3:
         raise ValueError(f"Unexpected checkpoint name format: {model_name_chkp}")
 
@@ -72,7 +71,7 @@ class TwoLayerNN(nn.Module):
             nn.LeakyReLU(),
             dropout_layer,
             nn.Linear(h2, output_dim),
-            nn.Softplus(beta=1.0),  # guarantees strictly positive outputs
+            nn.Softplus(beta=1),  # guarantees strictly positive outputs
         )
 
     def forward(self, x):
@@ -285,10 +284,9 @@ class LightningWrapper(pl.LightningModule):
         store: int,
         item: int,
         sales_idx: List[int],
-        # train_mav: float,
-        # val_mav: float,
         *,
         lr: float = 3e-4,
+        amp_dtype: torch.dtype = torch.bfloat16,
         log_level: str = "INFO",
     ):
         super().__init__()
@@ -309,15 +307,17 @@ class LightningWrapper(pl.LightningModule):
         self.store = store
         self.item = item
         self.lr = lr
+        self.amp_dtype = amp_dtype
         self.sales_idx = sales_idx
         # self.train_mav = train_mav
         # self.val_mav = val_mav
 
         # Loss and metrics
         # self.loss_fn = NWRMSLELoss()
-        # self.loss_fn = PercentMAVLossLog1p(sales_idx)
+        self.loss_fn = PercentMAVLossLog1p(sales_idx)
         # self.loss_fn = torch.nn.MSELoss(reduction="mean")
-        self.loss_fn = MSELossOriginalFromLog1p(sales_idx)
+        # self.loss_fn = MSELossOriginalFromLog1p(sales_idx)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=(torch.cuda.is_available()))
         self.train_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.val_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.train_mav_metric = MeanAbsTargetLog1p(sales_idx)
@@ -335,13 +335,18 @@ class LightningWrapper(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, _batch_idx):
         xb, yb, wb = batch
-        preds = self.model(xb)
 
-        # Compute loss
-        # loss = self.loss_fn(preds, yb)
-        loss = self.loss_fn(preds, yb, wb)
+        with autocast(
+            dtype=self.amp_dtype,
+            enabled=(torch.cuda.is_available()),
+        ):
+            preds = self.model(xb)
+
+            # Compute loss
+            # loss = self.loss_fn(preds, yb)
+            loss = self.loss_fn(preds, yb, wb)
 
         # Log training loss
 
@@ -385,8 +390,8 @@ class LightningWrapper(pl.LightningModule):
 
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        xb, yb, wb = batch
+    def validation_step(self, batch, _batch_idx):
+        xb, yb, _ = batch
         preds = self.model(xb)
 
         # Compute loss
@@ -481,8 +486,10 @@ class LightningWrapper(pl.LightningModule):
     def on_validation_epoch_end(self):
         avg_val_mae = float(self.val_mae_metric.compute().item())
         avg_val_mav = float(self.val_mav_metric.compute().item())
+        percent_mav = 100 * avg_val_mae / max(avg_val_mav, 1e-12)
         self.logger_.info(
-            f"[VAL] MAE={avg_val_mae:.6f}  MAV={avg_val_mav:.6f}  %MAV={100*avg_val_mae/max(avg_val_mav,1e-12):.2f}"
+            f"[VAL] MAE={avg_val_mae:.6f}  MAV={avg_val_mav:.6f}  "
+            f"%MAV={percent_mav:.2f}"
         )
 
         self.log(
@@ -499,7 +506,7 @@ class LightningWrapper(pl.LightningModule):
     # ---------------------------
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.AdamW(
             self.model.parameters(), weight_decay=1e-5, lr=self.lr
         )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -558,9 +565,9 @@ class MeanAbsoluteErrorLog1p(Metric):
         self.sum_abs_error += abs_error
         self.count += n
 
-    def compute(self):
+    def compute(self) -> torch.Tensor:
         if self.count == 0:
-            return torch.tensor(0.0, device=self.sum_abs_error.device)
+            return torch.tensor(0.0)
         return self.sum_abs_error / self.count
 
 
@@ -592,9 +599,9 @@ class MeanAbsTargetLog1p(Metric):
         self.sum_abs_target += torch.abs(target[mask]).sum()
         self.count += n
 
-    def compute(self):
+    def compute(self) -> torch.Tensor:
         if self.count == 0:
-            return torch.tensor(0.0, device=self.sum_abs_target.device)
+            return torch.tensor(0.0)
         return self.sum_abs_target / self.count
 
 
@@ -635,9 +642,9 @@ class RootMeanSquaredErrorLog1p(Metric):
         self.sum_squared_error += squared_error
         self.count += mask.sum()  # ✅ increment count before compute()
 
-    def compute(self):
+    def compute(self) -> torch.Tensor:
         if self.count == 0:
-            return torch.tensor(0.0, device=self.sum_squared_error.device)
+            return torch.tensor(0.0)
         return torch.sqrt(self.sum_squared_error / self.count)
 
 
@@ -667,6 +674,62 @@ def compute_rmse(
     rmse = torch.sqrt(mse)
     logger.debug(f"RMSE: {rmse.item():.6f}")
     return rmse
+
+
+class NaivePercentMAVFromBatch(Metric):
+    """
+    Accumulates MAE/MAV for a naive predictor that uses X[:, lag1_x_idx] as ŷ.
+    Assumes y_true is log1p -> converts to original via expm1.
+    For x_lag, set x_is_log1p=True if it’s log1p in the batch, otherwise False.
+    Optionally pass inverse_scaler(x_column_tensor) to undo MinMax, etc.
+    """
+
+    full_state_update = False
+
+    def __init__(
+        self,
+        y_sales_idx: int,
+        lag1_x_idx: int,
+        x_is_log1p: bool = False,
+        inverse_scaler: Callable | None = None,
+        include_zeros: bool = True,
+        eps: float = 1e-12,
+    ):
+        super().__init__()
+        self.y_sales_idx = y_sales_idx
+        self.lag1_x_idx = lag1_x_idx
+        self.x_is_log1p = x_is_log1p
+        self.inverse_scaler = inverse_scaler
+        self.include_zeros = include_zeros
+        self.eps = eps
+
+        self.add_state("num", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("den", default=torch.tensor(0.0), dist_reduce_fx="sum")
+
+    def update(self, xb: torch.Tensor, yb: torch.Tensor):
+        y_true = torch.expm1(yb[:, self.y_sales_idx])  # original units
+        x_lag = xb[:, self.lag1_x_idx]
+
+        if self.inverse_scaler is not None:
+            x_lag = self.inverse_scaler(x_lag)  # unscale to original units
+        if self.x_is_log1p:
+            x_lag = torch.expm1(x_lag)
+
+        valid = torch.isfinite(y_true) & torch.isfinite(x_lag)
+        if self.include_zeros:
+            mask = valid & (y_true >= 0)
+        else:
+            mask = valid & (y_true > 0)
+
+        if not mask.any():
+            return
+
+        err = (x_lag - y_true).abs()
+        self.num += err[mask].sum()
+        self.den += y_true[mask].abs().sum()
+
+    def compute(self):
+        return 100.0 * self.num / (self.den + self.eps)
 
 
 def naive_percent_mav(
