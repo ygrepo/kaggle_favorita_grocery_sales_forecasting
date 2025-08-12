@@ -618,8 +618,6 @@ def train(
         store=store_cluster,
         item=item_cluster,
         sales_idx=y_to_log_features_idx,
-        # train_mav=train_mav,
-        # val_mav=val_mav,
         lr=lr,
         log_level=log_level,
     )
@@ -645,6 +643,7 @@ def train(
     csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
     trainer = pl.Trainer(
         accelerator=get_device(),
+        precision="bf16-mixed",
         deterministic=True,
         max_epochs=epochs,
         logger=csv_logger,

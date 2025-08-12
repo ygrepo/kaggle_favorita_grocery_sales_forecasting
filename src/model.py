@@ -6,7 +6,7 @@ import numpy as np
 from pathlib import Path
 from enum import Enum
 from torchmetrics import Metric
-from torch.cuda.amp import autocast
+
 from typing import List, Callable
 
 from src.utils import get_logger
@@ -286,7 +286,6 @@ class LightningWrapper(pl.LightningModule):
         sales_idx: List[int],
         *,
         lr: float = 3e-4,
-        amp_dtype: torch.dtype = torch.bfloat16,
         log_level: str = "INFO",
     ):
         super().__init__()
@@ -307,7 +306,6 @@ class LightningWrapper(pl.LightningModule):
         self.store = store
         self.item = item
         self.lr = lr
-        self.amp_dtype = amp_dtype
         self.sales_idx = sales_idx
         # self.train_mav = train_mav
         # self.val_mav = val_mav
@@ -317,7 +315,7 @@ class LightningWrapper(pl.LightningModule):
         self.loss_fn = PercentMAVLossLog1p(sales_idx)
         # self.loss_fn = torch.nn.MSELoss(reduction="mean")
         # self.loss_fn = MSELossOriginalFromLog1p(sales_idx)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=(torch.cuda.is_available()))
+        self.naive_mae_metric = NaivePercentMAVFromBatch(0, 1, False)
         self.train_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.val_mae_metric = MeanAbsoluteErrorLog1p(sales_idx, log_level)
         self.train_mav_metric = MeanAbsTargetLog1p(sales_idx)
@@ -338,15 +336,11 @@ class LightningWrapper(pl.LightningModule):
     def training_step(self, batch, _batch_idx):
         xb, yb, wb = batch
 
-        with autocast(
-            dtype=self.amp_dtype,
-            enabled=(torch.cuda.is_available()),
-        ):
-            preds = self.model(xb)
+        preds = self.model(xb)
 
-            # Compute loss
-            # loss = self.loss_fn(preds, yb)
-            loss = self.loss_fn(preds, yb, wb)
+        # Compute loss
+        # loss = self.loss_fn(preds, yb)
+        loss = self.loss_fn(preds, yb, wb)
 
         # Log training loss
 
@@ -467,21 +461,6 @@ class LightningWrapper(pl.LightningModule):
             logger=True,
             sync_dist=True,
         )
-
-        # avg_train_mae = float(self.train_mae_metric.compute().item())
-        # # avg_train_percent_mav = (
-        # #     math.nan if self.train_mav == 0 else avg_train_mae / self.train_mav * 100
-        # # )
-        # avg_train_percent_mav = 100.0 * avg_train_mae / max(self.train_mav, 1e-12)
-
-        # self.log(
-        #     "train_percent_mav",
-        #     avg_train_percent_mav,
-        #     on_step=False,
-        #     on_epoch=True,
-        #     prog_bar=True,
-        #     logger=True,
-        # )
 
     def on_validation_epoch_end(self):
         avg_val_mae = float(self.val_mae_metric.compute().item())
