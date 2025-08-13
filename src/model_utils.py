@@ -34,7 +34,23 @@ from src.model import (
     init_weights,
     model_factory_from_str,
 )
-
+from src.data_utils import (
+    sort_df,
+    build_feature_and_label_cols,
+    get_X_feature_idx,
+    get_y_idx,
+    WEIGHT_COLUMN,
+    META_FEATURES,
+    X_SALE_FEATURES,
+    X_CYCLICAL_FEATURES,
+    X_FEATURES,
+    X_TO_LOG_FEATURES,
+    X_LOG_FEATURES,
+    LABELS,
+    Y_LOG_FEATURES,
+    Y_TO_LOG_FEATURES,
+    ALL_FEATURES,
+)
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -69,23 +85,12 @@ class StoreItemDataset(Dataset):
 # ─────────────────────────────────────────────────────────────────────
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
-
-
 def generate_loaders(
     df: pd.DataFrame,
-    all_features: List[str],
-    meta_cols: List[str],
-    x_feature_cols: List[str],
-    x_to_log_features: List[str],
-    x_log_features: List[str],
-    x_cyclical_features: List[str],
-    label_cols: List[str],
-    y_log_features: List[str],
-    y_to_log_features: List[str],
+    window_size: int,
     dataloader_dir: Path,
     scalers_dir: Path,
     *,
-    weight_col: str = "weight",
     val_horizon: int = 30,
     batch_size: int = 32,
     num_workers: int = 15,
@@ -93,24 +98,13 @@ def generate_loaders(
 ):
     """
     Generate DataLoaders row-aligned with original df.
-    Each row corresponds to the same store_item/date as input.
     """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     dataloader_dir.mkdir(parents=True, exist_ok=True)
     scalers_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Prepare DataFrame ---
-    df = (
-        df[all_features]
-        .sort_values(["start_date", "store_item"])
-        .reset_index(drop=True)
-    )
-    # --- Assert uniqueness of rows ---
-    if df.duplicated(subset=["start_date", "store_item"]).any():
-        dups = df[df.duplicated(subset=["start_date", "store_item"], keep=False)]
-        raise ValueError(
-            f"Duplicate rows detected for date/store_item:\n{dups[['start_date', 'store_item']]}"
-        )
+    df = sort_df(df, window_size=window_size)
 
     df["store_cluster"] = pd.to_numeric(df["store_cluster"], errors="coerce")
     df["item_cluster"] = pd.to_numeric(df["item_cluster"], errors="coerce")
@@ -123,30 +117,31 @@ def generate_loaders(
 
     logger.info(f"Preparing loaders for cluster {cluster_key} with {len(df)} rows")
 
-    if weight_col not in df.columns:
-        df[weight_col] = 1.0
+    if WEIGHT_COLUMN not in df.columns:
+        df[WEIGHT_COLUMN] = 1.0
 
     num_samples = len(df)
     validation_cutoff = num_samples - val_horizon
 
+    features = build_feature_and_label_cols(window_size=window_size)
     if num_samples <= 0:
         logger.warning("No valid samples")
-        empty = torch.empty((0, len(x_feature_cols)), dtype=torch.float32)
-        empty_y = torch.empty((0, len(label_cols)), dtype=torch.float32)
+        empty = torch.empty((0, len(features[X_FEATURES])), dtype=torch.float32)
+        empty_y = torch.empty((0, len(features[LABELS])), dtype=torch.float32)
         empty_w = torch.empty((0, 1), dtype=torch.float32)
         loader = DataLoader(
             TensorDataset(empty, empty_y, empty_w), batch_size=batch_size, num_workers=0
         )
-        meta_df = pd.DataFrame(columns=meta_cols)
+        meta_df = pd.DataFrame(columns=features[META_FEATURES])
         for split in ["train", "val"]:
             torch.save(loader, dataloader_dir / f"{cluster_key}_{split}_loader.pt")
             meta_df.to_parquet(dataloader_dir / f"{cluster_key}_{split}_meta.parquet")
         return loader, loader
 
     # --- Features & labels ---
-    X = df[x_feature_cols].fillna(0).values.astype(np.float32)
-    Y = df[label_cols].fillna(0).values.astype(np.float32)
-    W = df[[weight_col]].values.astype(np.float32)
+    X = df[features[X_FEATURES]].fillna(0).values.astype(np.float32)
+    Y = df[features[LABELS]].fillna(0).values.astype(np.float32)
+    W = df[[WEIGHT_COLUMN]].values.astype(np.float32)
 
     # --- Split train / val ---
     train_mask = np.arange(num_samples) < validation_cutoff
@@ -156,51 +151,59 @@ def generate_loaders(
     Y_train, Y_val = Y[train_mask], Y[val_mask]
     W_train, W_val = W[train_mask], W[val_mask]
 
-    meta_train_df = df.loc[train_mask, meta_cols].reset_index(drop=True)
-    meta_val_df = df.loc[val_mask, meta_cols].reset_index(drop=True)
-
-    # --- Feature indices for scaling ---
-    col_x_index_map = {col: idx for idx, col in enumerate(x_feature_cols)}
-    x_to_log_idx = [col_x_index_map[c] for c in x_to_log_features]
-    x_log_idx = [col_x_index_map[c] for c in x_log_features]
-    x_cyc_idx = [col_x_index_map[c] for c in x_cyclical_features]
-
-    col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-    y_to_log_idx = [col_y_index_map[c] for c in y_to_log_features]
-    y_log_idx = [col_y_index_map[c] for c in y_log_features]
+    meta_train_df = df.loc[train_mask, features[META_FEATURES]].reset_index(drop=True)
+    meta_val_df = df.loc[val_mask, features[META_FEATURES]].reset_index(drop=True)
 
     # --- Transform & Scale ---
-    def transform_xy(X_data, Y_data):
-        x_log1p = np.log1p(np.clip(X_data[:, x_to_log_idx], 0, None))
-        x_log_raw = X_data[:, x_log_idx]
-        x_cyc = X_data[:, x_cyc_idx]
+    idx_features = get_X_feature_idx(window_size)
+    idy_features = get_y_idx(window_size)
+
+    def _transform_xy(X_data, Y_data):
+        x_log1p = np.log1p(np.clip(X_data[:, idx_features[X_TO_LOG_FEATURES]], 0, None))
+        x_log_raw = X_data[:, idx_features[X_LOG_FEATURES]]
+        x_cyc = X_data[:, idx_features[X_CYCLICAL_FEATURES]]
         y_transformed = np.hstack(
-            [np.log1p(np.clip(Y_data[:, y_to_log_idx], 0, None)), Y_data[:, y_log_idx]]
+            [
+                np.log1p(np.clip(Y_data[:, idy_features[Y_TO_LOG_FEATURES]], 0, None)),
+                Y_data[:, idy_features[Y_LOG_FEATURES]],
+            ]
         )
         return x_log1p, x_log_raw, x_cyc, y_transformed
 
-    x_log1p_train, x_log_raw_train, x_cyc_train, Y_train = transform_xy(
+    x_log1p_train, x_log_raw_train, x_cyc_train, Y_train = _transform_xy(
         X_train, Y_train
     )
-    x_log1p_val, x_log_raw_val, x_cyc_val, Y_val = transform_xy(X_val, Y_val)
+    x_log1p_val, x_log_raw_val, x_cyc_val, Y_val = _transform_xy(X_val, Y_val)
 
     # Fit scalers on train
     scaler_log1p = MinMaxScaler().fit(x_log1p_train)
     scaler_log_raw = MinMaxScaler().fit(x_log_raw_train)
     scaler_cyc = MinMaxScaler().fit(x_cyc_train)
 
-    # Apply scalers
+    # Apply scalers, keeping original feature order
     def scale_x(x_log1p, x_log_raw, x_cyc):
-        return np.hstack(
-            [
-                scaler_log1p.transform(x_log1p),
-                scaler_log_raw.transform(x_log_raw),
-                scaler_cyc.transform(x_cyc),
-            ]
+        X_scaled = np.zeros(
+            (x_log1p.shape[0], len(idx_features[X_FEATURES])), dtype=np.float32
         )
+        X_scaled[:, idx_features[X_TO_LOG_FEATURES]] = scaler_log1p.transform(x_log1p)
+        X_scaled[:, idx_features[X_LOG_FEATURES]] = scaler_log_raw.transform(x_log_raw)
+        X_scaled[:, idx_features[X_CYCLICAL_FEATURES]] = scaler_cyc.transform(x_cyc)
+        return X_scaled
 
     X_train_scaled = scale_x(x_log1p_train, x_log_raw_train, x_cyc_train)
     X_val_scaled = scale_x(x_log1p_val, x_log_raw_val, x_cyc_val)
+
+    # --- Sanity logger ---
+    for group_name, idxs in [
+        ("X_TO_LOG_FEATURES", idx_features[X_TO_LOG_FEATURES]),
+        ("X_LOG_FEATURES", idx_features[X_LOG_FEATURES]),
+        ("X_CYCLICAL_FEATURES", idx_features[X_CYCLICAL_FEATURES]),
+    ]:
+        min_val = X_train_scaled[:, idxs].min()
+        max_val = X_train_scaled[:, idxs].max()
+        logger.info(
+            f"[Sanity] {group_name} scaled range: min={min_val:.4f}, max={max_val:.4f}"
+        )
 
     # --- Create DataLoaders ---
     persistent = num_workers > 0
@@ -250,16 +253,8 @@ def dataloader_to_dataframe(
     loader_path: Path,
     meta_path: Path,
     scaler_dir: Path,
-    x_feature_cols: List[str],
-    label_cols: List[str],
-    x_to_log_features: List[str],
-    x_log_features: List[str],
-    x_cyclical_features: List[str],
-    y_to_log_features: List[str],
-    y_log_features: List[str],
-    meta_cols: List[str],
+    window_size: int,
     *,
-    weight_col: str = "weight",
     log_level: str = "INFO",
 ) -> pd.DataFrame:
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
@@ -292,47 +287,42 @@ def dataloader_to_dataframe(
         (scaler_dir / f"{cluster_key}_x_cyc_scaler.pkl").open("rb")
     )
 
-    # --- Feature indices ---
-    col_x_index_map = {col: idx for idx, col in enumerate(x_feature_cols)}
-    x_to_log_idx = [col_x_index_map[c] for c in x_to_log_features]
-    x_log_idx = [col_x_index_map[c] for c in x_log_features]
-    x_cyc_idx = [col_x_index_map[c] for c in x_cyclical_features]
+    idx_features = get_X_feature_idx(window_size)
 
     # --- Inverse transform ---
-    n_tolog = len(x_to_log_idx)
-    n_log = len(x_log_idx)
-
-    x_log1p_scaled = X[:, :n_tolog]
-    x_log_scaled = X[:, n_tolog : n_tolog + n_log]
-    x_cyc_scaled = X[:, n_tolog + n_log :]
+    x_log1p_scaled = X[:, idx_features[X_TO_LOG_FEATURES]]
+    x_log_scaled = X[:, idx_features[X_LOG_FEATURES]]
+    x_cyc_scaled = X[:, idx_features[X_CYCLICAL_FEATURES]]
 
     x_tolog_orig = np.expm1(x_log1p_scaler.inverse_transform(x_log1p_scaled))
     x_log_orig = x_log_raw_scaler.inverse_transform(x_log_scaled)
     x_cyc_orig = x_cyc_scaler.inverse_transform(x_cyc_scaled)
 
-    X_orig = np.zeros((X.shape[0], len(x_feature_cols)), dtype=np.float32)
-    for i, idx in enumerate(x_to_log_idx):
+    X_orig = np.zeros((X.shape[0], len(idx_features[X_FEATURES])), dtype=np.float32)
+    for i, idx in enumerate(idx_features[X_TO_LOG_FEATURES]):
         X_orig[:, idx] = x_tolog_orig[:, i]
-    for i, idx in enumerate(x_log_idx):
+    for i, idx in enumerate(idx_features[X_LOG_FEATURES]):
         X_orig[:, idx] = x_log_orig[:, i]
-    for i, idx in enumerate(x_cyc_idx):
+    for i, idx in enumerate(idx_features[X_CYCLICAL_FEATURES]):
         X_orig[:, idx] = x_cyc_orig[:, i]
 
-    col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-    y_to_log_idx = [col_y_index_map[c] for c in y_to_log_features]
-    y_log_idx = [col_y_index_map[c] for c in y_log_features]
-
-    y_tolog_orig = np.expm1(np.clip(Y[:, : len(y_to_log_idx)], 0, None))
-    y_log_orig = Y[:, len(y_to_log_idx) :]
-    Y_orig = np.zeros((Y.shape[0], len(label_cols)), dtype=np.float32)
-    for i, idx in enumerate(y_to_log_idx):
+    idy_features = get_y_idx(window_size)
+    y_tolog_orig = np.expm1(
+        np.clip(Y[:, : len(idy_features[Y_TO_LOG_FEATURES])], 0, None)
+    )
+    y_log_orig = Y[:, len(idy_features[Y_TO_LOG_FEATURES]) :]
+    Y_orig = np.zeros((Y.shape[0], len(idy_features[LABELS])), dtype=np.float32)
+    for i, idx in enumerate(idy_features[Y_TO_LOG_FEATURES]):
         Y_orig[:, idx] = y_tolog_orig[:, i]
-    for i, idx in enumerate(y_log_idx):
+    for i, idx in enumerate(idy_features[Y_LOG_FEATURES]):
         Y_orig[:, idx] = y_log_orig[:, i]
 
-    df_x = pd.DataFrame(X_orig, columns=x_feature_cols)
-    df_y = pd.DataFrame(Y_orig, columns=label_cols)
-    df_w = pd.DataFrame(W, columns=[weight_col])
+    features = build_feature_and_label_cols(window_size)
+
+    # --- Create DataFrame ---
+    df_x = pd.DataFrame(X_orig, columns=features["X_FEATURES"])
+    df_y = pd.DataFrame(Y_orig, columns=features["LABELS"])
+    df_w = pd.DataFrame(W, columns=[WEIGHT_COLUMN])
     df = pd.concat([df_x, df_y, df_w], axis=1)
 
     if meta_path.exists():
@@ -346,12 +336,8 @@ def dataloader_to_dataframe(
     else:
         logger.warning(f"Meta file not found at: {meta_path}")
 
-    all_cols = meta_cols + x_feature_cols + label_cols + [weight_col]
-    df = df[all_cols]
-    df.sort_values(["start_date", "store_item"], inplace=True)
-    df.reset_index(drop=True, inplace=True)
-
-    return df
+    # --- Preserve original feature order for output ---
+    return sort_df(df, window_size=window_size)
 
 
 def combine_loaders_to_dataframe(
@@ -435,12 +421,12 @@ def train_all_models_for_cluster_pair(
     model_types: List[ModelType],
     model_dir: Path,
     dataloader_dir: Path,
+    scaler_dir: Path,
     model_logger_dir: Path,
-    label_cols: list[str],
-    y_to_log_features: list[str],
     store_cluster: int,
     item_cluster: int,
     *,
+    window_size: int = 1,
     lr: float = 3e-4,
     epochs: int = 5,
     hidden_dim: int = 128,
@@ -465,9 +451,9 @@ def train_all_models_for_cluster_pair(
                 model_dir=model_dir,
                 model_type=model_type,
                 dataloader_dir=dataloader_dir,
+                scaler_dir=scaler_dir,
                 model_logger_dir=model_logger_dir,
-                label_cols=label_cols,
-                y_to_log_features=y_to_log_features,
+                window_size=window_size,
                 store_cluster=store_cluster,
                 item_cluster=item_cluster,
                 lr=lr,
@@ -493,12 +479,12 @@ def train(
     model_dir: Path,
     dataloader_dir: Path,
     model_logger_dir: Path,
+    scaler_dir: Path,
     model_type: ModelType,  # Your enum for feedforward models
-    label_cols: list[str],
-    y_to_log_features: list[str],
     store_cluster: int,
     item_cluster: int,
     *,
+    window_size: int = 1,
     lr: float = 3e-4,
     hidden_dim: int = 128,
     h1: int = 64,
@@ -562,13 +548,9 @@ def train(
         persistent_workers=persistent_workers,
         pin_memory=True,
     )
-    # Get number of training samples - handle different dataset types
-    try:
-        num_samples = len(train_loader.dataset)
-    except (TypeError, AttributeError):
-        # For datasets that don't implement __len__ properly
-        num_samples = getattr(train_loader.dataset, "length", "unknown")
-    logger.info(f"Number of training samples: {num_samples}")
+    # Get number of training samples
+    logger.info(f"Number of training samples: {len(train_loader.dataset)}")
+
     val_loader = DataLoader(
         val_loader.dataset,
         batch_size=inferred_batch_size,
@@ -576,29 +558,23 @@ def train(
         persistent_workers=persistent_workers,
         pin_memory=True,
     )
-    try:
-        num_samples = len(val_loader.dataset)
-    except (TypeError, AttributeError):
-        # For datasets that don't implement __len__ properly
-        num_samples = getattr(val_loader.dataset, "length", "unknown")
-    logger.info(f"Number of validation samples: {num_samples}")
+    logger.info(f"Number of validation samples: {len(val_loader.dataset)}")
 
-    # Get input dimension from the first batch
-    # For TensorDataset, we can access tensors directly
-    if hasattr(train_loader.dataset, "tensors"):
-        input_dim = train_loader.dataset.tensors[0].shape[1]
-    else:
-        # Fallback: get from first batch
-        sample_batch = next(iter(train_loader))
-        input_dim = sample_batch[0].shape[1]
-    output_dim = len(label_cols)
+    # Get input dimension
+    input_dim = train_loader.dataset.tensors[0].shape[1]
+
+    features = build_feature_and_label_cols(window_size)
+
+    output_dim = len(features[LABELS])
     logger.info(f"Input dimension: {input_dim}, Output dimension: {output_dim}")
-    # Compute MAV for normalization
-    col_y_index_map = {col: idx for idx, col in enumerate(label_cols)}
-    y_to_log_features_idx = [col_y_index_map[c] for c in y_to_log_features]
-    logger.info(f"y_to_log_features_idx: {y_to_log_features_idx}")
-    # train_mav = compute_mav(train_loader, y_to_log_features_idx, logger)
-    # val_mav = compute_mav(val_loader, y_to_log_features_idx, logger)
+
+    # Load scalers
+    stem = train_meta_fn.stem
+    cluster_key = "_".join(stem.split("_")[:2])
+    x_log1p_scaler = pickle.load(
+        (scaler_dir / f"{cluster_key}_x_log1p_scaler.pkl").open("rb")
+    )
+    logger.info(f"Loaded x_log1p_scaler for {cluster_key}")
 
     # Build model and wrapper
     base_model = model_factory(
@@ -617,9 +593,10 @@ def train(
         model_name=model_name,
         store=store_cluster,
         item=item_cluster,
-        sales_idx=y_to_log_features_idx,
+        window_size=window_size,
         lr=lr,
         log_level=log_level,
+        inverse_scaler=x_log1p_scaler,
     )
 
     checkpoint_dir = checkpoints_dir / model_name

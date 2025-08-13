@@ -37,21 +37,24 @@ CYCLICAL_FEATURES = [
 ]
 TRIGS = ["sin", "cos"]
 
+WEIGHT_COLUMN = "weight"
+UNIT_SALES = "unit_sales"
+META_FEATURES = "META_FEATURES"
+X_SALE_FEATURES = "X_SALE_FEATURES"
+X_CYCLICAL_FEATURES = "X_CYCLICAL_FEATURES"
+X_FEATURES = "X_FEATURES"
+X_TO_LOG_FEATURES = "X_TO_LOG_FEATURES"
+X_LOG_FEATURES = "X_LOG_FEATURES"
+LABELS = "LABELS"
+Y_LOG_FEATURES = "Y_LOG_FEATURES"
+Y_TO_LOG_FEATURES = "Y_TO_LOG_FEATURES"
+ALL_FEATURES = "ALL_FEATURES"
+UNIT_SALE_IDX = "UNIT_SALE_IDX"
+
 
 def build_feature_and_label_cols(
     window_size: int,
-) -> tuple[
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-    list[str],
-]:
+) -> dict[str, list[str]]:
     """Return feature and label column names for a given window size."""
     meta_cols = [
         "start_date",
@@ -85,10 +88,6 @@ def build_feature_and_label_cols(
     ]
 
     x_feature_cols = x_to_log_features + x_log_features + x_cyclical_features
-    logger.info(f"x_feature_cols: {x_feature_cols}")
-    logger.info(
-        f"x_sales_features + x_cyclical_features: {x_sales_features + x_cyclical_features}"
-    )
     assert x_feature_cols == x_sales_features + x_cyclical_features
 
     y_to_log_features = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
@@ -98,20 +97,74 @@ def build_feature_and_label_cols(
     label_cols = y_to_log_features + y_log_features
     assert label_cols == y_to_log_features + y_log_features
 
-    all_features = meta_cols + x_feature_cols + label_cols
+    unit_sales = get_X_unit_sales(window_size)
 
-    return (
-        meta_cols,
-        x_sales_features,
-        x_cyclical_features,
-        x_feature_cols,
-        x_to_log_features,
-        x_log_features,
-        label_cols,
-        y_log_features,
-        y_to_log_features,
-        all_features,
+    all_features = meta_cols + x_feature_cols + label_cols
+    features = dict(
+        META_FEATURES=meta_cols,
+        UNIT_SALES=unit_sales,
+        X_SALE_FEATURES=x_sales_features,
+        X_CYCLICAL_FEATURES=x_cyclical_features,
+        X_FEATURES=x_feature_cols,
+        X_TO_LOG_FEATURES=x_to_log_features,
+        X_LOG_FEATURES=x_log_features,
+        LABELS=label_cols,
+        Y_LOG_FEATURES=y_log_features,
+        Y_TO_LOG_FEATURES=y_to_log_features,
+        ALL_FEATURES=all_features,
     )
+    return features
+
+
+def get_X_unit_sales(window_size: int = 16) -> list[str]:
+    return [f"sales_day_{i}" for i in range(1, window_size + 1)]
+
+
+def get_X_feature_idx(window_size: int = 1) -> dict[str, list[int]]:
+    features = build_feature_and_label_cols(window_size)
+    col_x_index_map = {col: idx for idx, col in enumerate(features[X_FEATURES])}
+    x_to_log_idx = [col_x_index_map[c] for c in features[X_TO_LOG_FEATURES]]
+    x_log_idx = [col_x_index_map[c] for c in features[X_LOG_FEATURES]]
+    x_cyc_idx = [col_x_index_map[c] for c in features[X_CYCLICAL_FEATURES]]
+    idx_features = dict(
+        UNIT_SALE_IDX=[x_to_log_idx[0]],
+        X_FEATURES=list(range(len(features[X_FEATURES]))),
+        X_TO_LOG_FEATURES=x_to_log_idx,
+        X_LOG_FEATURES=x_log_idx,
+        X_CYCLICAL_FEATURES=x_cyc_idx,
+    )
+    return idx_features
+
+
+def get_y_idx(window_size: int = 1) -> dict[str, list[int]]:
+    features = build_feature_and_label_cols(window_size)
+    col_y_index_map = {col: idx for idx, col in enumerate(features[LABELS])}
+    y_to_log_idx = [col_y_index_map[c] for c in features[Y_TO_LOG_FEATURES]]
+    y_log_idx = [col_y_index_map[c] for c in features[Y_LOG_FEATURES]]
+    idx_features = dict(
+        LABELS=list(range(len(features[LABELS]))),
+        Y_TO_LOG_FEATURES=y_to_log_idx,
+        Y_LOG_FEATURES=y_log_idx,
+    )
+    return idx_features
+
+
+def sort_df(
+    df: pd.DataFrame, window_size: int = 1, flag_duplicates: bool = True
+) -> pd.DataFrame:
+    # --- Assert uniqueness of rows ---
+    if flag_duplicates:
+        if df.duplicated(subset=["start_date", "store_item"]).any():
+            dups = df[df.duplicated(subset=["start_date", "store_item"], keep=False)]
+            raise ValueError(
+                f"Duplicate rows detected for date/store_item:\n{dups[['start_date', 'store_item']]}"
+            )
+    df = df.sort_values(["store_item", "start_date"], inplace=False).reset_index(
+        drop=True
+    )
+    features = build_feature_and_label_cols(window_size)
+    df = df[features[ALL_FEATURES]]
+    return df
 
 
 def load_raw_data(data_fn: Path) -> pd.DataFrame:
@@ -618,6 +671,7 @@ def generate_cyclical_features(
         logger.info(f"Saving cyclical features to {output_path}")
 
     return df
+
 
 def add_rolling_sales_summaries(
     df: pd.DataFrame,
