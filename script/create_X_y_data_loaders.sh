@@ -17,7 +17,6 @@ SCALERS_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_ite
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 WINDOW_SIZE=1
-WINDOW_VAL=30
 VAL_HORIZON=30
 
 # Parse command line arguments
@@ -29,7 +28,6 @@ while [[ $# -gt 0 ]]; do
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
-    --window_val) WINDOW_VAL="$2"; shift 2 ;;
     --val_horizon) VAL_HORIZON="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -56,7 +54,6 @@ echo "  Data dir: ${DATA_DIR}" | tee -a "$LOG_FILE"
 echo "  Scalers dir: ${SCALERS_DIR}" | tee -a "$LOG_FILE"
 echo "  Dataloader dir: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
-echo "  Window val: ${WINDOW_VAL}" | tee -a "$LOG_FILE"
 echo "  Validation horizon: ${VAL_HORIZON}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/create_X_y_data_loaders.py" \
@@ -66,7 +63,6 @@ python "${SCRIPT_DIR}/create_X_y_data_loaders.py" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
   --window_size "$WINDOW_SIZE" \
-  --window_val "$WINDOW_VAL" \
   --val_horizon "$VAL_HORIZON" \
    2>&1 | tee -a "$LOG_FILE"
 

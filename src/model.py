@@ -731,15 +731,7 @@ class LightningWrapper(pl.LightningModule):
     def validation_step(self, batch, _batch_idx):
         xb, yb, wb = batch
         preds = self.model(xb)
-        self.logger_.warning(f"[DEBUG] yb shape={yb.shape}")
         y_idx = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
-        self.logger_.warning(f"[DEBUG] Y_TO_LOG_FEATURES idx={y_idx}")
-        if len(y_idx) > 0:
-            y_vals = yb[:, y_idx]
-            self.logger_.warning(f"[DEBUG] yb min={y_vals.min().item()}, max={y_vals.max().item()}, num_finite={(torch.isfinite(y_vals)).sum().item()}")
-        else:
-            self.logger_.warning("[DEBUG] No Y_TO_LOG_FEATURES indices found for validation.")
-    
         # Loss
         loss = self.loss_fn(preds, yb, wb)
         self.log(
@@ -906,7 +898,7 @@ class MeanAbsoluteErrorLog1p(Metric):
 
         n = mask.sum().item()
         if n == 0:
-            self.logger_.warning("[MAE] No valid samples found.")
+            # self.logger_.warning("[MAE] No valid samples found.")
             return
 
         self.sum_abs_error += torch.abs(preds[mask] - target[mask]).sum()
@@ -959,7 +951,7 @@ class MeanAbsTargetLog1p(Metric):
 
         n = mask.sum().item()
         if n == 0:
-            self.logger_.warning("[MAV] No valid samples found.")
+            # self.logger_.warning("[MAV] No valid samples found.")
             return
 
         self.sum_abs_target += torch.abs(target[mask]).sum()
@@ -1001,7 +993,7 @@ class RootMeanSquaredErrorLog1p(Metric):
         # Mask zero targets
         mask = target > 0
         if mask.sum() == 0:
-            self.logger_.warning("[RMSE] No valid samples found.")
+            # self.logger_.warning("[RMSE] No valid samples found.")
             return
 
         squared_error = torch.square(preds[mask] - target[mask]).sum()
@@ -1010,7 +1002,7 @@ class RootMeanSquaredErrorLog1p(Metric):
 
     def compute(self) -> torch.Tensor:
         if self.count == 0:
-            self.logger_.warning("[RMSE] No valid samples found.")
+            # self.logger_.warning("[RMSE] No valid samples found.")
             return torch.tensor(0.0)
         return torch.sqrt(self.sum_squared_error / self.count)
 
@@ -1092,7 +1084,7 @@ class NaivePercentMAVFromBatch(Metric):
         mask = valid & (y_true >= 0 if self.include_zeros else y_true > 0)
 
         if not mask.any():
-            self.logger_.warning("[NAIVE_MAV] No valid samples found.")
+            # self.logger_.warning("[NAIVE_MAV] No valid samples found.")
             return
 
         err = (x_sale_lag[mask] - y_true[mask]).abs()

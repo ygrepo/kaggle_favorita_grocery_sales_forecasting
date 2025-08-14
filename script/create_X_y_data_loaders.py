@@ -26,7 +26,6 @@ def create_data_loaders(
     dataloader_dir: Path,
     scalers_dir: Path,
     window_size: int,
-    window_val: int,
     val_horizon: int,
     log_level: str,
 ):
@@ -43,10 +42,6 @@ def create_data_loaders(
         Directory to save the scalers.
     window_size : int
         Size of the rolling window for feature creation.
-    window_val : int
-        Size of the validation window.
-        Validation window is the number of days to use for validation.
-        Validation window must be >= val_horizon.
     val_horizon : int
         Size of the validation horizon.
         Validation horizon is the number of days to forecast.
@@ -79,32 +74,11 @@ def create_data_loaders(
             log_level=log_level,
         )
         logger.info(f"Data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
-        (
-            meta_cols,
-            _,
-            x_cyclical_features,
-            x_feature_cols,
-            x_to_log_features,
-            x_log_features,
-            label_cols,
-            y_log_features,
-            y_to_log_features,
-            all_features,
-        ) = build_feature_and_label_cols(window_size=window_size)
         generate_loaders(
             df,
-            all_features=all_features,
-            meta_cols=meta_cols,
-            x_feature_cols=x_feature_cols,
-            x_to_log_features=x_to_log_features,
-            x_log_features=x_log_features,
-            x_cyclical_features=x_cyclical_features,
-            label_cols=label_cols,
-            y_log_features=y_log_features,
-            y_to_log_features=y_to_log_features,
+            window_size=window_size,
             scalers_dir=scalers_dir,
             dataloader_dir=dataloader_dir,
-            window_val=window_val,
             val_horizon=val_horizon,
             log_level=log_level,
         )
@@ -139,12 +113,6 @@ def parse_args():
         type=int,
         default=16,
         help="Size of the lookback window",
-    )
-    parser.add_argument(
-        "--window_val",
-        type=str,
-        default="30",
-        help="Size of the validation window",
     )
     parser.add_argument(
         "--val_horizon",
@@ -189,14 +157,12 @@ def main():
         logger.info(f"  Dataloader dir: {dataloader_dir}")
         logger.info(f"  Scalers dir: {scalers_dir}")
         logger.info(f"  Window size: {window_size}")
-        logger.info(f"  Window validation size: {args.window_val}")
         logger.info(f"  Validation horizon: {args.val_horizon}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Log dir: {log_dir}")
 
         create_data_loaders(
             window_size=window_size,
-            window_val=int(args.window_val),
             val_horizon=args.val_horizon,
             data_dir=data_dir,
             scalers_dir=scalers_dir,

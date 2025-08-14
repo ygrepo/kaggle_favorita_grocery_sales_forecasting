@@ -115,17 +115,27 @@ def generate_loaders(
     store_cluster, item_cluster = store_cluster[0], item_cluster[0]
     cluster_key = f"{store_cluster}_{item_cluster}"
 
+    logger.info(f"Unique store items: {df['store_item'].nunique()}")
     logger.info(f"Preparing loaders for cluster {cluster_key} with {len(df)} rows")
 
     if WEIGHT_COLUMN not in df.columns:
         df[WEIGHT_COLUMN] = 1.0
 
-    num_samples = len(df)
-    validation_cutoff = num_samples - val_horizon
+    # --- Compute global cutoff date ---
+    cutoff_date = df["start_date"].max() - pd.Timedelta(days=val_horizon - 1)
+
+    # --- Split masks ---
+    train_mask = df["start_date"] < cutoff_date
+    val_mask = df["start_date"] >= cutoff_date
+
+    logger.info(f"Global validation cutoff date: {cutoff_date.date()}")
+    logger.info(f"Train rows: {train_mask.sum()}, Val rows: {val_mask.sum()}")
 
     features = build_feature_and_label_cols(window_size=window_size)
-    if num_samples <= 0:
-        logger.warning("No valid samples")
+
+    # --- Early exit if no valid samples ---
+    if train_mask.sum() == 0 or val_mask.sum() == 0:
+        logger.warning("No valid samples for train/val split")
         empty = torch.empty((0, len(features[X_FEATURES])), dtype=torch.float32)
         empty_y = torch.empty((0, len(features[LABELS])), dtype=torch.float32)
         empty_w = torch.empty((0, 1), dtype=torch.float32)
@@ -142,10 +152,6 @@ def generate_loaders(
     X = df[features[X_FEATURES]].fillna(0).values.astype(np.float32)
     Y = df[features[LABELS]].fillna(0).values.astype(np.float32)
     W = df[[WEIGHT_COLUMN]].values.astype(np.float32)
-
-    # --- Split train / val ---
-    train_mask = np.arange(num_samples) < validation_cutoff
-    val_mask = ~train_mask
 
     X_train, X_val = X[train_mask], X[val_mask]
     Y_train, Y_val = Y[train_mask], Y[val_mask]
