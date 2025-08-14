@@ -14,6 +14,7 @@ cd "$PROJECT_ROOT"
 DATALOADER_DIR="${PROJECT_ROOT}/output/data/dataloader_2014_2015_top_53_store_2000_item/"
 MODEL_DIR="${PROJECT_ROOT}/output/model_2014_2015_top_53_store_2000_item/"
 MODEL_LOGGER_DIR="${PROJECT_ROOT}/output/logs/model_logger_2014_2015_top_53_store_2000_item/"
+SCALER_DIR="${PROJECT_ROOT}/output/data/scalers_2014_2015_top_53_store_2000_item/"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -34,6 +35,7 @@ LOG_LEVEL="DEBUG"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dataloader_dir) DATALOADER_DIR="$2"; shift 2 ;;
+    --scaler_dir) SCALER_DIR="$2"; shift 2 ;;
     --model_dir) MODEL_DIR="$2"; shift 2 ;;
     --model_logger_dir) MODEL_LOGGER_DIR="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
@@ -73,6 +75,7 @@ set +e  # Disable exit on error to handle the error message
 echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Dataloader directory: ${DATALOADER_DIR}" | tee -a "$LOG_FILE"
 echo "  Model directory: ${MODEL_DIR}" | tee -a "$LOG_FILE"
+echo "  Scaler directory: ${SCALER_DIR}" | tee -a "$LOG_FILE"
 echo "  Model logger directory: ${MODEL_LOGGER_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Epochs: ${EPOCHS}" | tee -a "$LOG_FILE"
@@ -92,6 +95,7 @@ nvidia-smi | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/training.py" \
   --dataloader_dir "$DATALOADER_DIR" \
+  --scaler_dir "$SCALER_DIR" \
   --model_dir "$MODEL_DIR" \
   --model_logger_dir "$MODEL_LOGGER_DIR" \
   --window_size "$WINDOW_SIZE" \

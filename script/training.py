@@ -32,6 +32,7 @@ from src.utils import setup_logging, str2bool
 
 def train(
     dataloader_dir: Path,
+    scaler_dir: Path,
     model_dir: Path,
     model_logger_dir: Path,
     window_size: int,
@@ -58,6 +59,8 @@ def train(
         Directory to save dataloaders.
     model_dir : Path
         Directory to save trained models.
+    scaler_dir : Path
+        Directory to save scalers.
     model_logger_dir : Path
         Directory to save model logger.
     window_size : int
@@ -99,19 +102,6 @@ def train(
         f"Processing sales (store cluster, SKU cluster) {len(files)} Parquet files..."
     )
 
-    (
-        meta_cols,
-        x_sales_features,
-        x_cyclical_features,
-        x_feature_cols,
-        x_to_log_features,
-        x_log_features,
-        label_cols,
-        y_log_features,
-        y_to_log_features,
-        all_features,
-    ) = build_feature_and_label_cols(window_size)
-
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         parts = file_path.stem.split("_")
@@ -124,10 +114,10 @@ def train(
             model_dir=model_dir,
             model_logger_dir=model_logger_dir,
             dataloader_dir=dataloader_dir,
-            label_cols=label_cols,
-            y_to_log_features=y_to_log_features,
+            scaler_dir=scaler_dir,
             store_cluster=store_cluster,
             item_cluster=item_cluster,
+            window_size=window_size,
             lr=lr,
             epochs=epochs,
             hidden_dim=hidden_dim,
@@ -165,6 +155,12 @@ def parse_args():
         type=str,
         default="./output/dataloaders",
         help="Directory to save dataloaders (relative to project root)",
+    )
+    parser.add_argument(
+        "--scaler_dir",
+        type=str,
+        default="./output/scalers",
+        help="Directory to save scalers (relative to project root)",
     )
     parser.add_argument(
         "--epochs",
@@ -264,6 +260,7 @@ def main():
     # Convert paths to absolute paths relative to project root
     project_root = Path(__file__).parent.parent
     dataloader_dir = (project_root / args.dataloader_dir).resolve()
+    scaler_dir = (project_root / args.scaler_dir).resolve()
     model_dir = (project_root / args.model_dir).resolve()
     model_logger_dir = (project_root / args.model_logger_dir).resolve()
     log_dir = (project_root / args.log_dir).resolve()
@@ -279,6 +276,7 @@ def main():
         logger.info("Starting training with configuration:")
         logger.info(f"  Project root: {project_root}")
         logger.info(f"  Dataloader directory: {dataloader_dir}")
+        logger.info(f"  Scaler directory: {scaler_dir}")
         logger.info(f"  Model directory: {model_dir}")
         logger.info(f"  Model logger directory: {model_logger_dir}")
         logger.info(f"  Window size: {args.window_size}")
@@ -307,6 +305,7 @@ def main():
         # Train model
         train(
             dataloader_dir=dataloader_dir,
+            scaler_dir=scaler_dir,
             model_dir=model_dir,
             model_logger_dir=model_logger_dir,
             window_size=args.window_size,
