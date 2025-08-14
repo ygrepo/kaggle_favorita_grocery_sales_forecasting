@@ -8,8 +8,6 @@ from enum import Enum
 from torchmetrics import Metric
 from sklearn.preprocessing import MinMaxScaler
 
-from typing import Callable
-
 from src.utils import get_logger
 from src.data_utils import (
     get_y_idx,
@@ -416,7 +414,6 @@ class LightningWrapper(pl.LightningModule):
     def validation_step(self, batch, _batch_idx):
         xb, yb, wb = batch
         preds = self.model(xb)
-        y_idx = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
         # Loss
         loss = self.loss_fn(preds, yb, wb)
         self.log(
@@ -562,6 +559,7 @@ class MeanAbsoluteErrorLog1p(Metric):
 
         n = mask.sum().item()
         if n == 0:
+            self.logger_.warning("[MAE] No valid samples found.")
             return
 
         self.sum_abs_error += torch.abs(preds[mask] - target[mask]).sum()
@@ -597,6 +595,7 @@ class MeanAbsTargetLog1p(Metric):
 
         n = mask.sum().item()
         if n == 0:
+            self.logger_.warning("[MAV] No valid samples found.")
             return
 
         self.sum_abs_target += torch.abs(target[mask]).sum()
@@ -605,37 +604,93 @@ class MeanAbsTargetLog1p(Metric):
     def compute(self):
         return self.sum_abs_target / self.count if self.count > 0 else torch.tensor(0.0)
 
-
 class RootMeanSquaredErrorLog1p(Metric):
-    full_state_update = False
+    """
+    RMSE in original units for log1p-scaled predictions & targets.
+    Aggregates across steps automatically.
+    Now also tracks how many batches had no valid samples.
+    """
 
-    def __init__(self, window_size=1, log_level="INFO"):
+    full_state_update = False  # avoids expensive DDP communication
+
+    def __init__(self, window_size: int = 1, log_level: str = "INFO"):
         super().__init__()
         self.logger_ = get_logger(f"{__name__}.RootMeanSquaredErrorLog1p", log_level)
         self.window_size = window_size
 
-        self.add_state(
-            "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
-        )
+        # Metric states
+        self.add_state("sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
-    def update(self, preds: torch.Tensor, target: torch.Tensor):
-        features = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
-        preds = torch.expm1(preds[:, features])
-        target = torch.expm1(target[:, features])
+        # New: state for empty-batch count
+        self.add_state("empty_batches", default=torch.tensor(0), dist_reduce_fx="sum")
 
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        features = get_y_idx(self.window_size)
+        preds = preds[:, features[Y_TO_LOG_FEATURES]]
+        target = target[:, features[Y_TO_LOG_FEATURES]]
+
+        # Revert log1p
+        preds = torch.expm1(preds)
+        target = torch.expm1(target)
+
+        # Mask rows where all targets are zero or negative
         mask = target > 0
         if mask.sum() == 0:
+            # Count an empty batch
+            self.empty_batches += 1
             return
 
         squared_error = torch.square(preds[mask] - target[mask]).sum()
         self.sum_squared_error += squared_error
         self.count += mask.sum()
 
-    def compute(self):
+    def compute(self) -> torch.Tensor:
+        # Log empty batch info once per compute
+        if self.empty_batches > 0:
+            self.logger_.warning(
+                f"[RMSE] {self.empty_batches.item()} batch(es) had no valid samples (all-zero targets)"
+            )
         if self.count == 0:
             return torch.tensor(0.0)
         return torch.sqrt(self.sum_squared_error / self.count)
+
+    def reset(self) -> None:
+        """Reset states each epoch."""
+        super().reset()
+
+
+# class RootMeanSquaredErrorLog1p(Metric):
+#     full_state_update = False
+
+#     def __init__(self, window_size=1, log_level="INFO"):
+#         super().__init__()
+#         self.logger_ = get_logger(f"{__name__}.RMSE", log_level)
+#         self.window_size = window_size
+
+#         self.add_state(
+#             "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
+#         )
+#         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+
+#     def update(self, preds: torch.Tensor, target: torch.Tensor):
+#         features = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
+#         preds = torch.expm1(preds[:, features])
+#         target = torch.expm1(target[:, features])
+
+#         mask = target > 0
+#         if mask.sum() == 0:
+#             self.logger_.warning("[RMSE] No valid samples found.")
+#             return
+
+#         squared_error = torch.square(preds[mask] - target[mask]).sum()
+#         self.sum_squared_error += squared_error
+#         self.count += mask.sum()
+
+#     def compute(self):
+#         if self.count == 0:
+#             return torch.tensor(0.0)
+#         return torch.sqrt(self.sum_squared_error / self.count)
 
 
 class NaivePercentMAVFromBatch(Metric):
@@ -682,6 +737,7 @@ class NaivePercentMAVFromBatch(Metric):
         mask = valid & (y_true >= 0 if self.include_zeros else y_true > 0)
 
         if not mask.any():
+            self.logger_.warning("[Naive MAV] No valid samples found.")
             return
 
         err = (x_sale_lag[mask] - y_true[mask]).abs()
@@ -690,161 +746,6 @@ class NaivePercentMAVFromBatch(Metric):
 
     def compute(self):
         return 100.0 * self.num / (self.den + self.eps)
-
-
-# class MeanAbsoluteErrorLog1p(Metric):
-#     """
-#     MAE in original units for log1p-scaled predictions & targets.
-#     Works with single- or multi-output targets.
-#     """
-
-#     full_state_update = False
-
-#     def __init__(
-#         self,
-#         window_size: int = 1,
-#         include_zeros: bool = True,
-#         log_level: str = "INFO",
-#     ):
-#         super().__init__()
-#         self.window_size = window_size
-#         self.include_zeros = include_zeros
-#         self.logger_ = get_logger(f"{__name__}.MeanAbsoluteErrorLog1p", log_level)
-
-#         self.add_state("sum_abs_error", default=torch.tensor(0.0), dist_reduce_fx="sum")
-#         self.add_state(
-#             "count", default=torch.tensor(0, dtype=torch.long), dist_reduce_fx="sum"
-#         )
-
-#     def update(self, preds: torch.Tensor, target: torch.Tensor):
-#         # Select Y_TO_LOG_FEATURES
-#         features = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
-#         preds = preds[:, features]
-#         target = target[:, features]
-
-#         # Squeeze to 1D if only one column
-#         if preds.ndim == 2 and preds.shape[1] == 1:
-#             preds = preds[:, 0]
-#             target = target[:, 0]
-
-#         # Inverse log1p
-#         preds = torch.expm1(preds)
-#         target = torch.expm1(target)
-
-#         # Build mask
-#         valid = torch.isfinite(preds) & torch.isfinite(target)
-#         pos_mask = target >= 0 if self.include_zeros else target > 0
-#         mask = valid & pos_mask
-
-#         n = mask.sum().item()
-#         if n == 0:
-#             # self.logger_.warning("[MAE] No valid samples found.")
-#             return
-
-#         self.sum_abs_error += torch.abs(preds[mask] - target[mask]).sum()
-#         self.count += n
-
-#     def compute(self) -> torch.Tensor:
-#         return self.sum_abs_error / self.count if self.count > 0 else torch.tensor(0.0)
-
-
-# class MeanAbsTargetLog1p(Metric):
-#     """
-#     Mean(|target|) in original units for log1p-scaled targets.
-#     Works with single- or multi-output targets.
-#     """
-
-#     full_state_update = False
-
-#     def __init__(
-#         self,
-#         window_size: int = 1,
-#         include_zeros: bool = True,
-#         log_level: str = "INFO",
-#     ):
-#         super().__init__()
-#         self.window_size = window_size
-#         self.include_zeros = include_zeros
-#         self.logger_ = get_logger(f"{__name__}.MeanAbsoluteErrorLog1p", log_level)
-
-#         self.add_state(
-#             "sum_abs_target", default=torch.tensor(0.0), dist_reduce_fx="sum"
-#         )
-#         self.add_state(
-#             "count", default=torch.tensor(0, dtype=torch.long), dist_reduce_fx="sum"
-#         )
-
-#     def update(self, target: torch.Tensor):
-#         features = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
-#         target = target[:, features]
-
-#         # Squeeze to 1D if only one column
-#         if target.ndim == 2 and target.shape[1] == 1:
-#             target = target[:, 0]
-
-#         target = torch.expm1(target)
-
-#         # Mask
-#         valid = torch.isfinite(target)
-#         pos_mask = target >= 0 if self.include_zeros else target > 0
-#         mask = valid & pos_mask
-
-#         n = mask.sum().item()
-#         if n == 0:
-#             # self.logger_.warning("[MAV] No valid samples found.")
-#             return
-
-#         self.sum_abs_target += torch.abs(target[mask]).sum()
-#         self.count += n
-
-#     def compute(self) -> torch.Tensor:
-#         return self.sum_abs_target / self.count if self.count > 0 else torch.tensor(0.0)
-
-
-# class RootMeanSquaredErrorLog1p(Metric):
-#     """
-#     RMSE in original units for log1p-scaled predictions & targets.
-#     Aggregates across steps automatically.
-#     """
-
-#     full_state_update = False  # avoids expensive DDP communication
-
-#     def __init__(self, window_size: int = 1, log_level: str = "INFO"):
-#         super().__init__()
-#         self.logger_ = get_logger(f"{__name__}.RootMeanSquaredErrorLog1p", log_level)
-#         self.window_size = window_size
-
-#         # Buffers for sum of squared error and count
-#         self.add_state(
-#             "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
-#         )
-#         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
-
-#     def update(self, preds: torch.Tensor, target: torch.Tensor):
-#         # Select relevant columns
-#         features = get_y_idx(self.window_size)
-#         preds = preds[:, features[Y_TO_LOG_FEATURES]]
-#         target = target[:, features[Y_TO_LOG_FEATURES]]
-
-#         # Revert log1p
-#         preds = torch.expm1(preds)
-#         target = torch.expm1(target)
-
-#         # Mask zero targets
-#         mask = target > 0
-#         if mask.sum() == 0:
-#             # self.logger_.warning("[RMSE] No valid samples found.")
-#             return
-
-#         squared_error = torch.square(preds[mask] - target[mask]).sum()
-#         self.sum_squared_error += squared_error
-#         self.count += mask.sum()  # ✅ increment count before compute()
-
-#     def compute(self) -> torch.Tensor:
-#         if self.count == 0:
-#             # self.logger_.warning("[RMSE] No valid samples found.")
-#             return torch.tensor(0.0)
-#         return torch.sqrt(self.sum_squared_error / self.count)
 
 
 def compute_rmse(
@@ -873,61 +774,6 @@ def compute_rmse(
     rmse = torch.sqrt(mse)
     logger.debug(f"RMSE: {rmse.item():.6f}")
     return rmse
-
-
-# class NaivePercentMAVFromBatch(Metric):
-#     full_state_update = False
-
-#     def __init__(
-#         self,
-#         inverse_scaler: MinMaxScaler,
-#         *,
-#         window_size: int = 1,
-#         include_zeros: bool = True,
-#         eps: float = 1e-12,
-#         log_level: str = "INFO",
-#     ):
-#         super().__init__()
-#         self.window_size = window_size
-#         self.include_zeros = include_zeros
-#         self.eps = eps
-#         self.logger_ = get_logger(f"{__name__}.NaivePercentMAVFromBatch", log_level)
-
-#         # Store scaler params (on CPU for now)
-#         self.register_buffer(
-#             "scale_", torch.tensor(inverse_scaler.scale_, dtype=torch.float32)
-#         )
-#         self.register_buffer(
-#             "min_", torch.tensor(inverse_scaler.min_, dtype=torch.float32)
-#         )
-
-#         self.add_state("num", default=torch.tensor(0.0), dist_reduce_fx="sum")
-#         self.add_state("den", default=torch.tensor(0.0), dist_reduce_fx="sum")
-
-#     def _inverse_transform_torch(self, X: torch.Tensor) -> torch.Tensor:
-#         # Ensure buffers are on the same device as X
-#         return (X - self.min_.to(X.device)) / self.scale_.to(X.device)
-
-#     def update(self, xb: torch.Tensor, yb: torch.Tensor):
-#         features_y = get_y_idx(self.window_size)
-#         y_true = torch.expm1(yb[:, features_y[Y_TO_LOG_FEATURES][0]])  # 1D
-
-#         features_x = get_X_feature_idx(self.window_size)
-#         x_sale_lag = xb[:, features_x[X_TO_LOG_FEATURES]]
-#         x_sale_lag = torch.expm1(self._inverse_transform_torch(x_sale_lag))[:, 0]  # 1D
-
-#         valid = torch.isfinite(y_true) & torch.isfinite(x_sale_lag)
-#         mask = valid & (y_true >= 0 if self.include_zeros else y_true > 0)
-
-#         if not mask.any():
-#             return
-
-#         err = (x_sale_lag[mask] - y_true[mask]).abs()
-#         self.num += err.sum()
-#         self.den += y_true[mask].abs().sum()
-
-#     def compute(self):
-#         return 100.0 * self.num / (self.den + self.eps)
 
 
 def naive_percent_mav(
