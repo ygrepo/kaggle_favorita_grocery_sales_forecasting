@@ -17,7 +17,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.model_utils import generate_loaders
-from src.data_utils import load_X_y_data, build_feature_and_label_cols
+from src.data_utils import load_X_y_data
 from src.utils import setup_logging
 
 

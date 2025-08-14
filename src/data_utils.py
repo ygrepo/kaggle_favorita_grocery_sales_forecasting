@@ -318,23 +318,7 @@ def load_full_data(
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
             )
-        (
-            meta_cols,
-            _,
-            _,
-            x_feature_cols,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-        ) = build_feature_and_label_cols(window_size=window_size)
-
-        df = df[meta_cols + x_feature_cols]
-        df["start_date"] = pd.to_datetime(df["start_date"])
-        df.sort_values(["store_item", "start_date"], inplace=True)
-        df.reset_index(drop=True, inplace=True)
+        df = sort_df(df, window_size=window_size)
         if output_fn:
             logger.info(f"Saving final_df to {output_fn}")
             if output_fn.suffix == ".parquet":
@@ -422,13 +406,7 @@ def load_X_y_data(
             df = pd.read_csv(
                 data_fn, dtype=dtype_dict, parse_dates=["start_date"], low_memory=False
             )
-        (meta_cols, _, _, x_feature_cols, _, _, label_cols, _, _, _) = (
-            build_feature_and_label_cols(window_size=window_size)
-        )
-        df = df[meta_cols + x_feature_cols + label_cols]
-        df["start_date"] = pd.to_datetime(df["start_date"])
-        df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
-
+        df = sort_df(df, window_size=window_size)
         logger.info(f"Loaded data with shape {df.shape}")
         return df
     except Exception as e:
