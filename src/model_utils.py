@@ -5,7 +5,6 @@ from torch.utils.data import TensorDataset, Dataset, DataLoader
 from sklearn.preprocessing import MinMaxScaler
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
-import random
 import logging
 from lightning.pytorch.callbacks import (
     ModelCheckpoint,
@@ -22,10 +21,6 @@ from tqdm import tqdm
 from collections import defaultdict
 import re
 from typing import Optional
-from pytorch_forecasting import TimeSeriesDataSet
-from pytorch_forecasting import TemporalFusionTransformer
-from pytorch_forecasting.metrics import RMSE
-from pytorch_lightning import Trainer, LightningModule
 
 from lightning.pytorch.loggers import CSVLogger
 from src.model import LightningWrapper, ModelType
