@@ -10,6 +10,7 @@ from sklearn.cluster import (
 )
 from pathlib import Path
 from src.data_utils import normalize_data
+from typing import Optional
 
 import logging
 
@@ -323,11 +324,11 @@ def cluster_data(
     df: pd.DataFrame,
     *,
     freq: str = "W",
-    store_item_matrix_fn: Path = None,
-    cluster_output_fn: Path = None,
-    store_fn: Path = None,
-    item_fn: Path = None,
-    output_fn: Path = None,
+    store_item_matrix_fn: Optional[Path] = None,
+    cluster_output_fn: Optional[Path] = None,
+    store_fn: Optional[Path] = None,
+    item_fn: Optional[Path] = None,
+    output_fn: Optional[Path] = None,
     model_class=SpectralBiclustering,
     row_range: range = range(2, 5),
     col_range: range = range(2, 5),
@@ -340,6 +341,7 @@ def cluster_data(
         model_kwargs = {}
 
     # Save a copy of the full-resolution df (with unit_sales)
+    df.drop(columns=["store_cluster", "item_cluster"], inplace=True)
     original_df = df.copy()
 
     # Create normalized matrix for clustering only
@@ -348,7 +350,7 @@ def cluster_data(
     logger.info(f"Number of items: {df['item'].nunique()}")
     logger.info(f"Number of stores: {df['store'].nunique()}")
 
-    if store_item_matrix_fn:
+    if store_item_matrix_fn is not None:
         logger.info(f"Saving store_item_matrix to {store_item_matrix_fn}")
         norm_data.to_csv(store_item_matrix_fn, index=False)
 
@@ -363,7 +365,7 @@ def cluster_data(
         return_models=True,
     )
 
-    if cluster_output_fn:
+    if cluster_output_fn is not None:
         logger.info(f"Saving cluster_df to {cluster_output_fn}")
         cluster_df.to_csv(cluster_output_fn, index=False)
 
@@ -414,19 +416,19 @@ def cluster_data(
     if "onpromotion" in df.columns:
         df["onpromotion"] = df["onpromotion"].astype(bool)
 
-    if store_fn:
+    if store_fn is not None:
         logger.info(f"Saving store_fn to {store_fn}")
         df[["date", "store", "store_cluster"]].drop_duplicates().to_csv(
             store_fn, index=False
         )
 
-    if item_fn:
+    if item_fn is not None:
         logger.info(f"Saving item_fn to {item_fn}")
         df[["date", "item", "item_cluster"]].drop_duplicates().to_csv(
             item_fn, index=False
         )
 
-    if output_fn:
+    if output_fn is not None:
         logger.info(f"Saving df to {output_fn}")
         df.to_parquet(output_fn)
 

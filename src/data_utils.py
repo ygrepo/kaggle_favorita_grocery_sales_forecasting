@@ -1571,3 +1571,33 @@ def add_mav_column(
         lambda s: mav(s, is_log1p=is_log1p, include_zeros=include_zeros)
     )
     return df
+
+
+def mav_by_cluster(
+    df: pd.DataFrame,
+    matrix: pd.DataFrame,
+    *,
+    col_mav_name: str = "store_item_mav",
+    is_log1p: bool = False,
+    include_zeros: bool = True,
+) -> pd.DataFrame:
+    # Convert matrix to long form
+    long_df = matrix.stack().rename("value").reset_index()
+    long_df.columns = ["store", "item", "value"]
+
+    # Create the mappings from df (contains store/item cluster assignments)
+    store_cluster_map = dict(zip(df["store"], df["store_cluster"].values))
+    item_cluster_map = dict(zip(df["item"], df["item_cluster"].values))
+
+    # Map stores and items to their cluster labels
+    long_df["store_cluster"] = long_df["store"].map(store_cluster_map)
+    long_df["item_cluster"] = long_df["item"].map(item_cluster_map)
+
+    # Filter out rows where cluster mapping failed (NaN values)
+    long_df = long_df.dropna(subset=["store_cluster", "item_cluster"])
+
+    return (
+        long_df.groupby(["store_cluster", "item_cluster"])["value"]
+        .apply(mav, is_log1p=is_log1p, include_zeros=include_zeros)
+        .reset_index(name=col_mav_name)
+    )
