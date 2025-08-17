@@ -1,16 +1,18 @@
 from __future__ import annotations
-from doctest import DocFileTest
 
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator
+from typing import List, Optional, Iterator, Tuple
 import logging
 from tqdm import tqdm
 from pathlib import Path
-import re
 import gc
+from statsmodels.tsa.arima.model import ARIMA
+import logging
+from typing import List, Optional, Iterator, Tuple
 
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(
     level=logging.INFO,  # or DEBUG
@@ -658,34 +660,24 @@ def add_rolling_sales_summaries(
     log_level: str = "INFO",
 ) -> pd.DataFrame:
     """
-    Add rolling features computed from long-form `unit_sales`:
-      mean_i, median_i, min_i, max_i, std_i, mean_i_decay, diff_i_mean
-
-    Semantics:
-      - Computed over the **most recent i past days** for each (store_item),
-        excluding the current day: uses `unit_sales.shift(1)` before rolling.
-      - `mean_i_decay` = sum(x[t-k] * decay^k, k=0..i-1); newest gets weight 1.0.
-      - `diff_i_mean`  = (x[t-1] - x[t-i]) / (i-1)  (momentum-ish).
-      - Produces NaNs for the first i rows of each series (no leakage).
-
-    Requires columns: ['store_item', 'start_date', 'unit_sales'].
+    Add rolling stats and fast leakage-safe ARIMA(0,0,1) forecasts using recursive update.
     """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    need = {"store_item", "start_date", "unit_sales"}
+    need = {"store_item", "date", "unit_sales"}
     missing = need - set(df.columns)
     if missing:
         raise KeyError(f"Missing required columns: {sorted(missing)}")
 
-    out = df.sort_values(["store_item", "start_date"]).copy()
-    g = out.groupby("store_item", sort=False)
+    out = df.sort_values(["store_item", "date"]).copy()
+    g = out.groupby("store_item", group_keys=False)
 
-    # Past-only series: exclude current day to avoid leakage
-    past = g["unit_sales"].shift(1)
+    # --- Past-only series ---
+    past = g["unit_sales"].shift(1, fill_value=0)
 
+    # --- Rolling features ---
     for i in windows:
         logger.info(f"Adding unit_sales rolling features (window={i})")
-
         roll = past.rolling(i, min_periods=i)
 
         out[f"mean_{i}"] = roll.mean()
@@ -694,21 +686,49 @@ def add_rolling_sales_summaries(
         out[f"max_{i}"] = roll.max()
         out[f"std_{i}"] = roll.std(ddof=1)
 
-        # Decay-weighted sum over last i days; newest weight = 1.0
-        w = (decay ** np.arange(i)[::-1]).astype(np.float64)  # [decay^(i-1),...,1]
-        out[f"mean_{i}_decay"] = (
-            g["unit_sales"]
-            .shift(1)
-            .transform(
-                lambda s: s.rolling(i, min_periods=i).apply(
-                    lambda x: np.dot(x, w), raw=True
-                )
+        w = (decay ** np.arange(i)[::-1]).astype(np.float64)
+        out[f"mean_{i}_decay"] = past.shift(1, fill_value=0).transform(
+            lambda s: s.rolling(i, min_periods=i).apply(
+                lambda x: np.dot(x, w), raw=True
             )
         )
 
-        # Average day-to-day change over the window: (newest - oldest) / (i - 1)
-        # newest = past[t] = unit_sales[t-1], oldest = unit_sales[t-i]
         out[f"diff_{i}_mean"] = (past - past.shift(i - 1)) / (i - 1) if i > 1 else 0.0
+
+    # --- Fast ARIMA(0,0,1) forecasts ---
+    def fast_arima001(series: pd.Series) -> pd.Series:
+        """
+        Fit ARIMA(0,0,1) once, then generate one-step-ahead forecasts
+        recursively with only past residuals (leakage-safe).
+        """
+        series = series.astype(float)
+        n = len(series)
+        forecasts = [np.nan] * n
+
+        # Need at least 3 points to fit MA(1)
+        if n < 3:
+            return pd.Series(forecasts, index=series.index)
+
+        # Fit on the whole series once to get params
+        try:
+            model = ARIMA(series, order=(0, 0, 1))
+            fitted = model.fit()
+            mu = fitted.params.get("const", 0.0)
+            theta = fitted.params["ma.L1"]
+        except Exception as e:
+            logger.debug(f"ARIMA fit failed: {e}")
+            return pd.Series(forecasts, index=series.index)
+
+        # Recursive one-step-ahead prediction
+        eps_prev = 0.0
+        for t in range(1, n):
+            forecasts[t] = mu + theta * eps_prev
+            eps_prev = series.iloc[t] - forecasts[t]  # update residual
+
+        return pd.Series(forecasts, index=series.index)
+
+    logger.info("Adding fast leakage-safe ARIMA(0,0,1) forecasts")
+    out["arima001_forecast"] = g["unit_sales"].apply(fast_arima001)
 
     return out
 
@@ -1292,7 +1312,37 @@ def zscore_with_axis(
     return pd.DataFrame(z, index=df.index, columns=df.columns)
 
 
-def normalize_store_item_matrix(
+def median_mean_transform(
+    df: pd.DataFrame,
+    *,
+    freq="W",
+    median_transform=True,
+    mean_transform=False,
+) -> pd.DataFrame:
+    if median_transform:
+        df = (
+            df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
+                "unit_sales"
+            ]
+            .median()
+            .reset_index()
+        )
+        df = df.groupby(["store", "item"])["unit_sales"].median().unstack(fill_value=0)
+    elif mean_transform:
+        df = (
+            df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
+                "unit_sales"
+            ]
+            .mean()
+            .reset_index()
+        )
+        df = df.groupby(["store", "item"])["unit_sales"].mean().unstack(fill_value=0)
+    else:
+        raise ValueError("Set either median_transform or mean_transform to True.")
+    return df
+
+
+def normalize_data(
     df: pd.DataFrame,
     freq="W",
     median_transform=True,
@@ -1326,29 +1376,12 @@ def normalize_store_item_matrix(
     pd.DataFrame
         A normalized store × item matrix
     """
-    if median_transform:
-        df = (
-            df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
-                "unit_sales"
-            ]
-            .median()
-            .reset_index()
-        )
-        df = df.groupby(["store", "item"])["unit_sales"].median().unstack(fill_value=0)
-    elif mean_transform:
-        df = (
-            df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
-                "unit_sales"
-            ]
-            .mean()
-            .reset_index()
-        )
-        df = df.groupby(["store", "item"])["unit_sales"].mean().unstack(fill_value=0)
-    else:
-        raise ValueError("Set either median_transform or mean_transform to True.")
+    df = median_mean_transform(
+        df, freq=freq, median_transform=median_transform, mean_transform=mean_transform
+    )
 
     if log_transform:
-        df = np.log1p(df)
+        df = df.apply(np.log1p)
 
     if zscore_rows:
         df = zscore_with_axis(df, axis=1)
@@ -1357,6 +1390,79 @@ def normalize_store_item_matrix(
         df = zscore_with_axis(df, axis=0)
 
     return df
+
+
+def normalize_store_item_data(
+    df: pd.DataFrame,
+    freq="W",
+    median_transform=True,
+    mean_transform=False,
+    log_transform=True,
+    zscore_rows=True,
+    zscore_cols=False,  # safer default to avoid double scaling
+    normalized_column_name="normalized_unit_sales",
+):
+    """
+    Returns the original dataframe with a new column containing normalized data.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must include ['date', 'store', 'item', 'unit_sales']
+    freq : str
+        Resample frequency (e.g., 'W' for weekly)
+    median_transform : bool
+        Use median aggregation
+    mean_transform : bool
+        Use mean aggregation
+    log_transform : bool
+        Apply log1p to unit_sales
+    zscore_rows : bool
+        Z-score each row (store)
+    zscore_cols : bool
+        Z-score each column (item)
+    normalized_column_name : str
+        Name for the new column containing normalized data
+
+    Returns
+    -------
+    pd.DataFrame
+        Original dataframe with a new column containing normalized data
+    """
+    # Keep a copy of the original dataframe
+    original_df = df.copy()
+
+    # Create the normalized matrix using the existing normalize_data function
+    norm_matrix = normalize_data(
+        df,
+        freq=freq,
+        median_transform=median_transform,
+        mean_transform=mean_transform,
+        log_transform=log_transform,
+        zscore_rows=zscore_rows,
+        zscore_cols=zscore_cols,
+    )
+
+    # Create store_item column if it doesn't exist
+    if "store_item" not in original_df.columns:
+        original_df["store_item"] = (
+            original_df["store"].astype(str) + "_" + original_df["item"].astype(str)
+        )
+
+    # Convert the normalized matrix back to long format and merge with original data
+    # The norm_matrix has stores as index and items as columns
+    norm_long = norm_matrix.stack().reset_index()
+    norm_long.columns = ["store", "item", normalized_column_name]
+    norm_long["store_item"] = (
+        norm_long["store"].astype(str) + "_" + norm_long["item"].astype(str)
+    )
+
+    # Merge the normalized data back to the original dataframe
+    result_df = original_df.merge(
+        norm_long[["store_item", normalized_column_name]], on="store_item", how="left"
+    )
+
+    return result_df
 
 
 def generate_store_item_clusters(
@@ -1440,3 +1546,28 @@ def save_parquets_by_cluster_pairs(
             filename = f"cluster_{store_cluster}_{item_cluster}.csv"
             group.to_csv(output_dir / filename, index=False)
         del group
+
+
+def mav(series: pd.Series, is_log1p: bool = True, include_zeros: bool = True):
+    if is_log1p:
+        vals = np.expm1(series)  # undo log1p
+    else:
+        vals = series
+    mask = np.isfinite(vals) & (vals >= 0 if include_zeros else vals > 0)
+    return np.abs(vals[mask]).mean() if mask.any() else 0.0
+
+
+def add_mav_column(
+    df: pd.DataFrame,
+    col1: str,
+    col2: str,
+    col: str,
+    is_log1p: bool = True,
+    include_zeros: bool = True,
+) -> pd.DataFrame:
+
+    new_col_name = f"{col1}_{col2}_mav"
+    df[new_col_name] = df.groupby([col1, col2])[col].transform(
+        lambda s: mav(s, is_log1p=is_log1p, include_zeros=include_zeros)
+    )
+    return df

@@ -9,7 +9,7 @@ from sklearn.cluster import (
     HDBSCAN,
 )
 from pathlib import Path
-from src.data_utils import normalize_store_item_matrix
+from src.data_utils import normalize_data
 
 import logging
 
@@ -264,16 +264,18 @@ def compute_biclustering_scores(
                 predicted_labels = np.array(
                     [
                         np.argmin(
-                            [
-                                (
-                                    np.linalg.norm(
-                                        xi - X[row_labels == cid].mean(axis=0)
+                            np.array(
+                                [
+                                    (
+                                        np.linalg.norm(
+                                            xi - X[row_labels == cid].mean(axis=0)
+                                        )
+                                        if np.any(row_labels == cid)
+                                        else np.inf
                                     )
-                                    if np.any(row_labels == cid)
-                                    else np.inf
-                                )
-                                for cid in range(n_row)
-                            ]
+                                    for cid in range(n_row)
+                                ]
+                            )
                         )
                         for xi in X
                     ]
@@ -341,7 +343,7 @@ def cluster_data(
     original_df = df.copy()
 
     # Create normalized matrix for clustering only
-    norm_data = normalize_store_item_matrix(df, freq=freq).fillna(0)
+    norm_data = normalize_data(df, freq=freq).fillna(0)
 
     logger.info(f"Number of items: {df['item'].nunique()}")
     logger.info(f"Number of stores: {df['store'].nunique()}")
@@ -373,7 +375,7 @@ def cluster_data(
         logger.error(
             "No valid clustering results: all entries have NaN Explained Variance"
         )
-        return
+        return pd.DataFrame()
 
     logger.info(f"Best clustering result: {best_row}")
     best_model = best_row["model"]

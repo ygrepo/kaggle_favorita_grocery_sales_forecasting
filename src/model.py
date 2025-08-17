@@ -604,6 +604,7 @@ class MeanAbsTargetLog1p(Metric):
     def compute(self):
         return self.sum_abs_target / self.count if self.count > 0 else torch.tensor(0.0)
 
+
 class RootMeanSquaredErrorLog1p(Metric):
     """
     RMSE in original units for log1p-scaled predictions & targets.
@@ -619,7 +620,9 @@ class RootMeanSquaredErrorLog1p(Metric):
         self.window_size = window_size
 
         # Metric states
-        self.add_state("sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state(
+            "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
+        )
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
         # New: state for empty-batch count
@@ -658,39 +661,7 @@ class RootMeanSquaredErrorLog1p(Metric):
     def reset(self) -> None:
         """Reset states each epoch."""
         super().reset()
-
-
-# class RootMeanSquaredErrorLog1p(Metric):
-#     full_state_update = False
-
-#     def __init__(self, window_size=1, log_level="INFO"):
-#         super().__init__()
-#         self.logger_ = get_logger(f"{__name__}.RMSE", log_level)
-#         self.window_size = window_size
-
-#         self.add_state(
-#             "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
-#         )
-#         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
-
-#     def update(self, preds: torch.Tensor, target: torch.Tensor):
-#         features = get_y_idx(self.window_size)[Y_TO_LOG_FEATURES]
-#         preds = torch.expm1(preds[:, features])
-#         target = torch.expm1(target[:, features])
-
-#         mask = target > 0
-#         if mask.sum() == 0:
-#             self.logger_.warning("[RMSE] No valid samples found.")
-#             return
-
-#         squared_error = torch.square(preds[mask] - target[mask]).sum()
-#         self.sum_squared_error += squared_error
-#         self.count += mask.sum()
-
-#     def compute(self):
-#         if self.count == 0:
-#             return torch.tensor(0.0)
-#         return torch.sqrt(self.sum_squared_error / self.count)
+        self.empty_batches.reset()
 
 
 class NaivePercentMAVFromBatch(Metric):

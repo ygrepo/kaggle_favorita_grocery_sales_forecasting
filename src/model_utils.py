@@ -505,7 +505,7 @@ def train(
 
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     pl.seed_everything(seed)
-    
+
     checkpoints_dir = model_dir / "checkpoints"
     for d in [checkpoints_dir, model_logger_dir]:
         if d is not None:
@@ -604,7 +604,7 @@ def train(
     checkpoint_dir = checkpoints_dir / model_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_percent_mav",
+        monitor="val_mae",
         mode="min",
         save_top_k=1,
         save_last=True,
@@ -613,7 +613,7 @@ def train(
     )
 
     early_stop = EarlyStopping(
-        monitor="val_loss", patience=2, mode="min", min_delta=1e-4
+        monitor="val_mae", patience=5, mode="min", min_delta=1e-4
     )
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
