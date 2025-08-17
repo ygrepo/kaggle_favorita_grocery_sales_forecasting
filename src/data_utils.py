@@ -1581,23 +1581,38 @@ def mav_by_cluster(
     is_log1p: bool = False,
     include_zeros: bool = True,
 ) -> pd.DataFrame:
-    # Convert matrix to long form
+    # Convert matrix (store × item) into long form
     long_df = matrix.stack().rename("value").reset_index()
     long_df.columns = ["store", "item", "value"]
 
-    # Create the mappings from df (contains store/item cluster assignments)
-    store_cluster_map = dict(zip(df["store"], df["store_cluster"].values))
-    item_cluster_map = dict(zip(df["item"], df["item_cluster"].values))
+    # Map stores/items to their cluster labels
+    store_cluster_map = dict(zip(df["store"], df["store_cluster"].astype(str)))
+    item_cluster_map = dict(zip(df["item"], df["item_cluster"].astype(str)))
 
-    # Map stores and items to their cluster labels
     long_df["store_cluster"] = long_df["store"].map(store_cluster_map)
     long_df["item_cluster"] = long_df["item"].map(item_cluster_map)
 
-    # Filter out rows where cluster mapping failed (NaN values)
+    # Drop entries with missing cluster labels
     long_df = long_df.dropna(subset=["store_cluster", "item_cluster"])
 
-    return (
+    # Group by cluster pair and compute MAV
+    out = (
         long_df.groupby(["store_cluster", "item_cluster"])["value"]
         .apply(mav, is_log1p=is_log1p, include_zeros=include_zeros)
         .reset_index(name=col_mav_name)
     )
+
+    return out
+
+def flatten_results(df: pd.DataFrame) -> pd.DataFrame:
+    flat_rows = []
+    for _, row in df.iterrows():
+        mav_df = row.get("mav_df")
+        if mav_df is None or mav_df.empty:
+            continue
+        mav_df = mav_df.copy()
+        mav_df["n_row"] = row["n_row"]
+        mav_df["n_col"] = row["n_col"]
+        mav_df["Model"] = row["Model"]
+        flat_rows.append(mav_df)
+    return pd.concat(flat_rows, ignore_index=True)

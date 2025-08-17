@@ -9,7 +9,7 @@ from sklearn.cluster import (
     HDBSCAN,
 )
 from pathlib import Path
-from src.data_utils import normalize_data
+from src.data_utils import normalize_data, mav_by_cluster, median_mean_transform
 from typing import Optional
 
 import logging
@@ -184,10 +184,12 @@ def compute_spectral_clustering_cv_scores(
 
 def compute_biclustering_scores(
     data,
+    raw_data,
     *,
     model_class,
     row_range=range(2, 6),
     col_range=range(2, 6),
+    col_mav_name: str = "store_cluster_item_cluster_mav",
     true_row_labels=None,
     model_kwargs=None,
     return_models=False,
@@ -205,6 +207,7 @@ def compute_biclustering_scores(
     X = np.asarray(data)
     n_rows, n_cols = X.shape
     results = []
+    all_mav = []
 
     for n_row in row_range:
         if n_row > n_rows:
@@ -214,6 +217,7 @@ def compute_biclustering_scores(
                 continue
 
             logger.info(f"Evaluating n_row={n_row}, n_col={n_col}")
+            mav_df = pd.DataFrame()  # <--- default fallback
 
             try:
                 # Instantiate model
@@ -247,6 +251,52 @@ def compute_biclustering_scores(
                         else np.arange(n_cols)
                     )
                 )
+
+                # --- MAV computation ---
+                store_clusters = pd.DataFrame(
+                    {"store": raw_data.index, "store_cluster": row_labels.astype(str)}
+                )
+                item_clusters = pd.DataFrame(
+                    {"item": raw_data.columns, "item_cluster": col_labels.astype(str)}
+                )
+
+                df_assignments = pd.DataFrame(
+                    {
+                        "store": raw_data.index.repeat(len(raw_data.columns)),
+                        "item": np.tile(raw_data.columns, len(raw_data.index)),
+                    }
+                )
+                df_assignments = df_assignments.merge(
+                    store_clusters, on="store", how="left"
+                )
+                df_assignments = df_assignments.merge(
+                    item_clusters, on="item", how="left"
+                )
+
+                # 1) MAV per (store, item)
+                mav_df = mav_by_cluster(
+                    df_assignments, raw_data, col_mav_name=col_mav_name
+                )
+
+                # 2) Cluster-level MAV mean/std
+                mav_cluster_stats = (
+                    mav_df.groupby(["store_cluster", "item_cluster"])[col_mav_name]
+                    .agg(["mean", "std"])
+                    .reset_index()
+                    .rename(
+                        columns={
+                            "mean": f"{col_mav_name}_mean",
+                            "std": f"{col_mav_name}_std",
+                        }
+                    )
+                )
+
+                # 3) Merge cluster-level stats back into mav_df
+                mav_df = mav_df.merge(
+                    mav_cluster_stats, on=["store_cluster", "item_cluster"], how="left"
+                )
+
+                all_mav.append(mav_df)
 
                 # Compute % variance explained
                 global_mean = X.mean(axis=0)
@@ -303,6 +353,13 @@ def compute_biclustering_scores(
                     None,
                 )
 
+            mav_df = pd.concat(all_mav, ignore_index=True)
+            mav_df["n_row"] = n_row
+            mav_df["n_col"] = n_col
+            mav_df["Model"] = model_class.__name__
+            mav_df["Explained Variance (%)"] = pve
+            mav_df["Mean Silhouette"] = sil
+
             result = {
                 "n_row": n_row,
                 "n_col": n_col,
@@ -317,7 +374,7 @@ def compute_biclustering_scores(
 
             results.append(result)
 
-    return pd.DataFrame(results)
+    return pd.DataFrame(results), mav_df
 
 
 def cluster_data(
@@ -340,23 +397,30 @@ def cluster_data(
     if model_kwargs is None:
         model_kwargs = {}
 
-    # Save a copy of the full-resolution df (with unit_sales)
-    df.drop(columns=["store_cluster", "item_cluster"], inplace=True)
+    # Drop old cluster columns if present
+    df = df.drop(
+        columns=[c for c in ["store_cluster", "item_cluster"] if c in df.columns]
+    )
     original_df = df.copy()
 
-    # Create normalized matrix for clustering only
+    # Build normalized + raw matrices
     norm_data = normalize_data(df, freq=freq).fillna(0)
+    raw_data = median_mean_transform(df, freq=freq)
 
     logger.info(f"Number of items: {df['item'].nunique()}")
     logger.info(f"Number of stores: {df['store'].nunique()}")
 
     if store_item_matrix_fn is not None:
-        logger.info(f"Saving store_item_matrix to {store_item_matrix_fn}")
-        norm_data.to_csv(store_item_matrix_fn, index=False)
+        path = Path(store_item_matrix_fn)
+        if path.is_dir() or str(path) == ".":
+            path = path / "store_item_matrix.csv"
+        logger.info(f"Saving store_item_matrix to {path}")
+        norm_data.to_csv(path, index=False)
 
     # Run biclustering grid search
-    cluster_df = compute_biclustering_scores(
-        data=norm_data.values,
+    cluster_df, mav_df = compute_biclustering_scores(
+        data=norm_data,
+        raw_data=raw_data,
         model_class=model_class,
         row_range=row_range,
         col_range=col_range,
@@ -366,8 +430,11 @@ def cluster_data(
     )
 
     if cluster_output_fn is not None:
-        logger.info(f"Saving cluster_df to {cluster_output_fn}")
-        cluster_df.to_csv(cluster_output_fn, index=False)
+        path = Path(cluster_output_fn)
+        if path.is_dir() or str(path) == ".":
+            path = path / "cluster_scores.csv"
+        logger.info(f"Saving cluster_df to {path}")
+        cluster_df.to_csv(path, index=False)
 
     # Select best result
     if cluster_df["Explained Variance (%)"].notna().any():
@@ -389,20 +456,12 @@ def cluster_data(
     store_ids = norm_data.index.tolist()
     item_ids = norm_data.columns.tolist()
 
-    # Map cluster labels to IDs
-    store_cluster_map = dict(zip(store_ids, store_labels))
-    item_cluster_map = dict(zip(item_ids, item_labels))
-
     # Build cluster assignment DataFrames
     store_clusters = pd.DataFrame(
-        {
-            "store": store_ids,
-            "store_cluster": [str(store_cluster_map[s]) for s in store_ids],
-        }
+        {"store": store_ids, "store_cluster": [str(lbl) for lbl in store_labels]}
     )
-
     item_clusters = pd.DataFrame(
-        {"item": item_ids, "item_cluster": [str(item_cluster_map[i]) for i in item_ids]}
+        {"item": item_ids, "item_cluster": [str(lbl) for lbl in item_labels]}
     )
 
     # Merge cluster assignments into original df
@@ -417,19 +476,26 @@ def cluster_data(
         df["onpromotion"] = df["onpromotion"].astype(bool)
 
     if store_fn is not None:
-        logger.info(f"Saving store_fn to {store_fn}")
+        path = Path(store_fn)
+        if path.is_dir() or str(path) == ".":
+            path = path / "store_clusters.csv"
+        logger.info(f"Saving store_fn to {path}")
         df[["date", "store", "store_cluster"]].drop_duplicates().to_csv(
-            store_fn, index=False
+            path, index=False
         )
 
     if item_fn is not None:
-        logger.info(f"Saving item_fn to {item_fn}")
-        df[["date", "item", "item_cluster"]].drop_duplicates().to_csv(
-            item_fn, index=False
-        )
+        path = Path(item_fn)
+        if path.is_dir() or str(path) == ".":
+            path = path / "item_clusters.csv"
+        logger.info(f"Saving item_fn to {path}")
+        df[["date", "item", "item_cluster"]].drop_duplicates().to_csv(path, index=False)
 
     if output_fn is not None:
-        logger.info(f"Saving df to {output_fn}")
-        df.to_parquet(output_fn)
+        path = Path(output_fn)
+        if path.is_dir() or str(path) == ".":
+            path = path / "clustered_data.parquet"
+        logger.info(f"Saving df to {path}")
+        df.to_parquet(path)
 
-    return df
+    return df, mav_df
