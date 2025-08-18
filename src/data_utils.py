@@ -1573,94 +1573,57 @@ def add_mav_column(
     return df
 
 
-# def mav_by_cluster(
-#     df: pd.DataFrame,  # contains store, item, store_cluster, item_cluster
-#     matrix: pd.DataFrame,  # wide matrix: store × item
-#     *,
-#     col_mav_name: str = "store_item_mav",
-#     is_log1p: bool = False,
-#     include_zeros: bool = True,
-# ):
-#     """
-#     Compute MAVs at two levels:
-#       1. Per (store, item)
-#       2. Aggregated per (store_cluster, item_cluster)
-#     """
-
-#     # Convert matrix (store × item) into long form
-#     long_df = matrix.stack().rename("value").reset_index()
-#     long_df.columns = ["store", "item", "value"]
-
-#     # Attach cluster labels
-#     long_df = long_df.merge(
-#         df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
-#         on=["store", "item"],
-#         how="left",
-#     )
-#     long_df = long_df.dropna(subset=["store_cluster", "item_cluster"])
-
-#     # --- 1) MAV per (store, item)
-#     per_store_item = (
-#         long_df.groupby(["store", "item"])
-#         .apply(
-#             lambda g: mav(g["value"], is_log1p=is_log1p, include_zeros=include_zeros)
-#         )
-#         .reset_index(name=col_mav_name)
-#     )
-#     per_store_item = per_store_item.merge(
-#         long_df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
-#         on=["store", "item"],
-#         how="left",
-#     )
-
-#     # --- 2) Aggregate per (store_cluster, item_cluster)
-#     per_cluster = (
-#         per_store_item.groupby(["store_cluster", "item_cluster"])[col_mav_name]
-#         .agg(["mean", "var", "count"])
-#         .reset_index()
-#         .rename(
-#             columns={
-#                 "mean": f"{col_mav_name}_mean",
-#                 "var": f"{col_mav_name}_within_var",
-#                 "count": "n_obs",
-#             }
-#         )
-#     )
-
-#     return per_store_item, per_cluster
-
-
 def mav_by_cluster(
-    df: pd.DataFrame,
-    matrix: pd.DataFrame,
+    df: pd.DataFrame,  # contains store, item, store_cluster, item_cluster
+    matrix: pd.DataFrame,  # wide matrix: store × item
     *,
-    col_mav_name: str = "store_cluster_item_cluster_mav",
+    col_mav_name: str = "store_item_mav",
+    col_cluster_mav_name: str = "store_item_cluster_mav",
     is_log1p: bool = False,
     include_zeros: bool = True,
-) -> pd.DataFrame:
+):
+    """
+    Compute MAVs at two levels:
+      1. Per (store, item)
+      2. Aggregated per (store_cluster, item_cluster)
+    """
+
     # Convert matrix (store × item) into long form
     long_df = matrix.stack().rename("value").reset_index()
     long_df.columns = ["store", "item", "value"]
 
-    # Attach cluster labels from df (avoid duplicate entries)
-    store_df = df[["store", "store_cluster"]].drop_duplicates("store")
-    item_df = df[["item", "item_cluster"]].drop_duplicates("item")
-
-    long_df = long_df.merge(store_df, on="store", how="left")
-    long_df = long_df.merge(item_df, on="item", how="left")
-
-    # Drop entries with missing cluster labels
+    # Attach cluster labels
+    long_df = long_df.merge(
+        df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
+        on=["store", "item"],
+        how="left",
+    )
     long_df = long_df.dropna(subset=["store_cluster", "item_cluster"])
 
-    # Cluster-level MAV
-    cluster_mav = (
-        long_df.groupby(["store_cluster", "item_cluster"])["value"]
-        .apply(mav, is_log1p=is_log1p, include_zeros=include_zeros)
+    # --- 1) MAV per (store, item)
+    per_store_item = (
+        long_df.groupby(["store", "item"], group_keys=False)["value"]
+        .apply(lambda g: mav(g, is_log1p=is_log1p, include_zeros=include_zeros))
         .reset_index(name=col_mav_name)
     )
+    per_store_item = per_store_item.merge(
+        long_df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
+        on=["store", "item"],
+        how="left",
+    )
 
-    # Attach MAV back to each (store, item)
-    out = long_df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates()
-    out = out.merge(cluster_mav, on=["store_cluster", "item_cluster"], how="left")
+    # --- 2) Aggregate per (store_cluster, item_cluster)
+    per_cluster = (
+        per_store_item.groupby(["store_cluster", "item_cluster"])[col_mav_name]
+        .agg(["mean", "var", "count"])
+        .reset_index()
+        .rename(
+            columns={
+                "mean": f"{col_cluster_mav_name}_mean",
+                "var": f"{col_cluster_mav_name}_within_var",
+                "count": "n_obs",
+            }
+        )
+    )
 
-    return out
+    return per_store_item, per_cluster
