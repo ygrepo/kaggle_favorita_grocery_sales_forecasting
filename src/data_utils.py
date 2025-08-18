@@ -1573,11 +1573,68 @@ def add_mav_column(
     return df
 
 
+# def mav_by_cluster(
+#     df: pd.DataFrame,  # contains store, item, store_cluster, item_cluster
+#     matrix: pd.DataFrame,  # wide matrix: store × item
+#     *,
+#     col_mav_name: str = "store_item_mav",
+#     is_log1p: bool = False,
+#     include_zeros: bool = True,
+# ):
+#     """
+#     Compute MAVs at two levels:
+#       1. Per (store, item)
+#       2. Aggregated per (store_cluster, item_cluster)
+#     """
+
+#     # Convert matrix (store × item) into long form
+#     long_df = matrix.stack().rename("value").reset_index()
+#     long_df.columns = ["store", "item", "value"]
+
+#     # Attach cluster labels
+#     long_df = long_df.merge(
+#         df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
+#         on=["store", "item"],
+#         how="left",
+#     )
+#     long_df = long_df.dropna(subset=["store_cluster", "item_cluster"])
+
+#     # --- 1) MAV per (store, item)
+#     per_store_item = (
+#         long_df.groupby(["store", "item"])
+#         .apply(
+#             lambda g: mav(g["value"], is_log1p=is_log1p, include_zeros=include_zeros)
+#         )
+#         .reset_index(name=col_mav_name)
+#     )
+#     per_store_item = per_store_item.merge(
+#         long_df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
+#         on=["store", "item"],
+#         how="left",
+#     )
+
+#     # --- 2) Aggregate per (store_cluster, item_cluster)
+#     per_cluster = (
+#         per_store_item.groupby(["store_cluster", "item_cluster"])[col_mav_name]
+#         .agg(["mean", "var", "count"])
+#         .reset_index()
+#         .rename(
+#             columns={
+#                 "mean": f"{col_mav_name}_mean",
+#                 "var": f"{col_mav_name}_within_var",
+#                 "count": "n_obs",
+#             }
+#         )
+#     )
+
+#     return per_store_item, per_cluster
+
+
 def mav_by_cluster(
     df: pd.DataFrame,
     matrix: pd.DataFrame,
     *,
-    col_mav_name: str = "store_item_mav",
+    col_mav_name: str = "store_cluster_item_cluster_mav",
     is_log1p: bool = False,
     include_zeros: bool = True,
 ) -> pd.DataFrame:
@@ -1585,34 +1642,25 @@ def mav_by_cluster(
     long_df = matrix.stack().rename("value").reset_index()
     long_df.columns = ["store", "item", "value"]
 
-    # Map stores/items to their cluster labels
-    store_cluster_map = dict(zip(df["store"], df["store_cluster"].astype(str)))
-    item_cluster_map = dict(zip(df["item"], df["item_cluster"].astype(str)))
+    # Attach cluster labels from df (avoid duplicate entries)
+    store_df = df[["store", "store_cluster"]].drop_duplicates("store")
+    item_df = df[["item", "item_cluster"]].drop_duplicates("item")
 
-    long_df["store_cluster"] = long_df["store"].map(store_cluster_map)
-    long_df["item_cluster"] = long_df["item"].map(item_cluster_map)
+    long_df = long_df.merge(store_df, on="store", how="left")
+    long_df = long_df.merge(item_df, on="item", how="left")
 
     # Drop entries with missing cluster labels
     long_df = long_df.dropna(subset=["store_cluster", "item_cluster"])
 
-    # Group by cluster pair and compute MAV
-    out = (
+    # Cluster-level MAV
+    cluster_mav = (
         long_df.groupby(["store_cluster", "item_cluster"])["value"]
         .apply(mav, is_log1p=is_log1p, include_zeros=include_zeros)
         .reset_index(name=col_mav_name)
     )
 
-    return out
+    # Attach MAV back to each (store, item)
+    out = long_df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates()
+    out = out.merge(cluster_mav, on=["store_cluster", "item_cluster"], how="left")
 
-def flatten_results(df: pd.DataFrame) -> pd.DataFrame:
-    flat_rows = []
-    for _, row in df.iterrows():
-        mav_df = row.get("mav_df")
-        if mav_df is None or mav_df.empty:
-            continue
-        mav_df = mav_df.copy()
-        mav_df["n_row"] = row["n_row"]
-        mav_df["n_col"] = row["n_col"]
-        mav_df["Model"] = row["Model"]
-        flat_rows.append(mav_df)
-    return pd.concat(flat_rows, ignore_index=True)
+    return out

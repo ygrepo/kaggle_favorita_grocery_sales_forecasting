@@ -182,6 +182,213 @@ def compute_spectral_clustering_cv_scores(
     return pd.DataFrame(results)
 
 
+# def compute_biclustering_scores(
+#     data,
+#     raw_data,
+#     *,
+#     model_class,
+#     row_range=range(2, 6),
+#     col_range=range(2, 6),
+#     col_mav_name: str = "store_cluster_item_cluster_mav",
+#     true_row_labels=None,
+#     model_kwargs=None,
+#     return_models=False,
+# ):
+#     """
+#     Evaluate clustering performance using both row and column cluster settings.
+#     Optionally returns model and cluster assignments for plotting.
+#     """
+
+#     if model_kwargs is None:
+#         model_kwargs = {}
+#     model_kwargs = dict(model_kwargs)
+#     model_kwargs.setdefault("random_state", 42)
+
+#     X = np.asarray(data)
+#     n_rows, n_cols = X.shape
+#     results = []
+#     all_mav = pd.DataFrame()
+
+#     for n_row in row_range:
+#         if n_row > n_rows:
+#             continue
+#         for n_col in col_range:
+#             if n_col is not None and n_col > n_cols:
+#                 continue
+
+#             logger.info(f"Evaluating n_row={n_row}, n_col={n_col}")
+#             mav_df = pd.DataFrame()  # <--- default fallback
+
+#             try:
+#                 # Instantiate model
+#                 if model_class.__name__ == "SpectralBiclustering":
+#                     model = model_class(n_clusters=(n_row, n_col), **model_kwargs)
+#                 elif model_class.__name__ == "SpectralCoclustering":
+#                     model = model_class(n_clusters=n_row, **model_kwargs)
+#                     n_col = np.nan
+#                 else:
+#                     model = model_class(n_clusters=n_row, **model_kwargs)
+#                     n_col = np.nan
+
+#                 model.fit(X)
+
+#                 # Get row/col labels
+#                 row_labels = (
+#                     model.row_labels_
+#                     if hasattr(model, "row_labels_")
+#                     else (
+#                         model.labels_
+#                         if hasattr(model, "labels_")
+#                         else np.argmax(model.rows_, axis=0)
+#                     )
+#                 )
+#                 col_labels = (
+#                     model.column_labels_
+#                     if hasattr(model, "column_labels_")
+#                     else (
+#                         np.argmax(model.columns_, axis=0)
+#                         if hasattr(model, "columns_")
+#                         else np.arange(n_cols)
+#                     )
+#                 )
+
+#                 # --- MAV computation ---
+#                 store_clusters = pd.DataFrame(
+#                     {"store": raw_data.index, "store_cluster": row_labels.astype(str)}
+#                 )
+#                 item_clusters = pd.DataFrame(
+#                     {"item": raw_data.columns, "item_cluster": col_labels.astype(str)}
+#                 )
+
+#                 df_assignments = pd.DataFrame(
+#                     {
+#                         "store": raw_data.index.repeat(len(raw_data.columns)),
+#                         "item": np.tile(raw_data.columns, len(raw_data.index)),
+#                     }
+#                 )
+#                 df_assignments = df_assignments.merge(
+#                     store_clusters, on="store", how="left"
+#                 )
+#                 df_assignments = df_assignments.merge(
+#                     item_clusters, on="item", how="left"
+#                 )
+
+#                 # 1) MAV per (store, item)
+#                 mav_df = mav_by_cluster(
+#                     df_assignments, raw_data, col_mav_name=col_mav_name
+#                 )
+#                 raw_data_long = raw_data.stack().reset_index()
+#                 raw_data_long.columns = ["store", "item", "mean_unit_sales"]
+#                 raw_data_long["store_item"] = (
+#                     raw_data_long["store"].astype(str)
+#                     + "_"
+#                     + raw_data_long["item"].astype(str)
+#                 )
+
+#                 mav_df = mav_df.merge(
+#                     raw_data_long,
+#                     on=["store", "item"],
+#                     how="left",
+#                 )
+#                 # Compute % variance explained
+#                 global_mean = X.mean(axis=0)
+#                 total_ss = np.sum((X - global_mean) ** 2)
+
+#                 recon_error = sum(
+#                     min(
+#                         np.linalg.norm(xi - X[row_labels == cid].mean(axis=0)) ** 2
+#                         for cid in range(n_row)
+#                         if np.any(row_labels == cid)
+#                     )
+#                     for xi in X
+#                 )
+#                 pve = 100 * (1 - recon_error / total_ss)
+
+#                 predicted_labels = np.array(
+#                     [
+#                         np.argmin(
+#                             np.array(
+#                                 [
+#                                     (
+#                                         np.linalg.norm(
+#                                             xi - X[row_labels == cid].mean(axis=0)
+#                                         )
+#                                         if np.any(row_labels == cid)
+#                                         else np.inf
+#                                     )
+#                                     for cid in range(n_row)
+#                                 ]
+#                             )
+#                         )
+#                         for xi in X
+#                     ]
+#                 )
+
+#                 ari = (
+#                     adjusted_rand_score(true_row_labels, predicted_labels)
+#                     if true_row_labels is not None
+#                     else np.nan
+#                 )
+#                 try:
+#                     sil = silhouette_score(X, predicted_labels)
+#                 except ValueError:
+#                     sil = np.nan
+
+#             except Exception as e:
+#                 logger.error(f"[FAIL] n_row={n_row}, n_col={n_col} → {e}")
+#                 pve, sil, ari, row_labels, col_labels, model = (
+#                     np.nan,
+#                     np.nan,
+#                     np.nan,
+#                     None,
+#                     None,
+#                     None,
+#                 )
+
+#             mav_df[f"Mean_{col_mav_name}"] = mav_df[col_mav_name].mean()
+#             mav_df[f"Std_{col_mav_name}"] = mav_df[col_mav_name].std()
+#             mav_df["n_row"] = n_row
+#             mav_df["n_col"] = n_col
+#             mav_df["Model"] = model_class.__name__
+#             mav_df["Explained Variance (%)"] = pve
+#             mav_df["Mean Silhouette"] = sil
+
+#             result = {
+#                 "n_row": n_row,
+#                 "n_col": n_col,
+#                 "Explained Variance (%)": pve,
+#                 "Mean Silhouette": sil,
+#                 "Mean ARI": ari,
+#                 "row_labels": row_labels,
+#                 "col_labels": col_labels,
+#             }
+#             if return_models:
+#                 result["model"] = model
+
+#             all_mav = pd.concat([all_mav, mav_df], ignore_index=True)
+#             MAV_COLUMNS = [
+#                 "Model",
+#                 "n_row",
+#                 "n_col",
+#                 "Explained Variance (%)",
+#                 "Mean Silhouette",
+#                 "store",
+#                 "item",
+#                 "mean_unit_sales",
+#                 "store_cluster",
+#                 "item_cluster",
+#                 col_mav_name,
+#                 f"Mean_{col_mav_name}",
+#                 f"Std_{col_mav_name}",
+#             ]
+
+#             all_mav = all_mav[MAV_COLUMNS]
+
+#             results.append(result)
+
+#     return pd.DataFrame(results), pd.DataFrame(all_mav)
+
+
 def compute_biclustering_scores(
     data,
     raw_data,
@@ -196,7 +403,11 @@ def compute_biclustering_scores(
 ):
     """
     Evaluate clustering performance using both row and column cluster settings.
-    Optionally returns model and cluster assignments for plotting.
+
+    Outputs:
+      - Detailed per (store, item) MAV DataFrame (with cluster-level MAVs attached).
+      - Summary DataFrame with clustering quality metrics:
+        Explained Variance, Silhouette, ARI, Within/Between MAV variance, ratio.
     """
 
     if model_kwargs is None:
@@ -207,7 +418,7 @@ def compute_biclustering_scores(
     X = np.asarray(data)
     n_rows, n_cols = X.shape
     results = []
-    all_mav = []
+    all_mav = pd.DataFrame()
 
     for n_row in row_range:
         if n_row > n_rows:
@@ -217,10 +428,10 @@ def compute_biclustering_scores(
                 continue
 
             logger.info(f"Evaluating n_row={n_row}, n_col={n_col}")
-            mav_df = pd.DataFrame()  # <--- default fallback
+            mav_df = pd.DataFrame()  # default fallback
 
             try:
-                # Instantiate model
+                # --- Instantiate model
                 if model_class.__name__ == "SpectralBiclustering":
                     model = model_class(n_clusters=(n_row, n_col), **model_kwargs)
                 elif model_class.__name__ == "SpectralCoclustering":
@@ -232,7 +443,7 @@ def compute_biclustering_scores(
 
                 model.fit(X)
 
-                # Get row/col labels
+                # --- Get row/col labels
                 row_labels = (
                     model.row_labels_
                     if hasattr(model, "row_labels_")
@@ -252,7 +463,7 @@ def compute_biclustering_scores(
                     )
                 )
 
-                # --- MAV computation ---
+                # --- Cluster assignments
                 store_clusters = pd.DataFrame(
                     {"store": raw_data.index, "store_cluster": row_labels.astype(str)}
                 )
@@ -273,34 +484,64 @@ def compute_biclustering_scores(
                     item_clusters, on="item", how="left"
                 )
 
-                # 1) MAV per (store, item)
+                # --- 1) MAV per (store, item)
                 mav_df = mav_by_cluster(
                     df_assignments, raw_data, col_mav_name=col_mav_name
                 )
 
-                # 2) Cluster-level MAV mean/std
-                mav_cluster_stats = (
+                # Merge with raw_data values (optional)
+                raw_data_long = raw_data.stack().reset_index()
+                raw_data_long.columns = ["store", "item", "mean_unit_sales"]
+                raw_data_long["store_item"] = (
+                    raw_data_long["store"].astype(str)
+                    + "_"
+                    + raw_data_long["item"].astype(str)
+                )
+                mav_df = mav_df.merge(raw_data_long, on=["store", "item"], how="left")
+
+                # --- 2) Cluster-level MAV stats
+                cluster_stats = (
                     mav_df.groupby(["store_cluster", "item_cluster"])[col_mav_name]
-                    .agg(["mean", "std"])
+                    .agg(["mean", "var", "count"])
                     .reset_index()
                     .rename(
                         columns={
                             "mean": f"{col_mav_name}_mean",
-                            "std": f"{col_mav_name}_std",
+                            "var": f"{col_mav_name}_within_var",
+                            "count": "n_obs",
                         }
                     )
                 )
 
-                # 3) Merge cluster-level stats back into mav_df
-                mav_df = mav_df.merge(
-                    mav_cluster_stats, on=["store_cluster", "item_cluster"], how="left"
+                # --- 3) Compute within / between variance
+                global_mean = mav_df[col_mav_name].mean()
+
+                # Between-cluster variance (weighted)
+                between_var_num = (
+                    (
+                        (cluster_stats[f"{col_mav_name}_mean"] - global_mean) ** 2
+                        * cluster_stats["n_obs"]
+                    )
+                ).sum()
+                between_var = between_var_num / (mav_df.shape[0] - 1)
+
+                # Within-cluster variance (weighted)
+                within_var_num = (
+                    cluster_stats[f"{col_mav_name}_within_var"]
+                    * (cluster_stats["n_obs"] - 1)
+                ).sum()
+                denom = mav_df.shape[0] - len(cluster_stats)
+                within_var = within_var_num / denom if denom > 0 else np.nan
+
+                ratio_between_within = (
+                    between_var / within_var
+                    if within_var and within_var > 0
+                    else np.nan
                 )
 
-                all_mav.append(mav_df)
-
-                # Compute % variance explained
-                global_mean = X.mean(axis=0)
-                total_ss = np.sum((X - global_mean) ** 2)
+                # --- 4) Compute generic clustering metrics
+                global_mean_vec = X.mean(axis=0)
+                total_ss = np.sum((X - global_mean_vec) ** 2)
 
                 recon_error = sum(
                     min(
@@ -352,29 +593,59 @@ def compute_biclustering_scores(
                     None,
                     None,
                 )
+                within_var, between_var, ratio_between_within = np.nan, np.nan, np.nan
 
-            mav_df = pd.concat(all_mav, ignore_index=True)
+            # --- Attach metadata to mav_df
+            mav_df[f"Mean_{col_mav_name}"] = mav_df[col_mav_name].mean()
+            mav_df[f"Std_{col_mav_name}"] = mav_df[col_mav_name].std()
+            mav_df["Within_Cluster_Var"] = within_var
+            mav_df["Between_Cluster_Var"] = between_var
+            mav_df["Ratio_Between_Within"] = ratio_between_within
             mav_df["n_row"] = n_row
             mav_df["n_col"] = n_col
             mav_df["Model"] = model_class.__name__
             mav_df["Explained Variance (%)"] = pve
             mav_df["Mean Silhouette"] = sil
 
+            # --- Result summary
             result = {
                 "n_row": n_row,
                 "n_col": n_col,
                 "Explained Variance (%)": pve,
                 "Mean Silhouette": sil,
                 "Mean ARI": ari,
+                "within_var": within_var,
+                "between_var": between_var,
+                "ratio_between_within": ratio_between_within,
                 "row_labels": row_labels,
                 "col_labels": col_labels,
             }
             if return_models:
                 result["model"] = model
 
+            all_mav = pd.concat([all_mav, mav_df], ignore_index=True)
+            MAV_COLUMNS = [
+                "Model",
+                "n_row",
+                "n_col",
+                "Explained Variance (%)",
+                "Mean Silhouette",
+                "store",
+                "item",
+                "mean_unit_sales",
+                "store_cluster",
+                "item_cluster",
+                col_mav_name,
+                f"Mean_{col_mav_name}",
+                f"Std_{col_mav_name}",
+                "Within_Cluster_Var",
+                "Between_Cluster_Var",
+                "Ratio_Between_Within",
+            ]
+            all_mav = all_mav[MAV_COLUMNS]
             results.append(result)
 
-    return pd.DataFrame(results), mav_df
+    return pd.DataFrame(results), pd.DataFrame(all_mav)
 
 
 def cluster_data(
@@ -383,6 +654,7 @@ def cluster_data(
     freq: str = "W",
     store_item_matrix_fn: Optional[Path] = None,
     cluster_output_fn: Optional[Path] = None,
+    mav_df_fn: Optional[Path] = None,
     store_fn: Optional[Path] = None,
     item_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
@@ -405,7 +677,12 @@ def cluster_data(
 
     # Build normalized + raw matrices
     norm_data = normalize_data(df, freq=freq).fillna(0)
-    raw_data = median_mean_transform(df, freq=freq)
+    raw_data = median_mean_transform(
+        df,
+        freq=freq,
+        median_transform=False,
+        mean_transform=True,
+    ).fillna(0)
 
     logger.info(f"Number of items: {df['item'].nunique()}")
     logger.info(f"Number of stores: {df['store'].nunique()}")
@@ -436,6 +713,13 @@ def cluster_data(
         logger.info(f"Saving cluster_df to {path}")
         cluster_df.to_csv(path, index=False)
 
+    if mav_df_fn is not None:
+        path = Path(mav_df_fn)
+        if path.is_dir() or str(path) == ".":
+            path = path / "mav_df.csv"
+        logger.info(f"Saving mav_df to {path}")
+        mav_df.to_csv(path, index=False)
+
     # Select best result
     if cluster_df["Explained Variance (%)"].notna().any():
         best_idx = cluster_df["Explained Variance (%)"].idxmax()
@@ -448,6 +732,12 @@ def cluster_data(
 
     logger.info(f"Best clustering result: {best_row}")
     best_model = best_row["model"]
+
+    # Optimal row/col numbers
+    n_row = int(best_row["n_row"])
+    n_col = int(best_row["n_col"]) if best_row["n_col"] is not None else n_row
+    logger.info(f"Optimal n_row: {n_row}, n_col: {n_col}")
+    mav_df = mav_df.query("n_row == @n_row and n_col == @n_col")
 
     # Extract row/column labels from model
     store_labels = best_model.row_labels_
@@ -498,4 +788,4 @@ def cluster_data(
         logger.info(f"Saving df to {path}")
         df.to_parquet(path)
 
-    return df, mav_df
+    return df
