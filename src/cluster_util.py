@@ -561,7 +561,9 @@ def cluster_data(
     *,
     freq: str = "W",
     store_item_matrix_fn: Optional[Path] = None,
-    mav_df_fn: Optional[Path] = None,
+    mav_df_fn: Optional[Path] = ".",
+    only_best_model: bool = True,
+    only_top_n_clusters: int = None,
     store_fn: Optional[Path] = None,
     item_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
@@ -614,15 +616,10 @@ def cluster_data(
         model_kwargs=model_kwargs,
     )
 
-    if mav_df_fn is not None:
-        path = Path(mav_df_fn)
-        if path.is_dir() or str(path) == ".":
-            path = path / "mav_df.csv"
-        logger.info(f"Saving mav_df to {path}")
-        mav_df.to_csv(path, index=False)
-
     # Select best result
     _, best_row = pick_best_biclustering_setting(mav_df)
+
+    save_mav(mav_df_fn, only_best_model, only_top_n_clusters, mav_df, best_row)
 
     logger.info(f"Best clustering result: {best_row}")
     best_model = best_row["Model"]
@@ -684,3 +681,41 @@ def cluster_data(
         df.to_parquet(path)
 
     return df
+
+
+def save_mav(mav_df_fn, only_best_model, only_top_n_clusters, mav_df, best_row):
+    if mav_df_fn is None:
+        return
+
+    path = Path(mav_df_fn)
+    if only_best_model and best_row is not None:
+        logger.info("Saving only best model's MAV scores")
+        # Get n_row and n_col from best_row and filter mav_df
+        best_n_row = best_row["n_row"]
+        best_n_col = best_row["n_col"]
+        df = mav_df[(mav_df["n_row"] == best_n_row) & (mav_df["n_col"] == best_n_col)]
+        if path.is_dir() or str(path) == ".":
+            fn = path / "best_model_mav_df.csv"
+            logger.info(f"Saving best model mav_df to {fn}")
+            df.to_csv(fn, index=False)
+
+    if only_top_n_clusters is not None:
+        # Get the best Ratio_Between_Within for each (n_row, n_col) combination
+        best_per_cluster = (
+            mav_df.groupby(["n_row", "n_col"])["Ratio_Between_Within"]
+            .max()
+            .reset_index()
+            .sort_values("Ratio_Between_Within", ascending=False)
+            .head(only_top_n_clusters)[["n_row", "n_col"]]
+        )
+        mav_df = mav_df.merge(best_per_cluster, on=["n_row", "n_col"], how="inner")
+        if path.is_dir() or str(path) == ".":
+            fn = path / f"top_{only_top_n_clusters}_model_mav_df.csv"
+            logger.info(f"Saving top {only_top_n_clusters} mav_df to {fn}")
+            mav_df.to_csv(fn, index=False)
+        return
+
+    if path.is_dir() or str(path) == ".":
+        path = path / "mav_df.csv"
+    logger.info(f"Saving mav_df to {path}")
+    mav_df.to_csv(path, index=False)

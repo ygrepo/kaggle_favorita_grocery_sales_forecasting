@@ -17,7 +17,7 @@ sys.path.insert(0, str(project_root))
 
 from src.data_utils import load_raw_data
 from src.cluster_util import cluster_data
-from src.utils import setup_logging
+from src.utils import setup_logging, str2bool
 
 
 def parse_range(range_str):
@@ -83,6 +83,18 @@ def parse_args():
         help="Path to MAV output file (relative to project root)",
     )
     parser.add_argument(
+        "--only_best_model",
+        type=bool,
+        default=True,
+        help="Whether to only save the best model's MAV scores",
+    )
+    parser.add_argument(
+        "--only_top_n_clusters",
+        type=int,
+        default=None,
+        help="Whether to only save the top n clusters' MAV scores",
+    )
+    parser.add_argument(
         "--log_dir",
         type=str,
         default="../output/logs",
@@ -127,6 +139,10 @@ def main():
         logger.info(f"  Store fn: {store_fn}")
         logger.info(f"  Store item matrix fn: {store_item_matrix_fn}")
         logger.info(f"  MAV output fn: {mav_output_fn}")
+        logger.info(f"  Row range: {row_range}")
+        logger.info(f"  Col range: {col_range}")
+        logger.info(f"  Only best model: {args.only_best_model}")
+        logger.info(f"  Only top n clusters: {args.only_top_n_clusters}")
         logger.info(f"  Output fn: {output_fn}")
 
         # Load and preprocess data
@@ -140,6 +156,9 @@ def main():
             output_fn=output_fn,
             row_range=row_range,
             col_range=col_range,
+            only_best_model=str2bool(args.only_best_model),
+            only_top_n_clusters=args.only_top_n_clusters,
+            log_level=args.log_level,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:

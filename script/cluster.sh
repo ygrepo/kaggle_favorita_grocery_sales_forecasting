@@ -18,7 +18,10 @@ STORE_ITEM_MATRIX_FN=""
 ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_item_cluster.csv"
 STORE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_store_cluster.csv"
 
-MAV_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_mav.csv"
+MAV_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_mav"
+mkdir -p "$MAV_OUTPUT_FN"
+ONLY_BEST_MODEL="True"
+ONLY_TOP_N_CLUSTERS="2"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 
 # ROW_RANGE="5:10"
@@ -36,6 +39,8 @@ while [[ $# -gt 0 ]]; do
     --data_dir) DATA_DIR="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
+    --only_best_model) ONLY_BEST_MODEL="$2"; shift 2 ;;
+    --only_top_n_clusters) ONLY_TOP_N_CLUSTERS="$2"; shift 2 ;;
     --store_item_matrix_fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
     --mav_output_fn) MAV_OUTPUT_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
@@ -62,6 +67,8 @@ echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
 echo "Item fn: $ITEM_FN" | tee -a "$LOG_FILE"
 echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
 echo "MAV output fn: $MAV_OUTPUT_FN" | tee -a "$LOG_FILE"
+echo "Only best model: $ONLY_BEST_MODEL" | tee -a "$LOG_FILE"
+echo "Only top n clusters: $ONLY_TOP_N_CLUSTERS" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Row range: $ROW_RANGE" | tee -a "$LOG_FILE"
@@ -78,6 +85,8 @@ python "${SCRIPT_DIR}/cluster.py" \
   --store_fn "$STORE_FN" \
   --row_range "$ROW_RANGE" \
   --col_range "$COL_RANGE" \
+  --only_best_model "$ONLY_BEST_MODEL" \
+  --only_top_n_clusters "$ONLY_TOP_N_CLUSTERS" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
