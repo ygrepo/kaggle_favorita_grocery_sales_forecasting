@@ -51,17 +51,13 @@ from src.data_utils import (
 
 # ds_config.py (as a Python dict you can import)
 ds_config = {
-    "train_micro_batch_size_per_gpu": 16,  # per-GPU batch
-    "gradient_accumulation_steps": 1,
-    "zero_optimization": {  # ZeRO stage 2
+    "train_micro_batch_size_per_gpu": 16,
+    "zero_optimization": {
         "stage": 2,
         "overlap_comm": True,
         "contiguous_gradients": True,
     },
-    "bf16": {"enabled": True},  # or "fp16": {"enabled": True}
-    "gradient_clipping": 1.0,
-    "steps_per_print": 0,  # let Lightning handle logging
-    "wall_clock_breakdown": False,
+    "bf16": {"enabled": True},
 }
 
 # Set up logger
@@ -641,7 +637,9 @@ def train(
     csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
     trainer = pl.Trainer(
         accelerator=get_device(),
+        devices=2,
         strategy=strategy,
+        accumulate_grad_batches=2,
         precision="bf16-mixed",
         deterministic=True,
         max_epochs=epochs,
