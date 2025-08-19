@@ -92,6 +92,7 @@ echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 nvidia-smi | tee -a "$LOG_FILE"
 
+export CUDA_VISIBLE_DEVICES=0,1
 
 python "${SCRIPT_DIR}/training.py" \
   --dataloader_dir "$DATALOADER_DIR" \
