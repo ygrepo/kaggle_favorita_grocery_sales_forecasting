@@ -50,15 +50,15 @@ from src.data_utils import (
 )
 
 # ds_config.py (as a Python dict you can import)
-ds_config = {
-    "train_micro_batch_size_per_gpu": 16,
-    "zero_optimization": {
-        "stage": 2,
-        "overlap_comm": True,
-        "contiguous_gradients": True,
-    },
-    "bf16": {"enabled": True},
-}
+# ds_config = {
+#     "train_micro_batch_size_per_gpu": 16,
+#     "zero_optimization": {
+#         "stage": 2,
+#         "overlap_comm": True,
+#         "contiguous_gradients": True,
+#     },
+#     "bf16": {"enabled": True},
+# }
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -519,8 +519,6 @@ def train(
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     pl.seed_everything(seed)
 
-    strategy = DeepSpeedStrategy(config=ds_config)  # or DeepSpeedStrategy(stage=2)
-
     checkpoints_dir = model_dir / "checkpoints"
     for d in [checkpoints_dir, model_logger_dir]:
         if d is not None:
@@ -635,6 +633,7 @@ def train(
     # Initialize CSV logger
     csv_logger_name = f"{model_name}_{store_cluster}_{item_cluster}"
     csv_logger = CSVLogger(name=csv_logger_name, save_dir=model_logger_dir)
+    strategy = DeepSpeedStrategy(stage=2)  # ZeRO-2, no external config
     trainer = pl.Trainer(
         accelerator=get_device(),
         devices=2,
