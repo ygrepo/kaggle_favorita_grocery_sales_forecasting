@@ -77,10 +77,10 @@ def parse_args():
         help="Range of number of columns to cluster (format: START:END)",
     )
     parser.add_argument(
-        "--cluster_output_fn",
+        "--mav_output_fn",
         type=str,
         default="",
-        help="Path to cluster output file (relative to project root)",
+        help="Path to MAV output file (relative to project root)",
     )
     parser.add_argument(
         "--log_dir",
@@ -110,7 +110,7 @@ def main():
         store_item_matrix_fn = Path(args.store_item_matrix_fn).resolve()
     else:
         store_item_matrix_fn = None
-    cluster_output_fn = Path(args.cluster_output_fn).resolve()
+    mav_output_fn = Path(args.mav_output_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
     row_range = args.row_range
     col_range = args.col_range
@@ -126,7 +126,7 @@ def main():
         logger.info(f"  Item fn: {item_fn}")
         logger.info(f"  Store fn: {store_fn}")
         logger.info(f"  Store item matrix fn: {store_item_matrix_fn}")
-        logger.info(f"  Cluster output fn: {cluster_output_fn}")
+        logger.info(f"  MAV output fn: {mav_output_fn}")
         logger.info(f"  Output fn: {output_fn}")
 
         # Load and preprocess data
@@ -134,7 +134,7 @@ def main():
         cluster_data(
             df,
             store_item_matrix_fn=store_item_matrix_fn,
-            cluster_output_fn=cluster_output_fn,
+            mav_df_fn=mav_output_fn,
             item_fn=item_fn,
             store_fn=store_fn,
             output_fn=output_fn,
