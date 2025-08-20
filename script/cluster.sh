@@ -25,7 +25,7 @@ ONLY_TOP_N_CLUSTERS="2"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
 
 ROW_RANGE="5:10"
-COL_RANGE="5:20"
+COL_RANGE="5:10"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
