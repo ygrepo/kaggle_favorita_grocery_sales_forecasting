@@ -96,6 +96,18 @@ def parse_args():
         help="Whether to only save the top n clusters' MAV scores",
     )
     parser.add_argument(
+        "--min_cluster_size",
+        type=int,
+        default=2,
+        help="Minimum cluster size",
+    )
+    parser.add_argument(
+        "--skip_invalid",
+        type=bool,
+        default=True,
+        help="Whether to skip invalid clusters",
+    )
+    parser.add_argument(
         "--log_dir",
         type=str,
         default="../output/logs",
@@ -144,13 +156,14 @@ def main():
         logger.info(f"  Col range: {col_range}")
         logger.info(f"  Only best model: {args.only_best_model}")
         logger.info(f"  Only top n clusters: {args.only_top_n_clusters}")
+        logger.info(f"  Min cluster size: {args.min_cluster_size}")
+        logger.info(f"  Skip invalid: {args.skip_invalid}")
         logger.info(f"  Output fn: {output_fn}")
 
         # Load and preprocess data
         df = load_raw_data(data_fn)
         cluster_data(
             df,
-            model_class=SpectralCoclustering,
             store_item_matrix_fn=store_item_matrix_fn,
             mav_df_fn=mav_output_fn,
             item_fn=item_fn,
@@ -160,6 +173,8 @@ def main():
             col_range=col_range,
             only_best_model=str2bool(args.only_best_model),
             only_top_n_clusters=args.only_top_n_clusters,
+            min_cluster_size=args.min_cluster_size,
+            skip_invalid=str2bool(args.skip_invalid),
             log_level=args.log_level,
         )
         logger.info("Data clustering completed successfully")

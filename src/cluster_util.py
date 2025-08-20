@@ -636,6 +636,8 @@ def cluster_data(
     model_class=SpectralBiclustering,
     row_range: range = range(2, 5),
     col_range: range = range(2, 5),
+    min_cluster_size: int = 2,
+    skip_invalid: bool = True,
     model_kwargs=None,
     log_level: str = "INFO",
 ) -> pd.DataFrame:
@@ -672,6 +674,8 @@ def cluster_data(
         row_range=row_range,
         col_range=col_range,
         true_row_labels=None,
+        min_cluster_size=min_cluster_size,
+        skip_invalid=skip_invalid,
         model_kwargs=model_kwargs,
     )
 

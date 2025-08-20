@@ -28,6 +28,8 @@ ROW_RANGE="5:10"
 COL_RANGE="5:10"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
+MIN_CLUSTER_SIZE="10"
+SKIP_INVALID="True"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
@@ -48,6 +50,8 @@ while [[ $# -gt 0 ]]; do
     --store_fn) STORE_FN="$2"; shift 2 ;;
     --row_range) ROW_RANGE="$2"; shift 2 ;;
     --col_range) COL_RANGE="$2"; shift 2 ;;
+    --min_cluster_size) MIN_CLUSTER_SIZE="$2"; shift 2 ;;
+    --skip_invalid) SKIP_INVALID="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_file) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -69,6 +73,8 @@ echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
 echo "MAV output fn: $MAV_OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Only best model: $ONLY_BEST_MODEL" | tee -a "$LOG_FILE"
 echo "Only top n clusters: $ONLY_TOP_N_CLUSTERS" | tee -a "$LOG_FILE"
+echo "Min cluster size: $MIN_CLUSTER_SIZE" | tee -a "$LOG_FILE"
+echo "Skip invalid: $SKIP_INVALID" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Row range: $ROW_RANGE" | tee -a "$LOG_FILE"
@@ -87,6 +93,8 @@ python "${SCRIPT_DIR}/cluster.py" \
   --col_range "$COL_RANGE" \
   --only_best_model "$ONLY_BEST_MODEL" \
   --only_top_n_clusters "$ONLY_TOP_N_CLUSTERS" \
+  --min_cluster_size "$MIN_CLUSTER_SIZE" \
+  --skip_invalid "$SKIP_INVALID" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
