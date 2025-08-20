@@ -364,8 +364,12 @@ def compute_biclustering_scores(
                     col_labels, n_col, min_cluster_size, log_level=log_level
                 )
                 if (bad_row.size > 0) or (bad_col.size > 0):
-                    log_cluster_sizes(row_labels, kind="row", k_expected=n_row, log_level=log_level)
-                    log_cluster_sizes(col_labels, kind="col", k_expected=n_col, log_level=log_level)
+                    log_cluster_sizes(
+                        row_labels, kind="row", k_expected=n_row, log_level=log_level
+                    )
+                    log_cluster_sizes(
+                        col_labels, kind="col", k_expected=n_col, log_level=log_level
+                    )
                     msg = (
                         f"[skip] n_row={n_row}, n_col={n_col}: "
                         f"rows<{min_cluster_size}={bad_row.tolist()} "
@@ -523,8 +527,7 @@ def compute_biclustering_scores(
 
     # Concatenate all settings
     out = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
-    # Order columns nicely if present
-    pref_order = [
+    expected_cols = [
         "Model",
         "n_row",
         "n_col",
@@ -540,8 +543,16 @@ def compute_biclustering_scores(
         "Between_Cluster_Var",
         "Ratio_Between_Within",
     ]
-    cols = [c for c in pref_order if c in out.columns] + [
-        c for c in out.columns if c not in pref_order
+    if out.empty:
+        logger.error(
+            "No valid biclustering results (all skipped by min_cluster_size?)."
+        )
+        # Return an empty frame with expected columns so downstream code doesn’t KeyError
+        logger.info(f"Returning empty frame with expected columns: {expected_cols}")
+        return pd.DataFrame(columns=[c for c in expected_cols])
+
+    cols = [c for c in expected_cols if c in out.columns] + [
+        c for c in out.columns if c not in expected_cols
     ]
     return out[cols]
 
