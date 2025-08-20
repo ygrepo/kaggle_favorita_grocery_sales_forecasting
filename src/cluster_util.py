@@ -238,17 +238,6 @@ def safe_silhouette(
 
 
 # --- Check cluster sizes (rows & columns) ---
-# def _small_clusters(labels, k, min_size, *, log_level="INFO"):
-#     """Return indices of clusters with fewer than `min_size` members."""
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-#     # counts for cluster ids 0..k-1 (fill 0 for missing)
-#     counts = (
-#         pd.Series(labels).value_counts().reindex(range(int(k)), fill_value=0).to_numpy()
-#     )
-#     return np.where(counts < min_size)[0]
-
-
-# --- Check cluster sizes (rows & columns) ---
 def _small_clusters(labels, k, min_size, *, log_level="INFO"):
     """Return indices of clusters with fewer than `min_size` members."""
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
@@ -263,6 +252,29 @@ def _small_clusters(labels, k, min_size, *, log_level="INFO"):
         pd.Series(labels).value_counts().reindex(range(k_eff), fill_value=0).to_numpy()
     )
     return np.where(counts < min_size)[0]
+
+
+def log_cluster_sizes(labels, kind="row", k_expected=None, log_level="INFO"):
+    """
+    Log cluster membership counts. If k_expected is given, also show empty/missing clusters.
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    labs, counts = np.unique(labels, return_counts=True)
+    present = dict(zip(labs.tolist(), counts.tolist()))
+
+    if k_expected is None:
+        logger.info(f"[{kind} clusters] present={len(labs)}")
+        for lab, cnt in present.items():
+            logger.info(f"  - Cluster {lab}: {cnt} members")
+        return
+
+    # With k_expected: include empty clusters 0..k_expected-1
+    logger.info(f"[{kind} clusters] expected={int(k_expected)}; present={len(labs)}")
+    for lab in range(int(k_expected)):
+        cnt = present.get(lab, 0)
+        lvl = logger.warning if cnt == 0 else logger.info
+        lvl(f"  - Cluster {lab}: {cnt} members")
 
 
 def compute_biclustering_scores(
@@ -352,6 +364,8 @@ def compute_biclustering_scores(
                     col_labels, n_col, min_cluster_size, log_level=log_level
                 )
                 if (bad_row.size > 0) or (bad_col.size > 0):
+                    log_cluster_sizes(row_labels, kind="row", k_expected=n_row, log_level=log_level)
+                    log_cluster_sizes(col_labels, kind="col", k_expected=n_col, log_level=log_level)
                     msg = (
                         f"[skip] n_row={n_row}, n_col={n_col}: "
                         f"rows<{min_cluster_size}={bad_row.tolist()} "

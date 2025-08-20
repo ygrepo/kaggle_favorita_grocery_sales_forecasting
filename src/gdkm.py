@@ -11,120 +11,372 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
     def __init__(
         self,
         n_row_clusters=3,
-        n_col_clusters_list=None,
+        n_col_clusters=None,  # NEW: number of global item clusters (when tie_columns=True)
+        n_col_clusters_list=None,  # keep for per-row-cluster columns (tie_columns=False)
+        tie_columns: bool = True,  # NEW: global V if True; your original V_list if False
         max_iter=100,
         tol=1e-4,
         random_state=None,
         norm="l2",
+        ensure_min_size: int = 1,  # NEW: optionally enforce min size per cluster
     ):
         self.n_row_clusters = n_row_clusters
+        self.n_col_clusters = n_col_clusters
         self.n_col_clusters_list = n_col_clusters_list
+        self.tie_columns = tie_columns
         self.max_iter = max_iter
         self.tol = tol
         self.random_state = random_state
         self.norm = norm
+        self.ensure_min_size = ensure_min_size
 
     def fit(self, X):
-        self.U_, self.V_list_, self.C_blocks_, self.loss_ = generalized_double_kmeans(
-            X,
-            P=self.n_row_clusters,
-            Q_list=self.n_col_clusters_list,
-            max_iter=self.max_iter,
-            tol=self.tol,
-            random_state=self.random_state,
-            norm=self.norm,
-        )
+        X = np.asarray(X)
+        I, J = X.shape
+        rng = np.random.default_rng(self.random_state)
 
-        self.row_labels_ = np.argmax(self.U_, axis=1)
+        if self.tie_columns:
+            if self.n_col_clusters is None:
+                raise ValueError("Set n_col_clusters when tie_columns=True")
+            # ===== TIED COLUMNS PATH =====
+            U, V = _init_UV_tied(I, J, self.n_row_clusters, self.n_col_clusters, rng)
+            prev_obj = np.inf
+            for it in range(self.max_iter):
+                C = _update_C_tied(X, U, V)  # C: (P, Q)
+                U = _update_U_tied(X, C, V, self.norm)  # U: (I, P) one-hot
+                V = _update_V_tied(X, U, C, self.norm)  # V: (J, Q) one-hot
+                _enforce_min_size(U, axis=0, min_k=self.ensure_min_size, rng=rng)
+                _enforce_min_size(V, axis=0, min_k=self.ensure_min_size, rng=rng)
+                obj = _loss_tied(X, U, C, V, self.norm)
+                if abs(prev_obj - obj) < self.tol:
+                    break
+                prev_obj = obj
 
-        # Ensure all Vp are 2D before concatenation
-        V_nonempty = [Vp for Vp in self.V_list_ if Vp.ndim == 2 and Vp.shape[1] > 0]
-        if len(V_nonempty) == 0:
-            raise ValueError("All column cluster blocks are empty or malformed.")
+            self.U_ = U
+            self.V_ = V
+            self.C_ = C
+            self.loss_ = prev_obj
+            self.row_labels_ = np.argmax(U, axis=1)
+            self.column_labels_ = np.argmax(V, axis=1)  # GLOBAL item labels (0..Q-1)
+            # For sklearn compatibility:
+            self.biclusters_ = self.get_biclusters()  # boolean indicators per (p,q)
+            return self
 
-        # V_concat = np.concatenate(V_nonempty, axis=1)
-        # self.column_labels_ = np.argmax(V_concat, axis=1)
+        else:
+            # ===== YOUR ORIGINAL PER-ROW-CLUSTER PATH =====
+            if self.n_col_clusters_list is None:
+                # default: same Q for each row cluster if n_col_clusters given
+                if self.n_col_clusters is None:
+                    raise ValueError("Provide n_col_clusters_list or n_col_clusters")
+                self.n_col_clusters_list = [self.n_col_clusters] * self.n_row_clusters
 
-        return self
+            self.U_, self.V_list_, self.C_blocks_, self.loss_ = (
+                generalized_double_kmeans(
+                    X,
+                    P=self.n_row_clusters,
+                    Q_list=self.n_col_clusters_list,
+                    max_iter=self.max_iter,
+                    tol=self.tol,
+                    random_state=self.random_state,
+                    norm=self.norm,
+                )
+            )
+            self.row_labels_ = np.argmax(self.U_, axis=1)
+
+            # Provide a GLOBAL item label if you need one:
+            # Here we choose the (p,q) with maximum support across rows assigned to p.
+            self.column_labels_ = _globalize_item_labels_from_Vlist(
+                self.V_list_, self.U_
+            )  # labels in 0..sum(Qp)-1 (composite)
+
+            self.biclusters_ = self.get_biclusters()
+            return self
 
     def get_row_clusters(self):
         return self.row_labels_
 
-    # def get_column_clusters(self):
-    #     return self.column_labels_
+    def get_column_clusters(self):
+        return getattr(self, "column_labels_", None)
 
     def get_biclusters(self):
         """
-        Return boolean indicator matrices (rows, columns) for each (p, q) bicluster.
-        Each bicluster corresponds to a pair of (row cluster p, column cluster q).
-
-        Returns:
-            rows: (n_biclusters, n_rows) boolean array
-            cols: (n_biclusters, n_columns) boolean array
+        Return boolean indicator matrices (rows, columns) for each bicluster.
+        If tie_columns=True, biclusters are all (p,q) with p in [0..P-1], q in [0..Q-1].
+        If tie_columns=False, biclusters follow your original (p, q in Qp) blocks.
         """
-        if not hasattr(self, "U_") or not hasattr(self, "V_list_"):
-            raise AttributeError("Must call fit() before get_biclusters().")
+        if self.tie_columns:
+            P = self.U_.shape[1]
+            Q = self.V_.shape[1]
+            rows_list, cols_list = [], []
+            for p in range(P):
+                row_mask = self.U_[:, p].astype(bool)
+                for q in range(Q):
+                    col_mask = self.V_[:, q].astype(bool)
+                    if row_mask.any() and col_mask.any():
+                        rows_list.append(row_mask)
+                        cols_list.append(col_mask)
+            return np.array(rows_list), np.array(cols_list)
+        else:
+            # original behavior using V_list_
+            if not hasattr(self, "U_") or not hasattr(self, "V_list_"):
+                raise AttributeError("Must call fit() before get_biclusters().")
+            rows, cols = [], []
+            P = self.U_.shape[1]
+            for p in range(P):
+                row_mask = self.U_[:, p] == 1
+                Vp = self.V_list_[p]  # (J, Qp)
+                for q in range(Vp.shape[1]):
+                    col_mask = Vp[:, q] == 1
+                    if np.any(row_mask) and np.any(col_mask):
+                        rows.append(row_mask)
+                        cols.append(col_mask)
+            return np.array(rows), np.array(cols)
 
-        row_cluster_count = self.U_.shape[1]
-        rows = []
-        cols = []
 
-        for p in range(row_cluster_count):
-            row_mask = self.U_[:, p] == 1  # (n_rows,)
-            Vp = self.V_list_[p]  # (n_cols, Qp)
-            Qp = Vp.shape[1]
+def _init_UV_tied(I, J, P, Q, rng):
+    U = np.zeros((I, P), dtype=int)
+    U[np.arange(I), rng.integers(P, size=I)] = 1
+    V = np.zeros((J, Q), dtype=int)
+    V[np.arange(J), rng.integers(Q, size=J)] = 1
+    _enforce_min_size(U, axis=0, min_k=1, rng=rng)
+    _enforce_min_size(V, axis=0, min_k=1, rng=rng)
+    return U, V
 
-            for q in range(Qp):
-                col_mask = Vp[:, q] == 1  # (n_cols,)
-                if np.any(row_mask) and np.any(col_mask):  # optional safeguard
-                    rows.append(row_mask)
-                    cols.append(col_mask)
 
-        return np.array(rows), np.array(cols)
+def _enforce_min_size(M, axis, min_k, rng):
+    """Ensure every cluster (columns if axis=0; rows if axis=1) has at least min_k members."""
+    if min_k <= 0:
+        return
+    if axis == 0:
+        counts = M.sum(axis=0)
+        for k in np.where(counts < min_k)[0]:
+            # randomly reassign some rows/cols into k
+            idx = rng.choice(M.shape[0], size=(min_k - counts[k]), replace=False)
+            M[idx] = 0
+            M[idx, k] = 1
+    else:
+        counts = M.sum(axis=1)
+        for i in np.where(counts == 0)[0]:
+            k = rng.integers(M.shape[1])
+            M[i, k] = 1
 
-    @property
-    def biclusters_(self):
-        """
-        Alias property to comply with sklearn's BiclusterMixin standard.
-        Matches SpectralBiclustering.biclusters_ structure.
-        """
-        return self.get_biclusters()
 
-    def get_cluster_assignments(self, df):
-        """
-        Return a long-form DataFrame with store, item, store_cluster, and item_cluster.
+def _update_C_tied(X, U, V):
+    """C = argmin ||X - U C V^T|| given one-hot U,V → C[p,q] = mean of block (p,q)."""
+    P = U.shape[1]
+    Q = V.shape[1]
+    C = np.zeros((P, Q), dtype=float)
+    for p in range(P):
+        rmask = U[:, p] == 1
+        if not rmask.any():
+            continue
+        Xp = X[rmask]  # (n_p, J)
+        for q in range(Q):
+            cmask = V[:, q] == 1
+            if not cmask.any():
+                continue
+            block = Xp[:, cmask]
+            C[p, q] = block.mean() if block.size else 0.0
+    return C
 
-        Parameters
-        ----------
-        df : pd.DataFrame
-            The original input data (rows = stores, columns = items).
 
-        Returns
-        -------
-        pd.DataFrame with columns: store, item, store_cluster, item_cluster
-        """
-        store_indices = df.index
-        item_columns = df.columns
+def _update_U_tied(X, C, V, norm="l2"):
+    """Assign each row i to p that minimizes ||x_i - C[p,:] @ V^T||."""
+    I, J = X.shape
+    P, Q = C.shape
+    prototypes = C @ V.T  # (P, J)
+    errs = np.zeros((I, P))
+    if norm == "l2":
+        for p in range(P):
+            diff = X - prototypes[p]  # (I, J)
+            errs[:, p] = np.sum(diff * diff, axis=1)
+    elif norm == "l1":
+        for p in range(P):
+            errs[:, p] = np.sum(np.abs(X - prototypes[p]), axis=1)
+    elif norm == "huber":
+        for p in range(P):
+            errs[:, p] = np.sum(huber_loss(X - prototypes[p]), axis=1)
+    else:
+        raise ValueError("Unsupported norm")
+    U = np.zeros((I, P), dtype=int)
+    U[np.arange(I), np.argmin(errs, axis=1)] = 1
+    return U
 
-        result = []
 
-        for p, Vp in enumerate(self.V_list_):
-            # Row indices for cluster p
-            row_mask = self.U_[:, p] == 1
-            store_ids = store_indices[row_mask]
+def _update_V_tied(X, U, C, norm="l2"):
+    """Assign each column j to q that minimizes ||x_:j - U @ C[:, q]||."""
+    I, J = X.shape
+    P, Q = C.shape
+    bases = U @ C  # (I, Q)
+    errs = np.zeros((J, Q))
+    if norm == "l2":
+        for q in range(Q):
+            diff = X - bases[:, [q]]  # (I, J)
+            errs[:, q] = np.sum((diff * diff), axis=0)
+    elif norm == "l1":
+        for q in range(Q):
+            errs[:, q] = np.sum(np.abs(X - bases[:, [q]]), axis=0)
+    elif norm == "huber":
+        for q in range(Q):
+            errs[:, q] = np.sum(huber_loss(X - bases[:, [q]]), axis=0)
+    else:
+        raise ValueError("Unsupported norm")
+    V = np.zeros((J, Q), dtype=int)
+    V[np.arange(J), np.argmin(errs, axis=1)] = 1
+    return V
 
-            # For each item assigned to a cluster q in Vp
-            for q in range(Vp.shape[1]):
-                col_mask = Vp[:, q] == 1
-                item_ids = item_columns[col_mask]
 
-                for store in store_ids:
-                    for item in item_ids:
-                        result.append((store, item, p, q))
+def _loss_tied(X, U, C, V, norm="l2"):
+    recon = (U @ C) @ V.T
+    if norm == "l2":
+        return float(np.sum((X - recon) ** 2))
+    if norm == "l1":
+        return float(np.sum(np.abs(X - recon)))
+    if norm == "huber":
+        return float(np.sum(huber_loss(X - recon)))
+    raise ValueError("Unsupported norm")
 
-        return pd.DataFrame(
-            result, columns=["store", "item", "store_cluster", "item_cluster"]
-        )
+
+def _globalize_item_labels_from_Vlist(V_list, U):
+    """
+    Map per-row-cluster V_list to a single global label per column.
+    We choose the (p,q) with the largest count of rows assigned to p (weighted support).
+    Labels are in [0 .. sum(Qp)-1], grouped by p's offsets.
+    """
+    P = U.shape[1]
+    Q_offsets = np.cumsum([0] + [V_list[p].shape[1] for p in range(P)])  # offsets
+    J = V_list[0].shape[0]
+    labels = np.zeros(J, dtype=int)
+    support = np.zeros((J, Q_offsets[-1]), dtype=int)
+    rows_per_p = U.sum(axis=0)  # support weight per row-cluster
+    for p in range(P):
+        Vp = V_list[p]  # (J, Qp)
+        off = Q_offsets[p]
+        # count rows in p as support (simple weighting)
+        w = int(rows_per_p[p])
+        support[np.arange(J)[:, None], off + np.argmax(Vp, axis=1)[:, None]] += w
+    labels = np.argmax(support, axis=1)
+    return labels
+
+
+# class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
+#     def __init__(
+#         self,
+#         n_row_clusters=3,
+#         n_col_clusters_list=None,
+#         max_iter=100,
+#         tol=1e-4,
+#         random_state=None,
+#         norm="l2",
+#     ):
+#         self.n_row_clusters = n_row_clusters
+#         self.n_col_clusters_list = n_col_clusters_list
+#         self.max_iter = max_iter
+#         self.tol = tol
+#         self.random_state = random_state
+#         self.norm = norm
+
+#     def fit(self, X):
+#         self.U_, self.V_list_, self.C_blocks_, self.loss_ = generalized_double_kmeans(
+#             X,
+#             P=self.n_row_clusters,
+#             Q_list=self.n_col_clusters_list,
+#             max_iter=self.max_iter,
+#             tol=self.tol,
+#             random_state=self.random_state,
+#             norm=self.norm,
+#         )
+
+#         self.row_labels_ = np.argmax(self.U_, axis=1)
+
+#         # Ensure all Vp are 2D before concatenation
+#         V_nonempty = [Vp for Vp in self.V_list_ if Vp.ndim == 2 and Vp.shape[1] > 0]
+#         if len(V_nonempty) == 0:
+#             raise ValueError("All column cluster blocks are empty or malformed.")
+
+#         # V_concat = np.concatenate(V_nonempty, axis=1)
+#         # self.column_labels_ = np.argmax(V_concat, axis=1)
+
+#         return self
+
+#     def get_row_clusters(self):
+#         return self.row_labels_
+
+#     # def get_column_clusters(self):
+#     #     return self.column_labels_
+
+#     def get_biclusters(self):
+#         """
+#         Return boolean indicator matrices (rows, columns) for each (p, q) bicluster.
+#         Each bicluster corresponds to a pair of (row cluster p, column cluster q).
+
+#         Returns:
+#             rows: (n_biclusters, n_rows) boolean array
+#             cols: (n_biclusters, n_columns) boolean array
+#         """
+#         if not hasattr(self, "U_") or not hasattr(self, "V_list_"):
+#             raise AttributeError("Must call fit() before get_biclusters().")
+
+#         row_cluster_count = self.U_.shape[1]
+#         rows = []
+#         cols = []
+
+#         for p in range(row_cluster_count):
+#             row_mask = self.U_[:, p] == 1  # (n_rows,)
+#             Vp = self.V_list_[p]  # (n_cols, Qp)
+#             Qp = Vp.shape[1]
+
+#             for q in range(Qp):
+#                 col_mask = Vp[:, q] == 1  # (n_cols,)
+#                 if np.any(row_mask) and np.any(col_mask):  # optional safeguard
+#                     rows.append(row_mask)
+#                     cols.append(col_mask)
+
+#         return np.array(rows), np.array(cols)
+
+#     @property
+#     def biclusters_(self):
+#         """
+#         Alias property to comply with sklearn's BiclusterMixin standard.
+#         Matches SpectralBiclustering.biclusters_ structure.
+#         """
+#         return self.get_biclusters()
+
+#     def get_cluster_assignments(self, df):
+#         """
+#         Return a long-form DataFrame with store, item, store_cluster, and item_cluster.
+
+#         Parameters
+#         ----------
+#         df : pd.DataFrame
+#             The original input data (rows = stores, columns = items).
+
+#         Returns
+#         -------
+#         pd.DataFrame with columns: store, item, store_cluster, item_cluster
+#         """
+#         store_indices = df.index
+#         item_columns = df.columns
+
+#         result = []
+
+#         for p, Vp in enumerate(self.V_list_):
+#             # Row indices for cluster p
+#             row_mask = self.U_[:, p] == 1
+#             store_ids = store_indices[row_mask]
+
+#             # For each item assigned to a cluster q in Vp
+#             for q in range(Vp.shape[1]):
+#                 col_mask = Vp[:, q] == 1
+#                 item_ids = item_columns[col_mask]
+
+#                 for store in store_ids:
+#                     for item in item_ids:
+#                         result.append((store, item, p, q))
+
+#         return pd.DataFrame(
+#             result, columns=["store", "item", "store_cluster", "item_cluster"]
+#         )
 
 
 def huber_loss(diff, delta=1.0):
