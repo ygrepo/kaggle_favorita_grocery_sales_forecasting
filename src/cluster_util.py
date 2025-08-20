@@ -182,16 +182,47 @@ def compute_spectral_clustering_cv_scores(
     return pd.DataFrame(results)
 
 
-def _valid_silhouette_input(X: np.ndarray, labels: np.ndarray) -> bool:
+# def _valid_silhouette_input(X: np.ndarray, labels: np.ndarray) -> bool:
+#     if labels is None:
+#         return False
+#     labs, counts = np.unique(labels, return_counts=True)
+#     if len(labs) < 2:
+#         return False
+#     if (counts < 2).any():
+#         return False
+#     if not np.isfinite(X).all():
+#         return False
+#     return True
+
+
+def _valid_silhouette_input(
+    X: np.ndarray,
+    labels: np.ndarray,
+) -> bool:
     if labels is None:
+        logger.warning("[silhouette] labels is None")
         return False
+
     labs, counts = np.unique(labels, return_counts=True)
     if len(labs) < 2:
+        logger.warning(f"[silhouette] only {len(labs)} cluster(s): {labs}")
         return False
+
     if (counts < 2).any():
+        bad = labs[counts < 2]
+        logger.warning(f"[silhouette] clusters with <2 members: {bad}")
         return False
+
     if not np.isfinite(X).all():
+        nan_mask = ~np.isfinite(X)
+        bad_rows, bad_cols = np.where(nan_mask)
+        logger.warning(
+            f"[silhouette] Found {nan_mask.sum()} invalid entries (NaN/inf)."
+        )
+        for r, c in zip(bad_rows[:20], bad_cols[:20]):  # limit to first 20
+            logger.warning(f"  - Row {r}, Col {c}, Value={X[r,c]}")
         return False
+
     return True
 
 
@@ -201,8 +232,8 @@ def safe_silhouette(
     col_labels: np.ndarray | None = None,
     log_level="INFO",
 ) -> float:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     """Prefer row silhouette; fall back to columns; else NaN."""
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     # rows first
     if row_labels is not None and _valid_silhouette_input(X, row_labels):
         try:
@@ -219,9 +250,19 @@ def safe_silhouette(
     return np.nan
 
 
+# --- Check cluster sizes (rows & columns) ---
+def _small_clusters(labels, k, min_size, *, log_level="INFO"):
+    """Return indices of clusters with fewer than `min_size` members."""
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    # counts for cluster ids 0..k-1 (fill 0 for missing)
+    counts = (
+        pd.Series(labels).value_counts().reindex(range(int(k)), fill_value=0).to_numpy()
+    )
+    return np.where(counts < min_size)[0]
+
+
 def compute_biclustering_scores(
     data,
-    raw_data,
     *,
     model_class,
     row_range=range(2, 6),
@@ -230,6 +271,8 @@ def compute_biclustering_scores(
     col_cluster_mav_name: str = "store_cluster_item_cluster_mav",
     true_row_labels=None,  # kept for future ARI if you want it
     model_kwargs=None,
+    min_cluster_size=2,
+    skip_invalid=True,
     log_level="INFO",
 ):
     """
@@ -272,10 +315,10 @@ def compute_biclustering_scores(
                 elif model_class.__name__ == "SpectralCoclustering":
                     model = model_class(n_clusters=n_row, **model_kwargs)
                     # n_col not defined for this estimator
-                    use_n_col = np.nan
+                    use_n_col = n_row
                 else:
                     model = model_class(n_clusters=n_row, **model_kwargs)
-                    use_n_col = np.nan
+                    use_n_col = n_row
 
                 # fit
                 model.fit(X)
@@ -298,26 +341,52 @@ def compute_biclustering_scores(
                     # identity (no column clustering)
                     col_labels = np.arange(n_cols)
 
-                # if not set above, keep explicit n_col value
-                if "use_n_col" not in locals():
-                    use_n_col = n_col
+                bad_row = _small_clusters(
+                    row_labels, n_row, min_cluster_size, log_level=log_level
+                )
+                bad_col = _small_clusters(
+                    col_labels, n_col, min_cluster_size, log_level=log_level
+                )
+                if len(bad_row) or len(bad_col):
+                    msg = (
+                        f"[skip] n_row={n_row}, n_col={n_col}: "
+                        f"rows<{min_cluster_size}={bad_row.tolist()} "
+                        f"cols<{min_cluster_size}={bad_col.tolist()}"
+                    )
+                    logger.warning(msg)
+                    if skip_invalid:
+                        continue
+                    else:
+                        raise RuntimeError(msg)
 
                 # --- Build cluster assignment tables ---
                 store_clusters = pd.DataFrame(
-                    {"store": raw_data.index, "store_cluster": row_labels.astype(int)}
+                    {"store": data.index, "store_cluster": row_labels.astype(int)}
                 )
                 item_clusters = pd.DataFrame(
-                    {"item": raw_data.columns, "item_cluster": col_labels.astype(int)}
+                    {"item": data.columns, "item_cluster": col_labels.astype(int)}
                 )
-
+                # store_clusters = pd.DataFrame(
+                #     {"store": raw_data.index, "store_cluster": row_labels.astype(int)}
+                # )
+                # item_clusters = pd.DataFrame(
+                #     {"item": raw_data.columns, "item_cluster": col_labels.astype(int)}
+                # )
                 df_assignments = pd.DataFrame(
                     {
-                        "store": np.repeat(
-                            raw_data.index.values, len(raw_data.columns)
-                        ),
-                        "item": np.tile(raw_data.columns.values, len(raw_data.index)),
+                        "store": np.repeat(data.index.values, len(data.columns)),
+                        "item": np.tile(data.columns.values, len(data.index)),
                     }
                 )
+
+                # df_assignments = pd.DataFrame(
+                #     {
+                #         "store": np.repeat(
+                #             raw_data.index.values, len(raw_data.columns)
+                #         ),
+                #         "item": np.tile(raw_data.columns.values, len(raw_data.index)),
+                #     }
+                # )
                 df_assignments = df_assignments.merge(
                     store_clusters, on="store", how="left"
                 ).merge(item_clusters, on="item", how="left")
@@ -325,15 +394,16 @@ def compute_biclustering_scores(
                 # --- MAV computation (per (store,item) and per (store_cluster,item_cluster)) ---
                 per_store_item, per_cluster = mav_by_cluster(
                     df_assignments,
-                    raw_data,
+                    data,
                     col_mav_name=col_mav_name,
                     col_cluster_mav_name=col_cluster_mav_name,
                 )
-                # Expect per_store_item to include: store, item, store_cluster, item_cluster, col_mav_name
-                # Expect per_cluster to include: store_cluster, item_cluster, n_obs,
-                #                                f'{col_cluster_mav_name}_mean',
-                #                                f'{col_cluster_mav_name}_within_var'
-
+                # per_store_item, per_cluster = mav_by_cluster(
+                #     df_assignments,
+                #     raw_data,
+                #     col_mav_name=col_mav_name,
+                #     col_cluster_mav_name=col_cluster_mav_name,
+                # )
                 # --- Global variance metrics across all (store,item) points ---
                 global_mean = per_store_item[col_mav_name].mean()
 
@@ -388,20 +458,6 @@ def compute_biclustering_scores(
                     100.0 * (1.0 - (recon_error / total_ss)) if total_ss > 0 else np.nan
                 )
 
-                # predicted labels by nearest centroid (for silhouette)
-                predicted_labels = np.array(
-                    [
-                        np.argmin(
-                            np.array(
-                                np.linalg.norm(xi - c) if c is not None else np.inf
-                                for c in row_centroids
-                            )
-                        )
-                        for xi in X
-                    ],
-                    dtype=int,
-                )
-
                 try:
                     # --- Silhouette (use model's own labels, fallback to columns) ---
                     sil = safe_silhouette(
@@ -443,7 +499,7 @@ def compute_biclustering_scores(
                 )
 
             except Exception as e:
-                _log(f"[FAIL] n_row={n_row}, n_col={n_col} → {e}")
+                logger.error(f"[FAIL] n_row={n_row}, n_col={n_col} → {e}")
                 # Build an empty-but-typed frame to keep schema consistent
                 per_store_item = pd.DataFrame(
                     columns=[
@@ -586,13 +642,7 @@ def cluster_data(
 
     # Build normalized + raw matrices
     norm_data = normalize_data(
-        df, freq=freq, log_transform=True, median_transform=False, mean_transform=True
-    ).fillna(0)
-    raw_data = median_mean_transform(
-        df,
-        freq=freq,
-        median_transform=False,
-        mean_transform=True,
+        df, freq=freq, log_transform=False, median_transform=False, mean_transform=True
     ).fillna(0)
 
     logger.info(f"Number of items: {df['item'].nunique()}")
@@ -608,7 +658,6 @@ def cluster_data(
     # Run biclustering grid search
     mav_df = compute_biclustering_scores(
         data=norm_data,
-        raw_data=raw_data,
         model_class=model_class,
         row_range=row_range,
         col_range=col_range,
