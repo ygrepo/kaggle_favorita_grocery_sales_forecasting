@@ -558,19 +558,25 @@ def compute_biclustering_scores(
 
 
 def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """
-    Pick best biclustering setting by lexicographic priority:
-      1) Ratio_Between_Within (max)
-      2) Explained Variance (%) (max)
-      3) Mean Silhouette (max)
-      4) Within_Cluster_Var (min)
-      5) Between_Cluster_Var (max)
-      6) n_row (max)
-      7) n_col (max)
-    Does not sort/group by Model, but keeps it.
-    """
-    # Ensure numeric types
-    num_cols = [
+    # Guard: empty or None
+    if df is None or df.empty:
+        raise ValueError("mav_df is empty after filtering; no settings to rank.")
+
+    df = df.copy()
+
+    # Create ratio if missing
+    if "Ratio_Between_Within" not in df.columns:
+        if {"Within_Cluster_Var", "Between_Cluster_Var"}.issubset(df.columns):
+            w = pd.to_numeric(df["Within_Cluster_Var"], errors="coerce")
+            b = pd.to_numeric(df["Between_Cluster_Var"], errors="coerce")
+            df["Ratio_Between_Within"] = np.where(
+                (w > 0) & np.isfinite(w), b / w, np.nan
+            )
+        else:
+            df["Ratio_Between_Within"] = np.nan
+
+    # Coerce numerics & clean
+    for c in [
         "Ratio_Between_Within",
         "Explained Variance (%)",
         "Mean Silhouette",
@@ -578,48 +584,113 @@ def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.S
         "Between_Cluster_Var",
         "n_row",
         "n_col",
-    ]
-    for c in num_cols:
+    ]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.replace([np.inf, -np.inf], np.nan)
 
-    df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["Ratio_Between_Within"])
+    # Keep rows that have a usable ratio if any
+    has_ratio = (
+        df["Ratio_Between_Within"].notna()
+        if "Ratio_Between_Within" in df
+        else pd.Series(False, index=df.index)
+    )
+    d = df[has_ratio].copy() if has_ratio.any() else df.copy()
 
-    # Sort whole df by priority
-    d = df.sort_values(
-        [
-            "Ratio_Between_Within",
-            "Explained Variance (%)",
-            "Mean Silhouette",
-            "Within_Cluster_Var",
-            "Between_Cluster_Var",
-            "n_row",
-            "n_col",
-        ],
-        ascending=[False, False, False, True, False, False, False],
-        kind="mergesort",
+    if d.empty:
+        raise ValueError("No valid rows to rank (all metrics are NaN).")
+
+    sort_cols = [
+        "Ratio_Between_Within",  # desc
+        "Explained Variance (%)",  # desc
+        "Mean Silhouette",  # desc
+        "Within_Cluster_Var",  # asc
+        "Between_Cluster_Var",  # desc
+        "n_row",  # desc
+        "n_col",  # desc
+    ]
+    asc = [False, False, False, True, False, False, False]
+    used = [(c, asc[i]) for i, c in enumerate(sort_cols) if c in d.columns]
+
+    d = d.sort_values(
+        [c for c, _ in used], ascending=[a for _, a in used], kind="mergesort"
     )
 
-    # Representative row per (n_row, n_col): the best one by this sort
-    per_setting = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
+    # Best representative per (n_row, n_col)
+    if not {"n_row", "n_col"}.issubset(d.columns):
+        raise ValueError("Missing n_row/n_col; cannot rank settings.")
+    settings_sorted = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
 
-    # Now rank the settings themselves again by the same priority
-    settings_sorted = per_setting.sort_values(
-        [
-            "Ratio_Between_Within",
-            "Explained Variance (%)",
-            "Mean Silhouette",
-            "Within_Cluster_Var",
-            "Between_Cluster_Var",
-            "n_row",
-            "n_col",
-        ],
-        ascending=[False, False, False, True, False, False, False],
-        kind="mergesort",
-    )
+    if settings_sorted.empty:
+        raise ValueError("No unique (n_row, n_col) settings to rank.")
 
     best_row = settings_sorted.iloc[0].copy()
     return settings_sorted, best_row
+
+
+# def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+#     """
+#     Pick best biclustering setting by lexicographic priority:
+#       1) Ratio_Between_Within (max)
+#       2) Explained Variance (%) (max)
+#       3) Mean Silhouette (max)
+#       4) Within_Cluster_Var (min)
+#       5) Between_Cluster_Var (max)
+#       6) n_row (max)
+#       7) n_col (max)
+#     Does not sort/group by Model, but keeps it.
+#     """
+#     # Ensure numeric types
+#     num_cols = [
+#         "Ratio_Between_Within",
+#         "Explained Variance (%)",
+#         "Mean Silhouette",
+#         "Within_Cluster_Var",
+#         "Between_Cluster_Var",
+#         "n_row",
+#         "n_col",
+#     ]
+#     for c in num_cols:
+#         if c in df.columns:
+#             df[c] = pd.to_numeric(df[c], errors="coerce")
+
+#     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["Ratio_Between_Within"])
+
+#     # Sort whole df by priority
+#     d = df.sort_values(
+#         [
+#             "Ratio_Between_Within",
+#             "Explained Variance (%)",
+#             "Mean Silhouette",
+#             "Within_Cluster_Var",
+#             "Between_Cluster_Var",
+#             "n_row",
+#             "n_col",
+#         ],
+#         ascending=[False, False, False, True, False, False, False],
+#         kind="mergesort",
+#     )
+
+#     # Representative row per (n_row, n_col): the best one by this sort
+#     per_setting = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
+
+#     # Now rank the settings themselves again by the same priority
+#     settings_sorted = per_setting.sort_values(
+#         [
+#             "Ratio_Between_Within",
+#             "Explained Variance (%)",
+#             "Mean Silhouette",
+#             "Within_Cluster_Var",
+#             "Between_Cluster_Var",
+#             "n_row",
+#             "n_col",
+#         ],
+#         ascending=[False, False, False, True, False, False, False],
+#         kind="mergesort",
+#     )
+
+#     best_row = settings_sorted.iloc[0].copy()
+#     return settings_sorted, best_row
 
 
 def cluster_data(
@@ -680,7 +751,19 @@ def cluster_data(
     )
 
     # Select best result
-    _, best_row = pick_best_biclustering_setting(mav_df)
+    try:
+        _, best_row = pick_best_biclustering_setting(mav_df)
+    except ValueError as e:
+        logger.error(f"No valid clustering settings: {e}")
+        # Optional: keep schema but no assignments
+        df = original_df.copy()
+        df["store_cluster"] = np.nan
+        df["item_cluster"] = np.nan
+        df["cluster"] = np.nan
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+        return df
+
+    #    _, best_row = pick_best_biclustering_setting(mav_df)
 
     save_mav(mav_df_fn, only_best_model, only_top_n_clusters, mav_df, best_row)
 
