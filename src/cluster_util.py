@@ -182,19 +182,6 @@ def compute_spectral_clustering_cv_scores(
     return pd.DataFrame(results)
 
 
-# def _valid_silhouette_input(X: np.ndarray, labels: np.ndarray) -> bool:
-#     if labels is None:
-#         return False
-#     labs, counts = np.unique(labels, return_counts=True)
-#     if len(labs) < 2:
-#         return False
-#     if (counts < 2).any():
-#         return False
-#     if not np.isfinite(X).all():
-#         return False
-#     return True
-
-
 def _valid_silhouette_input(
     X: np.ndarray,
     labels: np.ndarray,
@@ -251,12 +238,29 @@ def safe_silhouette(
 
 
 # --- Check cluster sizes (rows & columns) ---
+# def _small_clusters(labels, k, min_size, *, log_level="INFO"):
+#     """Return indices of clusters with fewer than `min_size` members."""
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     # counts for cluster ids 0..k-1 (fill 0 for missing)
+#     counts = (
+#         pd.Series(labels).value_counts().reindex(range(int(k)), fill_value=0).to_numpy()
+#     )
+#     return np.where(counts < min_size)[0]
+
+
+# --- Check cluster sizes (rows & columns) ---
 def _small_clusters(labels, k, min_size, *, log_level="INFO"):
     """Return indices of clusters with fewer than `min_size` members."""
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    # counts for cluster ids 0..k-1 (fill 0 for missing)
+
+    # Effective k (handle None/NaN): use observed label range if k not usable
+    if k is None or (isinstance(k, float) and np.isnan(k)):
+        k_eff = int(np.max(labels)) + 1
+    else:
+        k_eff = int(k)
+
     counts = (
-        pd.Series(labels).value_counts().reindex(range(int(k)), fill_value=0).to_numpy()
+        pd.Series(labels).value_counts().reindex(range(k_eff), fill_value=0).to_numpy()
     )
     return np.where(counts < min_size)[0]
 
@@ -347,7 +351,7 @@ def compute_biclustering_scores(
                 bad_col = _small_clusters(
                     col_labels, n_col, min_cluster_size, log_level=log_level
                 )
-                if len(bad_row) < min_cluster_size or len(bad_col) < min_cluster_size:
+                if (bad_row.size > 0) or (bad_col.size > 0):
                     msg = (
                         f"[skip] n_row={n_row}, n_col={n_col}: "
                         f"rows<{min_cluster_size}={bad_row.tolist()} "
@@ -366,12 +370,6 @@ def compute_biclustering_scores(
                 item_clusters = pd.DataFrame(
                     {"item": data.columns, "item_cluster": col_labels.astype(int)}
                 )
-                # store_clusters = pd.DataFrame(
-                #     {"store": raw_data.index, "store_cluster": row_labels.astype(int)}
-                # )
-                # item_clusters = pd.DataFrame(
-                #     {"item": raw_data.columns, "item_cluster": col_labels.astype(int)}
-                # )
                 df_assignments = pd.DataFrame(
                     {
                         "store": np.repeat(data.index.values, len(data.columns)),
@@ -379,14 +377,6 @@ def compute_biclustering_scores(
                     }
                 )
 
-                # df_assignments = pd.DataFrame(
-                #     {
-                #         "store": np.repeat(
-                #             raw_data.index.values, len(raw_data.columns)
-                #         ),
-                #         "item": np.tile(raw_data.columns.values, len(raw_data.index)),
-                #     }
-                # )
                 df_assignments = df_assignments.merge(
                     store_clusters, on="store", how="left"
                 ).merge(item_clusters, on="item", how="left")
@@ -398,12 +388,7 @@ def compute_biclustering_scores(
                     col_mav_name=col_mav_name,
                     col_cluster_mav_name=col_cluster_mav_name,
                 )
-                # per_store_item, per_cluster = mav_by_cluster(
-                #     df_assignments,
-                #     raw_data,
-                #     col_mav_name=col_mav_name,
-                #     col_cluster_mav_name=col_cluster_mav_name,
-                # )
+
                 # --- Global variance metrics across all (store,item) points ---
                 global_mean = per_store_item[col_mav_name].mean()
 
