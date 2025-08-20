@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 from src.data_utils import load_raw_data
 from src.cluster_util import cluster_data
 from src.utils import setup_logging, str2bool
+from sklearn.cluster import SpectralCoclustering
 
 
 def parse_range(range_str):
@@ -149,6 +150,7 @@ def main():
         df = load_raw_data(data_fn)
         cluster_data(
             df,
+            model_class=SpectralCoclustering,
             store_item_matrix_fn=store_item_matrix_fn,
             mav_df_fn=mav_output_fn,
             item_fn=item_fn,
