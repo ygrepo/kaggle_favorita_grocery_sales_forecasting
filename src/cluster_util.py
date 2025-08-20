@@ -347,7 +347,7 @@ def compute_biclustering_scores(
                 bad_col = _small_clusters(
                     col_labels, n_col, min_cluster_size, log_level=log_level
                 )
-                if len(bad_row) or len(bad_col):
+                if len(bad_row) < min_cluster_size or len(bad_col) < min_cluster_size:
                     msg = (
                         f"[skip] n_row={n_row}, n_col={n_col}: "
                         f"rows<{min_cluster_size}={bad_row.tolist()} "
