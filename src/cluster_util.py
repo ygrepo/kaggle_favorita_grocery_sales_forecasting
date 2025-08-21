@@ -278,59 +278,200 @@ def compute_spectral_clustering_cv_scores(
     return pd.DataFrame(results)
 
 
+import logging
+import numpy as np
+from sklearn.metrics import silhouette_score
+
+logger = logging.getLogger(__name__)
+
+# ----------------------------- helpers -----------------------------
+
+
 def _valid_silhouette_input(
     X: np.ndarray,
     labels: np.ndarray,
+    *,
+    min_cluster_size: int = 2,
+    axis_name: str = "row",
+    max_report: int = 20,
 ) -> bool:
+    """Validate inputs for silhouette computation."""
     if labels is None:
-        logger.warning("[silhouette] labels is None")
+        logger.warning(f"[silhouette:{axis_name}] labels is None")
         return False
 
     labs, counts = np.unique(labels, return_counts=True)
-    if len(labs) < 2:
-        logger.warning(f"[silhouette] only {len(labs)} cluster(s): {labs}")
+    if labs.size < 2:
+        logger.warning(f"[silhouette:{axis_name}] only {labs.size} cluster(s): {labs}")
         return False
 
-    if (counts < 2).any():
-        bad = labs[counts < 2]
-        logger.warning(f"[silhouette] clusters with <2 members: {bad}")
+    too_small = labs[counts < min_cluster_size]
+    if too_small.size > 0:
+        logger.warning(
+            f"[silhouette:{axis_name}] clusters with <{min_cluster_size} members: {too_small}"
+        )
         return False
 
     if not np.isfinite(X).all():
         nan_mask = ~np.isfinite(X)
-        bad_rows, bad_cols = np.where(nan_mask)
+        nbad = int(nan_mask.sum())
         logger.warning(
-            f"[silhouette] Found {nan_mask.sum()} invalid entries (NaN/inf)."
+            f"[silhouette:{axis_name}] Found {nbad} invalid entries (NaN/inf)."
         )
-        for r, c in zip(bad_rows[:20], bad_cols[:20]):  # limit to first 20
-            logger.warning(f"  - Row {r}, Col {c}, Value={X[r,c]}")
+        if nbad > 0:
+            bad_rows, bad_cols = np.where(nan_mask)
+            for r, c in zip(bad_rows[:max_report], bad_cols[:max_report]):
+                logger.warning(f"  - Row {r}, Col {c}, Value={X[r, c]}")
         return False
 
     return True
+
+
+def _huber_distance(u: np.ndarray, v: np.ndarray, *, delta: float = 1.0) -> float:
+    """Huber dissimilarity between two vectors."""
+    d = np.abs(u - v)
+    mask = d <= delta
+    # 0.5 * d^2  (quadratic region),  delta * (d - 0.5*delta) (linear region)
+    return float(0.5 * np.sum(d[mask] ** 2) + delta * np.sum(d[~mask] - 0.5 * delta))
+
+
+def _mav_ratio_distance(u: np.ndarray, v: np.ndarray, *, eps: float = 1e-12) -> float:
+    """
+    Symmetric MAV-normalized L1:
+        mae = mean(|u - v|)
+        denom = 0.5 * (mean(|u|) + mean(|v|))
+        d = mae / max(denom, eps)
+    """
+    mae = float(np.mean(np.abs(u - v)))
+    denom = 0.5 * (float(np.mean(np.abs(u))) + float(np.mean(np.abs(v))))
+    return mae / max(denom, eps)
+
+
+def _metric_from_norm(norm: str | None, *, huber_delta: float = 1.0):
+    """
+    Map training norm → silhouette distance metric (string or callable).
+    """
+    if norm is None or norm == "l2":
+        return "euclidean"
+    if norm == "l1":
+        return "manhattan"
+    if norm == "huber":
+        # Capture delta in a closure so sklearn can call metric(u, v)
+        def huber_metric(u, v, delta=huber_delta):
+            return _huber_distance(u, v, delta=delta)
+
+        return huber_metric
+    if norm == "mav_ratio":
+
+        def mav_metric(u, v, eps=1e-12):
+            return _mav_ratio_distance(u, v, eps=eps)
+
+        return mav_metric
+    # Fallback
+    logger.warning(f"[silhouette] Unknown norm '{norm}', falling back to euclidean.")
+    return "euclidean"
 
 
 def safe_silhouette(
     X: np.ndarray,
     row_labels: np.ndarray | None = None,
     col_labels: np.ndarray | None = None,
-    log_level="INFO",
+    *,
+    model=None,
+    norm: str | None = None,
+    huber_delta: float = 1.0,
+    prefer: str = "row",  # 'row' or 'col'
+    min_cluster_size: int = 2,
+    log_level: str = "INFO",
 ) -> float:
-    """Prefer row silhouette; fall back to columns; else NaN."""
+    """
+    Compute silhouette using a distance metric matched to the model's norm.
+    Prefer row silhouette; fall back to columns; else NaN.
+
+    If `model` has attribute `norm`, it overrides the `norm` arg.
+    """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    # rows first
-    if row_labels is not None and _valid_silhouette_input(X, row_labels):
+
+    # Resolve norm from model if available
+    if hasattr(model, "norm"):
+        norm = getattr(model, "norm")
+    metric = _metric_from_norm(norm, huber_delta=huber_delta)
+
+    # Try preferred axis first
+    if prefer == "row":
+        order = (("row", X, row_labels), ("col", X.T, col_labels))
+    else:
+        order = (("col", X.T, col_labels), ("row", X, row_labels))
+
+    for axis_name, Xax, labs in order:
+        if labs is None:
+            continue
+        if not _valid_silhouette_input(
+            Xax, labs, min_cluster_size=min_cluster_size, axis_name=axis_name
+        ):
+            continue
         try:
-            return float(silhouette_score(X, row_labels))
+            return float(silhouette_score(Xax, labs, metric=metric))
         except Exception as e:
-            logger.warning(f"[silhouette] row failed: {e}")
-    # columns fallback
-    if col_labels is not None and _valid_silhouette_input(X.T, col_labels):
-        try:
-            return float(silhouette_score(X.T, col_labels))
-        except Exception as e:
-            logger.warning(f"[silhouette] col failed: {e}")
+            logger.warning(f"[silhouette:{axis_name}] failed with metric={metric}: {e}")
+
     logger.warning("[silhouette] not computable (degenerate labels or non-finite X)")
     return np.nan
+
+
+# def _valid_silhouette_input(
+#     X: np.ndarray,
+#     labels: np.ndarray,
+# ) -> bool:
+#     if labels is None:
+#         logger.warning("[silhouette] labels is None")
+#         return False
+
+#     labs, counts = np.unique(labels, return_counts=True)
+#     if len(labs) < 2:
+#         logger.warning(f"[silhouette] only {len(labs)} cluster(s): {labs}")
+#         return False
+
+#     if (counts < 2).any():
+#         bad = labs[counts < 2]
+#         logger.warning(f"[silhouette] clusters with <2 members: {bad}")
+#         return False
+
+#     if not np.isfinite(X).all():
+#         nan_mask = ~np.isfinite(X)
+#         bad_rows, bad_cols = np.where(nan_mask)
+#         logger.warning(
+#             f"[silhouette] Found {nan_mask.sum()} invalid entries (NaN/inf)."
+#         )
+#         for r, c in zip(bad_rows[:20], bad_cols[:20]):  # limit to first 20
+#             logger.warning(f"  - Row {r}, Col {c}, Value={X[r,c]}")
+#         return False
+
+#     return True
+
+
+# def safe_silhouette(
+#     X: np.ndarray,
+#     row_labels: np.ndarray | None = None,
+#     col_labels: np.ndarray | None = None,
+#     log_level="INFO",
+# ) -> float:
+#     """Prefer row silhouette; fall back to columns; else NaN."""
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+#     # rows first
+#     if row_labels is not None and _valid_silhouette_input(X, row_labels):
+#         try:
+#             return float(silhouette_score(X, row_labels))
+#         except Exception as e:
+#             logger.warning(f"[silhouette] row failed: {e}")
+#     # columns fallback
+#     if col_labels is not None and _valid_silhouette_input(X.T, col_labels):
+#         try:
+#             return float(silhouette_score(X.T, col_labels))
+#         except Exception as e:
+#             logger.warning(f"[silhouette] col failed: {e}")
+#     logger.warning("[silhouette] not computable (degenerate labels or non-finite X)")
+#     return np.nan
 
 
 # --- Check cluster sizes (rows & columns) ---
@@ -554,8 +695,21 @@ def compute_biclustering_scores(
                         X,
                         row_labels=row_labels,
                         col_labels=col_labels,
+                        model=model,  # <- pass the fitted model
+                        norm=getattr(
+                            model, "norm", None
+                        ),  # <- explicit norm if no attribute
+                        huber_delta=getattr(model, "huber_delta", 1.0),
+                        prefer="row",
+                        min_cluster_size=min_cluster_size,
                         log_level=log_level,
                     )
+                # sil = safe_silhouette(
+                #     X,
+                #     row_labels=row_labels,
+                #     col_labels=col_labels,
+                #     log_level=log_level,
+                # )
 
                 except Exception:
                     sil = np.nan
