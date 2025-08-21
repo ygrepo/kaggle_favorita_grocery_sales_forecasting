@@ -830,14 +830,17 @@ def compute_biclustering_scores(
                 X = data.values
 
                 # From any fitted model:
-                row_labels = model.row_labels_          # or np.argmax(model.rows_, axis=0)
+                row_labels = model.row_labels_  # or np.argmax(model.rows_, axis=0)
                 col_labels = getattr(model, "column_labels_", None)
-
-                res = block_reconstruct_from_labels(X, row_labels, col_labels, stat="mean")
-                pve = res["pve"]
-                logger.info(f"PVE (true block): {res['pve']:.2f}%")
-                Xhat = res["Xhat"]  # reconstructed matrix
-                C    = res["C"]     # block means
+                pve_row = true_block_pve(X, row_labels, None, stat="mean")  # row-only
+                pve_block = true_block_pve(
+                    X, row_labels, col_labels, stat="mean"
+                )  # tied block
+                logger.info(
+                    f"PVE row-only: {pve_row:.2f}%  |  PVE block: {pve_block:.2f}%"
+                )
+                # Xhat = res["Xhat"]  # reconstructed matrix
+                # C    = res["C"]     # block means
 
                 # P = int(n_row)
                 # Q = int(
@@ -909,7 +912,8 @@ def compute_biclustering_scores(
                     n_col=use_n_col,
                     Model=model,
                     **{
-                        "Explained Variance (%)": pve,
+                        "Explained Variance PVE Row (%)": pve_row,
+                        "Explained Variance PVE Block (%)": pve_block,
                         "Mean Silhouette": sil,
                         "Within_Cluster_Var": within_var,
                         "Between_Cluster_Var": between_var,
@@ -931,7 +935,8 @@ def compute_biclustering_scores(
                         "n_row",
                         "n_col",
                         "Model",
-                        "Explained Variance (%)",
+                        "Explained Variance PVE Row (%)",
+                        "Explained Variance PVE Block (%)",
                         "Mean Silhouette",
                         "Within_Cluster_Var",
                         "Between_Cluster_Var",
@@ -947,7 +952,8 @@ def compute_biclustering_scores(
         "Model",
         "n_row",
         "n_col",
-        "Explained Variance (%)",
+        "Explained Variance PVE Row (%)",
+        "Explained Variance PVE Block (%)",
         "Mean Silhouette",
         "store",
         "item",
@@ -994,7 +1000,8 @@ def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.S
     # Coerce numerics & clean
     for c in [
         "Ratio_Between_Within",
-        "Explained Variance (%)",
+        "Explained Variance PVE Row (%)",
+        "Explained Variance PVE Block (%)",
         "Mean Silhouette",
         "Within_Cluster_Var",
         "Between_Cluster_Var",
@@ -1016,27 +1023,35 @@ def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.S
     if d.empty:
         raise ValueError("No valid rows to rank (all metrics are NaN).")
 
+    # Desired order:
+    # - Maximize (desc): Ratio, PVE Row, PVE Block, Silhouette
+    # - Minimize (asc):  Within Var, Between Var, n_row, n_col
     sort_cols = [
-        "Ratio_Between_Within",  # desc
-        "Explained Variance (%)",  # desc
-        "Mean Silhouette",  # desc
-        "Within_Cluster_Var",  # asc
-        "Between_Cluster_Var",  # desc
-        "n_row",  # desc
-        "n_col",  # desc
+        "Ratio_Between_Within",
+        "Explained Variance PVE Row (%)",
+        "Explained Variance PVE Block (%)",
+        "Mean Silhouette",
+        "Within_Cluster_Var",
+        "Between_Cluster_Var",
+        "n_row",
+        "n_col",
     ]
-    asc = [False, False, False, True, False, False, False]
-    used = [(c, asc[i]) for i, c in enumerate(sort_cols) if c in d.columns]
+    asc = [False, False, False, False, False, True, True, True]  # 1:1 with sort_cols
+    order = dict(zip(sort_cols, asc))
 
-    d = d.sort_values(
-        [c for c, _ in used], ascending=[a for _, a in used], kind="mergesort"
-    )
+    used = [(c, order[c]) for c in sort_cols if c in d.columns]
+    if used:
+        by, ascending = zip(*used)
+        d = d.sort_values(list(by), ascending=list(ascending),
+                        kind="mergesort", na_position="last", ignore_index=True)
+    else:
+        d = d.copy()
 
     # Best representative per (n_row, n_col)
     if not {"n_row", "n_col"}.issubset(d.columns):
         raise ValueError("Missing n_row/n_col; cannot rank settings.")
-    settings_sorted = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
 
+    settings_sorted = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
     if settings_sorted.empty:
         raise ValueError("No unique (n_row, n_col) settings to rank.")
 
