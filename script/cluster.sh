@@ -23,7 +23,7 @@ ONLY_BEST_MODEL_PATH="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_
 ONLY_TOP_N_CLUSTERS_PATH="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_gdkm_top_2.csv"
 ONLY_BEST_MODEL="True"
 ONLY_TOP_N_CLUSTERS="2"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_gdkm.parquet"
 MODEL="GeneralizedDoubleKMeans"
 
 ROW_RANGE="5:20"
