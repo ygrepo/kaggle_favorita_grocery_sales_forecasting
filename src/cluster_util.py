@@ -10,6 +10,7 @@ from sklearn.cluster import (
 )
 from pathlib import Path
 from src.data_utils import normalize_data, mav_by_cluster, median_mean_transform
+from src.gdkm import GeneralizedDoubleKMeans
 from typing import Optional
 
 import logging
@@ -332,6 +333,17 @@ def compute_biclustering_scores(
                     model = model_class(n_clusters=n_row, **model_kwargs)
                     # n_col not defined for this estimator
                     use_n_col = n_row
+                elif model_class.__name__ == "GeneralizedDoubleKMeans":
+                    # GDKM uses n_row_clusters and n_col_clusters_list
+                    # n_col_clusters_list = [
+                    #    n_col
+                    # ] * n_row  # same n_col for each row cluster
+                    model = model_class(
+                        n_row_clusters=n_row,
+                        n_col_clusters=n_col,  # NEW: global V if n_col_clusters is not None
+                        # n_col_clusters_list=n_col_clusters_list,
+                        **model_kwargs,
+                    )
                 else:
                     model = model_class(n_clusters=n_row, **model_kwargs)
                     use_n_col = n_row
@@ -488,6 +500,7 @@ def compute_biclustering_scores(
                 )
 
                 # --- Attach metadata columns (same values repeated for all rows of this setting) ---
+                logger.info(f"Model: {model}")
                 per_store_item = per_store_item.assign(
                     n_row=int(n_row),
                     n_col=use_n_col,
@@ -628,79 +641,16 @@ def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.S
     return settings_sorted, best_row
 
 
-# def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-#     """
-#     Pick best biclustering setting by lexicographic priority:
-#       1) Ratio_Between_Within (max)
-#       2) Explained Variance (%) (max)
-#       3) Mean Silhouette (max)
-#       4) Within_Cluster_Var (min)
-#       5) Between_Cluster_Var (max)
-#       6) n_row (max)
-#       7) n_col (max)
-#     Does not sort/group by Model, but keeps it.
-#     """
-#     # Ensure numeric types
-#     num_cols = [
-#         "Ratio_Between_Within",
-#         "Explained Variance (%)",
-#         "Mean Silhouette",
-#         "Within_Cluster_Var",
-#         "Between_Cluster_Var",
-#         "n_row",
-#         "n_col",
-#     ]
-#     for c in num_cols:
-#         if c in df.columns:
-#             df[c] = pd.to_numeric(df[c], errors="coerce")
-
-#     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["Ratio_Between_Within"])
-
-#     # Sort whole df by priority
-#     d = df.sort_values(
-#         [
-#             "Ratio_Between_Within",
-#             "Explained Variance (%)",
-#             "Mean Silhouette",
-#             "Within_Cluster_Var",
-#             "Between_Cluster_Var",
-#             "n_row",
-#             "n_col",
-#         ],
-#         ascending=[False, False, False, True, False, False, False],
-#         kind="mergesort",
-#     )
-
-#     # Representative row per (n_row, n_col): the best one by this sort
-#     per_setting = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
-
-#     # Now rank the settings themselves again by the same priority
-#     settings_sorted = per_setting.sort_values(
-#         [
-#             "Ratio_Between_Within",
-#             "Explained Variance (%)",
-#             "Mean Silhouette",
-#             "Within_Cluster_Var",
-#             "Between_Cluster_Var",
-#             "n_row",
-#             "n_col",
-#         ],
-#         ascending=[False, False, False, True, False, False, False],
-#         kind="mergesort",
-#     )
-
-#     best_row = settings_sorted.iloc[0].copy()
-#     return settings_sorted, best_row
-
-
 def cluster_data(
     df: pd.DataFrame,
     *,
     freq: str = "W",
     store_item_matrix_fn: Optional[Path] = None,
-    mav_df_fn: Optional[Path] = ".",
+    mav_df_fn: Optional[Path] = None,
     only_best_model: bool = True,
-    only_top_n_clusters: int = None,
+    only_best_model_path: Optional[Path] = None,
+    only_top_n_clusters: int = 2,
+    only_top_n_clusters_path: Optional[Path] = None,
     store_fn: Optional[Path] = None,
     item_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
@@ -765,7 +715,15 @@ def cluster_data(
 
     #    _, best_row = pick_best_biclustering_setting(mav_df)
 
-    save_mav(mav_df_fn, only_best_model, only_top_n_clusters, mav_df, best_row)
+    save_mav(
+        mav_df,
+        mav_df_fn=mav_df_fn,
+        only_best_model=only_best_model,
+        only_best_model_path=only_best_model_path,
+        only_top_n_clusters=only_top_n_clusters,
+        only_top_n_clusters_path=only_top_n_clusters_path,
+        best_row=best_row,
+    )
 
     logger.info(f"Best clustering result: {best_row}")
     best_model = best_row["Model"]
@@ -829,23 +787,27 @@ def cluster_data(
     return df
 
 
-def save_mav(mav_df_fn, only_best_model, only_top_n_clusters, mav_df, best_row):
-    if mav_df_fn is None:
-        return
+def save_mav(
+    mav_df: pd.DataFrame,
+    *,
+    mav_df_fn: Optional[Path] = None,
+    only_best_model: bool = True,
+    only_best_model_path: Optional[Path] = None,
+    only_top_n_clusters: int = 2,
+    only_top_n_clusters_path: Optional[Path] = None,
+    best_row,
+):
 
-    path = Path(mav_df_fn)
-    if only_best_model and best_row is not None:
+    if only_best_model and best_row is not None and only_best_model_path is not None:
         logger.info("Saving only best model's MAV scores")
         # Get n_row and n_col from best_row and filter mav_df
         best_n_row = best_row["n_row"]
         best_n_col = best_row["n_col"]
         df = mav_df[(mav_df["n_row"] == best_n_row) & (mav_df["n_col"] == best_n_col)]
-        if path.is_dir() or str(path) == ".":
-            fn = path / "best_model_mav_df.csv"
-            logger.info(f"Saving best model mav_df to {fn}")
-            df.to_csv(fn, index=False)
+        logger.info(f"Saving best model mav_df to {only_best_model_path}")
+        df.to_csv(only_best_model_path, index=False)
 
-    if only_top_n_clusters is not None:
+    if only_top_n_clusters > 0 and only_top_n_clusters_path is not None:
         # Get the best Ratio_Between_Within for each (n_row, n_col) combination
         best_per_cluster = (
             mav_df.groupby(["n_row", "n_col"])["Ratio_Between_Within"]
@@ -855,13 +817,10 @@ def save_mav(mav_df_fn, only_best_model, only_top_n_clusters, mav_df, best_row):
             .head(only_top_n_clusters)[["n_row", "n_col"]]
         )
         mav_df = mav_df.merge(best_per_cluster, on=["n_row", "n_col"], how="inner")
-        if path.is_dir() or str(path) == ".":
-            fn = path / f"top_{only_top_n_clusters}_model_mav_df.csv"
-            logger.info(f"Saving top {only_top_n_clusters} mav_df to {fn}")
-            mav_df.to_csv(fn, index=False)
-        return
+        logger.info(
+            f"Saving top {only_top_n_clusters} mav_df to {only_top_n_clusters_path}"
+        )
+        mav_df.to_csv(only_top_n_clusters_path, index=False)
 
-    if path.is_dir() or str(path) == ".":
-        path = path / "mav_df.csv"
-    logger.info(f"Saving mav_df to {path}")
-    mav_df.to_csv(path, index=False)
+    logger.info(f"Saving mav_df to {mav_df_fn}")
+    mav_df.to_csv(mav_df_fn, index=False)

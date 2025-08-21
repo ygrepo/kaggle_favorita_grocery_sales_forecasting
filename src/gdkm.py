@@ -30,6 +30,29 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         self.norm = norm
         self.ensure_min_size = ensure_min_size
 
+    def __repr__(self, N_CHAR_MAX: int = 700) -> str:
+        """String representation of the GeneralizedDoubleKMeans object."""
+        params = []
+        params.append(f"n_row_clusters={self.n_row_clusters}")
+
+        if self.tie_columns:
+            params.append(f"n_col_clusters={self.n_col_clusters}")
+            params.append(f"tie_columns={self.tie_columns}")
+        else:
+            params.append(f"n_col_clusters_list={self.n_col_clusters_list}")
+            params.append(f"tie_columns={self.tie_columns}")
+
+        params.append(f"max_iter={self.max_iter}")
+        params.append(f"tol={self.tol}")
+        params.append(f"random_state={self.random_state}")
+        params.append(f"norm='{self.norm}'")
+        params.append(f"ensure_min_size={self.ensure_min_size}")
+
+        s = f"GeneralizedDoubleKMeans({', '.join(params)})"
+        if N_CHAR_MAX is not None and N_CHAR_MAX > 0 and len(s) > N_CHAR_MAX:
+            return s[: N_CHAR_MAX - 3] + "..."
+        return s
+
     def fit(self, X):
         X = np.asarray(X)
         I, J = X.shape
@@ -58,8 +81,7 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
             self.loss_ = prev_obj
             self.row_labels_ = np.argmax(U, axis=1)
             self.column_labels_ = np.argmax(V, axis=1)  # GLOBAL item labels (0..Q-1)
-            # For sklearn compatibility:
-            self.biclusters_ = self.get_biclusters()  # boolean indicators per (p,q)
+            # biclusters_ property is handled by BiclusterMixin
             return self
 
         else:
@@ -89,7 +111,7 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
                 self.V_list_, self.U_
             )  # labels in 0..sum(Qp)-1 (composite)
 
-            self.biclusters_ = self.get_biclusters()
+            # biclusters_ property is handled by BiclusterMixin
             return self
 
     def get_row_clusters(self):
@@ -257,126 +279,6 @@ def _globalize_item_labels_from_Vlist(V_list, U):
         support[np.arange(J)[:, None], off + np.argmax(Vp, axis=1)[:, None]] += w
     labels = np.argmax(support, axis=1)
     return labels
-
-
-# class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
-#     def __init__(
-#         self,
-#         n_row_clusters=3,
-#         n_col_clusters_list=None,
-#         max_iter=100,
-#         tol=1e-4,
-#         random_state=None,
-#         norm="l2",
-#     ):
-#         self.n_row_clusters = n_row_clusters
-#         self.n_col_clusters_list = n_col_clusters_list
-#         self.max_iter = max_iter
-#         self.tol = tol
-#         self.random_state = random_state
-#         self.norm = norm
-
-#     def fit(self, X):
-#         self.U_, self.V_list_, self.C_blocks_, self.loss_ = generalized_double_kmeans(
-#             X,
-#             P=self.n_row_clusters,
-#             Q_list=self.n_col_clusters_list,
-#             max_iter=self.max_iter,
-#             tol=self.tol,
-#             random_state=self.random_state,
-#             norm=self.norm,
-#         )
-
-#         self.row_labels_ = np.argmax(self.U_, axis=1)
-
-#         # Ensure all Vp are 2D before concatenation
-#         V_nonempty = [Vp for Vp in self.V_list_ if Vp.ndim == 2 and Vp.shape[1] > 0]
-#         if len(V_nonempty) == 0:
-#             raise ValueError("All column cluster blocks are empty or malformed.")
-
-#         # V_concat = np.concatenate(V_nonempty, axis=1)
-#         # self.column_labels_ = np.argmax(V_concat, axis=1)
-
-#         return self
-
-#     def get_row_clusters(self):
-#         return self.row_labels_
-
-#     # def get_column_clusters(self):
-#     #     return self.column_labels_
-
-#     def get_biclusters(self):
-#         """
-#         Return boolean indicator matrices (rows, columns) for each (p, q) bicluster.
-#         Each bicluster corresponds to a pair of (row cluster p, column cluster q).
-
-#         Returns:
-#             rows: (n_biclusters, n_rows) boolean array
-#             cols: (n_biclusters, n_columns) boolean array
-#         """
-#         if not hasattr(self, "U_") or not hasattr(self, "V_list_"):
-#             raise AttributeError("Must call fit() before get_biclusters().")
-
-#         row_cluster_count = self.U_.shape[1]
-#         rows = []
-#         cols = []
-
-#         for p in range(row_cluster_count):
-#             row_mask = self.U_[:, p] == 1  # (n_rows,)
-#             Vp = self.V_list_[p]  # (n_cols, Qp)
-#             Qp = Vp.shape[1]
-
-#             for q in range(Qp):
-#                 col_mask = Vp[:, q] == 1  # (n_cols,)
-#                 if np.any(row_mask) and np.any(col_mask):  # optional safeguard
-#                     rows.append(row_mask)
-#                     cols.append(col_mask)
-
-#         return np.array(rows), np.array(cols)
-
-#     @property
-#     def biclusters_(self):
-#         """
-#         Alias property to comply with sklearn's BiclusterMixin standard.
-#         Matches SpectralBiclustering.biclusters_ structure.
-#         """
-#         return self.get_biclusters()
-
-#     def get_cluster_assignments(self, df):
-#         """
-#         Return a long-form DataFrame with store, item, store_cluster, and item_cluster.
-
-#         Parameters
-#         ----------
-#         df : pd.DataFrame
-#             The original input data (rows = stores, columns = items).
-
-#         Returns
-#         -------
-#         pd.DataFrame with columns: store, item, store_cluster, item_cluster
-#         """
-#         store_indices = df.index
-#         item_columns = df.columns
-
-#         result = []
-
-#         for p, Vp in enumerate(self.V_list_):
-#             # Row indices for cluster p
-#             row_mask = self.U_[:, p] == 1
-#             store_ids = store_indices[row_mask]
-
-#             # For each item assigned to a cluster q in Vp
-#             for q in range(Vp.shape[1]):
-#                 col_mask = Vp[:, q] == 1
-#                 item_ids = item_columns[col_mask]
-
-#                 for store in store_ids:
-#                     for item in item_ids:
-#                         result.append((store, item, p, q))
-
-#         return pd.DataFrame(
-#             result, columns=["store", "item", "store_cluster", "item_cluster"]
-#         )
 
 
 def huber_loss(diff, delta=1.0):
