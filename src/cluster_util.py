@@ -419,61 +419,6 @@ def safe_silhouette(
     return np.nan
 
 
-# def _valid_silhouette_input(
-#     X: np.ndarray,
-#     labels: np.ndarray,
-# ) -> bool:
-#     if labels is None:
-#         logger.warning("[silhouette] labels is None")
-#         return False
-
-#     labs, counts = np.unique(labels, return_counts=True)
-#     if len(labs) < 2:
-#         logger.warning(f"[silhouette] only {len(labs)} cluster(s): {labs}")
-#         return False
-
-#     if (counts < 2).any():
-#         bad = labs[counts < 2]
-#         logger.warning(f"[silhouette] clusters with <2 members: {bad}")
-#         return False
-
-#     if not np.isfinite(X).all():
-#         nan_mask = ~np.isfinite(X)
-#         bad_rows, bad_cols = np.where(nan_mask)
-#         logger.warning(
-#             f"[silhouette] Found {nan_mask.sum()} invalid entries (NaN/inf)."
-#         )
-#         for r, c in zip(bad_rows[:20], bad_cols[:20]):  # limit to first 20
-#             logger.warning(f"  - Row {r}, Col {c}, Value={X[r,c]}")
-#         return False
-
-#     return True
-
-
-# def safe_silhouette(
-#     X: np.ndarray,
-#     row_labels: np.ndarray | None = None,
-#     col_labels: np.ndarray | None = None,
-#     log_level="INFO",
-# ) -> float:
-#     """Prefer row silhouette; fall back to columns; else NaN."""
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-#     # rows first
-#     if row_labels is not None and _valid_silhouette_input(X, row_labels):
-#         try:
-#             return float(silhouette_score(X, row_labels))
-#         except Exception as e:
-#             logger.warning(f"[silhouette] row failed: {e}")
-#     # columns fallback
-#     if col_labels is not None and _valid_silhouette_input(X.T, col_labels):
-#         try:
-#             return float(silhouette_score(X.T, col_labels))
-#         except Exception as e:
-#             logger.warning(f"[silhouette] col failed: {e}")
-#     logger.warning("[silhouette] not computable (degenerate labels or non-finite X)")
-#     return np.nan
-
-
 # --- Check cluster sizes (rows & columns) ---
 def _small_clusters(labels, k, min_size, *, log_level="INFO"):
     """Return indices of clusters with fewer than `min_size` members."""
@@ -512,6 +457,139 @@ def log_cluster_sizes(labels, kind="row", k_expected=None, log_level="INFO"):
         cnt = present.get(lab, 0)
         lvl = logger.warning if cnt == 0 else logger.info
         lvl(f"  - Cluster {lab}: {cnt} members")
+
+
+import numpy as np
+from typing import Optional, Dict, Any, Tuple
+
+
+def _canon_labels(labels: np.ndarray) -> Tuple[np.ndarray, int]:
+    """
+    Map arbitrary integer labels to 0..K-1 (stable order).
+    Returns (mapped_labels, K).
+    """
+    labs = np.asarray(labels, dtype=int)
+    uniq = np.unique(labs)
+    remap = {v: i for i, v in enumerate(uniq)}
+    mapped = np.vectorize(remap.get)(labs)
+    return mapped, uniq.size
+
+
+def block_reconstruct_from_labels(
+    X: np.ndarray,
+    row_labels: np.ndarray,
+    col_labels: Optional[np.ndarray] = None,
+    *,
+    stat: str = "mean",  # 'mean' (L2-consistent) or 'median' (L1-consistent)
+) -> Dict[str, Any]:
+    """
+    Build one-hot U,V from labels, compute block means C, reconstruction Xhat, and true PVE.
+
+    Shapes:
+      - X: (I, J)
+      - U: (I, P), V: (J, Q)
+      - If col_labels is None (or identity), C: (P, J) and Xhat = U @ C
+      - Else C: (P, Q) and Xhat = U @ C @ V.T
+
+    Returns dict with:
+      - 'U', 'V' (or None if identity), 'C', 'Xhat', 'pve',
+        'row_labels', 'col_labels' (canonicalized 0..K-1), 'P', 'Q'
+    """
+    X = np.asarray(X)
+    I, J = X.shape
+
+    # Canonicalize labels
+    row_labels, P = _canon_labels(np.asarray(row_labels))
+    if col_labels is not None:
+        col_labels, Q = _canon_labels(np.asarray(col_labels))
+    else:
+        Q = None
+
+    # One-hot U
+    U = np.eye(P, dtype=int)[row_labels]  # (I,P)
+
+    # Detect “no real” column clustering (identity)
+    no_col_clustering = (col_labels is None) or (
+        Q == J and np.array_equal(col_labels, np.arange(J))
+    )
+
+    if no_col_clustering:
+        # Row-only clustering: C is per-row-cluster centroid across columns
+        if stat == "mean":
+            counts = U.sum(axis=0, keepdims=True).T.astype(float)  # (P,1)
+            C = (U.T @ X) / np.maximum(counts, 1e-12)  # (P,J)
+        elif stat == "median":
+            C = np.zeros((P, J), dtype=float)
+            for p in range(P):
+                rmask = row_labels == p
+                if rmask.any():
+                    C[p] = np.median(X[rmask], axis=0)
+        else:
+            raise ValueError("stat must be 'mean' or 'median'")
+
+        Xhat = U @ C  # (I,J)
+        V = None
+
+    else:
+        # True biclustering: build V and block means C[p,q]
+        V = np.eye(Q, dtype=int)[col_labels]  # (J,Q)
+
+        if stat == "mean":
+            row_counts = U.sum(axis=0).astype(float)  # (P,)
+            col_counts = V.sum(axis=0).astype(float)  # (Q,)
+            counts = np.outer(row_counts, col_counts)  # (P,Q)
+            sums = U.T @ X @ V  # (P,Q)
+            C = sums / np.maximum(counts, 1e-12)
+            C[counts == 0] = 0.0
+        elif stat == "median":
+            C = np.zeros((P, Q), dtype=float)
+            for p in range(P):
+                rmask = row_labels == p
+                if not rmask.any():  # empty row cluster
+                    continue
+                Xp = X[rmask]
+                for q in range(Q):
+                    cmask = col_labels == q
+                    if not cmask.any():  # empty col cluster
+                        continue
+                    blk = Xp[:, cmask]
+                    if blk.size > 0:
+                        C[p, q] = np.median(blk)
+        else:
+            raise ValueError("stat must be 'mean' or 'median'")
+
+        Xhat = U @ C @ V.T  # (I,J)
+
+    # True block-model PVE
+    Xc = X - X.mean(axis=0, keepdims=True)
+    tss = float(np.sum(Xc * Xc))
+    rss = float(np.sum((X - Xhat) ** 2))
+    pve = 100.0 * (1.0 - rss / max(tss, 1e-12)) if tss > 0 else np.nan
+
+    return {
+        "U": U,
+        "V": V,
+        "C": C,
+        "Xhat": Xhat,
+        "pve": pve,
+        "row_labels": row_labels,
+        "col_labels": (None if no_col_clustering else col_labels),
+        "P": P,
+        "Q": (None if no_col_clustering else Q),
+    }
+
+
+def true_block_pve(
+    X: np.ndarray,
+    row_labels: np.ndarray,
+    col_labels: Optional[np.ndarray] = None,
+    *,
+    stat: str = "mean",
+) -> float:
+    """Convenience wrapper: return only the true block-model PVE (%)."""
+    return float(
+        block_reconstruct_from_labels(X, row_labels, col_labels, stat=stat)["pve"]
+    )
 
 
 def compute_biclustering_scores(
@@ -609,7 +687,86 @@ def compute_biclustering_scores(
                     else:
                         raise RuntimeError(msg)
 
-                # --- Build cluster assignment tables ---
+                # # --- Build cluster assignment tables ---
+                # store_clusters = pd.DataFrame(
+                #     {"store": data.index, "store_cluster": row_labels.astype(int)}
+                # )
+                # item_clusters = pd.DataFrame(
+                #     {"item": data.columns, "item_cluster": col_labels.astype(int)}
+                # )
+                # df_assignments = pd.DataFrame(
+                #     {
+                #         "store": np.repeat(data.index.values, len(data.columns)),
+                #         "item": np.tile(data.columns.values, len(data.index)),
+                #     }
+                # )
+
+                # df_assignments = df_assignments.merge(
+                #     store_clusters, on="store", how="left"
+                # ).merge(item_clusters, on="item", how="left")
+
+                # # --- MAV computation (per (store,item) and per (store_cluster,item_cluster)) ---
+                # per_store_item, per_cluster = mav_by_cluster(
+                #     df_assignments,
+                #     data,
+                #     col_mav_name=col_mav_name,
+                #     col_cluster_mav_name=col_cluster_mav_name,
+                # )
+
+                # # --- Global variance metrics across all (store,item) points ---
+                # global_mean = per_store_item[col_mav_name].mean()
+
+                # # Between-cluster variance (weighted by cluster size)
+                # if len(per_cluster) > 1:
+                #     between_num = (
+                #         (per_cluster[f"{col_cluster_mav_name}_mean"] - global_mean) ** 2
+                #         * per_cluster["n_obs"]
+                #     ).sum()
+                #     # df = N - 1
+                #     between_var = between_num / max(per_store_item.shape[0] - 1, 1)
+                # else:
+                #     between_var = np.nan
+
+                # # Within-cluster variance (pooled)
+                # if len(per_cluster) > 0:
+                #     within_num = (
+                #         per_cluster[f"{col_cluster_mav_name}_within_var"]
+                #         * (per_cluster["n_obs"] - 1)
+                #     ).sum()
+                #     denom = per_store_item.shape[0] - len(per_cluster)
+                #     within_var = within_num / denom if denom > 0 else np.nan
+                # else:
+                #     within_var = np.nan
+
+                # if np.isnan(within_var) or within_var <= 0:
+                #     ratio_between_within = np.nan
+                # else:
+                #     ratio_between_within = between_var / within_var
+
+                # # --- PVE (by nearest-row-centroid reconstruction) & Silhouette on rows ---
+                # global_mean_vec = X.mean(axis=0)
+                # total_ss = float(np.sum((X - global_mean_vec) ** 2))
+                # # row centroids
+                # row_centroids = []
+                # for cid in range(n_row):
+                #     mask = row_labels == cid
+                #     if np.any(mask):
+                #         row_centroids.append(X[mask].mean(axis=0))
+                #     else:
+                #         row_centroids.append(None)
+
+                # # reconstruction error: nearest centroid
+                # recon_error = 0.0
+                # for xi in X:
+                #     dists = [
+                #         np.linalg.norm(xi - c) if c is not None else np.inf
+                #         for c in row_centroids
+                #     ]
+                #     recon_error += float(np.min(dists) ** 2)
+                # pve = (
+                #     100.0 * (1.0 - (recon_error / total_ss)) if total_ss > 0 else np.nan
+                # )
+                # --- Build cluster assignment tables (unchanged) ---
                 store_clusters = pd.DataFrame(
                     {"store": data.index, "store_cluster": row_labels.astype(int)}
                 )
@@ -644,7 +801,6 @@ def compute_biclustering_scores(
                         (per_cluster[f"{col_cluster_mav_name}_mean"] - global_mean) ** 2
                         * per_cluster["n_obs"]
                     ).sum()
-                    # df = N - 1
                     between_var = between_num / max(per_store_item.shape[0] - 1, 1)
                 else:
                     between_var = np.nan
@@ -660,34 +816,52 @@ def compute_biclustering_scores(
                 else:
                     within_var = np.nan
 
-                if np.isnan(within_var) or within_var <= 0:
-                    ratio_between_within = np.nan
-                else:
-                    ratio_between_within = between_var / within_var
-
-                # --- PVE (by nearest-row-centroid reconstruction) & Silhouette on rows ---
-                global_mean_vec = X.mean(axis=0)
-                total_ss = float(np.sum((X - global_mean_vec) ** 2))
-                # row centroids
-                row_centroids = []
-                for cid in range(n_row):
-                    mask = row_labels == cid
-                    if np.any(mask):
-                        row_centroids.append(X[mask].mean(axis=0))
-                    else:
-                        row_centroids.append(None)
-
-                # reconstruction error: nearest centroid
-                recon_error = 0.0
-                for xi in X:
-                    dists = [
-                        np.linalg.norm(xi - c) if c is not None else np.inf
-                        for c in row_centroids
-                    ]
-                    recon_error += float(np.min(dists) ** 2)
-                pve = (
-                    100.0 * (1.0 - (recon_error / total_ss)) if total_ss > 0 else np.nan
+                ratio_between_within = (
+                    between_var / within_var
+                    if (np.isfinite(within_var) and within_var > 0)
+                    else np.nan
                 )
+
+                # ================================
+                # True block-model PVE (no proxy)
+                # ================================
+                # Build one-hot U, V from labels
+                # If `data` is a DataFrame from your pipeline:
+                X = data.values
+
+                # From any fitted model:
+                row_labels = model.row_labels_          # or np.argmax(model.rows_, axis=0)
+                col_labels = getattr(model, "column_labels_", None)
+
+                res = block_reconstruct_from_labels(X, row_labels, col_labels, stat="mean")
+                pve = res["pve"]
+                logger.info(f"PVE (true block): {res['pve']:.2f}%")
+                Xhat = res["Xhat"]  # reconstructed matrix
+                C    = res["C"]     # block means
+
+                # P = int(n_row)
+                # Q = int(
+                #     use_n_col
+                #     if "use_n_col" in locals() and use_n_col is not None
+                #     else n_col
+                # )
+                # U = np.eye(P, dtype=int)[row_labels]  # (I,P)
+                # V = np.eye(Q, dtype=int)[col_labels]  # (J,Q)
+
+                # # Block means C[p,q] = mean of X over rows in p and cols in q
+                # row_counts = U.sum(axis=0).astype(float)  # (P,)
+                # col_counts = V.sum(axis=0).astype(float)  # (Q,)
+                # counts = np.outer(row_counts, col_counts)  # (P,Q)
+                # sums = U.T @ X @ V  # (P,Q)
+                # C = sums / np.maximum(counts, 1e-12)
+                # C[counts == 0] = 0.0
+
+                # # Reconstruction and explained variance
+                # Xhat = U @ C @ V.T
+                # X_centered = X - X.mean(axis=0, keepdims=True)
+                # rss = float(np.sum((X - Xhat) ** 2))
+                # tss = float(np.sum(X_centered**2))
+                # pve = 100.0 * (1.0 - rss / max(tss, 1e-12)) if tss > 0 else np.nan
 
                 try:
                     # --- Silhouette (use model's own labels, fallback to columns) ---
