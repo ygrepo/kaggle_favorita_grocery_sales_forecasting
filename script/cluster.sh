@@ -24,6 +24,7 @@ ONLY_TOP_N_CLUSTERS_PATH="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_i
 ONLY_BEST_MODEL="True"
 ONLY_TOP_N_CLUSTERS="2"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
+MODEL="GeneralizedDoubleKMeans"
 
 ROW_RANGE="5:10"
 COL_RANGE="5:10"
@@ -54,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --item_fn) ITEM_FN="$2"; shift 2 ;;
     --store_fn) STORE_FN="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
     --row_range) ROW_RANGE="$2"; shift 2 ;;
     --col_range) COL_RANGE="$2"; shift 2 ;;
     --min_cluster_size) MIN_CLUSTER_SIZE="$2"; shift 2 ;;
@@ -88,6 +90,7 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Row range: $ROW_RANGE" | tee -a "$LOG_FILE"
 echo "Col range: $COL_RANGE" | tee -a "$LOG_FILE"
 echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
+echo "Model: $MODEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/cluster.py" \
@@ -99,6 +102,7 @@ python "${SCRIPT_DIR}/cluster.py" \
   --output_fn "$OUTPUT_FN" \
   --item_fn "$ITEM_FN" \
   --store_fn "$STORE_FN" \
+  --model "$MODEL" \
   --row_range "$ROW_RANGE" \
   --col_range "$COL_RANGE" \
   --only_best_model "$ONLY_BEST_MODEL" \

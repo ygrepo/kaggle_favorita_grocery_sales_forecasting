@@ -18,7 +18,6 @@ sys.path.insert(0, str(project_root))
 from src.data_utils import load_raw_data
 from src.cluster_util import cluster_data
 from src.utils import setup_logging, str2bool
-from sklearn.cluster import SpectralCoclustering
 
 
 def parse_range(range_str):
@@ -138,6 +137,12 @@ def parse_args():
         help="Whether to skip invalid clusters",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="SpectralCoclustering",
+        help="Model to use",
+    )
+    parser.add_argument(
         "--log_dir",
         type=str,
         default="../output/logs",
@@ -196,6 +201,7 @@ def main():
         logger.info(f"  Min cluster size: {args.min_cluster_size}")
         logger.info(f"  Skip invalid: {args.skip_invalid}")
         logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Model: {args.model}")
 
         # Load and preprocess data
         df = load_raw_data(data_fn)
@@ -214,6 +220,7 @@ def main():
             item_fn=item_fn,
             store_fn=store_fn,
             output_fn=output_fn,
+            model_name=args.model,
             row_range=row_range,
             col_range=col_range,
             only_best_model=str2bool(args.only_best_model),

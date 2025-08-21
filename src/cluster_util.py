@@ -23,6 +23,100 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def get_ClusterClass(model_class_name: str) -> object:
+    """
+    Get a clustering model class from a string name.
+
+    Parameters
+    ----------
+    model_class_name : str
+        Name of the clustering model class
+
+    Returns
+    -------
+    model_class : class
+        The clustering model class
+    """
+    MODEL_CLASSES = {
+        "SpectralBiclustering": SpectralBiclustering,
+        "SpectralCoclustering": SpectralCoclustering,
+        "SpectralClustering": SpectralClustering,
+        "HDBSCAN": HDBSCAN,
+        "GeneralizedDoubleKMeans": GeneralizedDoubleKMeans,
+        "TiedGDKM": TiedGDKM,
+    }
+
+    if model_class_name not in MODEL_CLASSES:
+        raise ValueError(
+            f"Unknown model class: {model_class_name}. Available: {list(MODEL_CLASSES.keys())}"
+        )
+
+    return MODEL_CLASSES[model_class_name]
+
+
+def get_ClusterModel(
+    model_class: str, n_row: int, n_col: int, **model_kwargs
+) -> tuple[object, int]:
+    """
+    Create a clustering model instance from a string name.
+
+    Parameters
+    ----------
+    model_class : str
+        Name of the clustering model class
+    n_row : int
+        Number of row clusters
+    n_col : int
+        Number of column clusters
+    **model_kwargs
+        Additional keyword arguments for the model constructor
+
+    Returns
+    -------
+    model : object
+        Instantiated clustering model
+    use_n_col : int
+        Effective number of column clusters used
+    """
+    # Map string names to actual class objects
+    model_cls = get_ClusterClass(model_class)
+    logger.info(f"Building model {model_class} with n_row={n_row}, n_col={n_col}")
+    use_n_col = n_col
+    try:
+        # --- Build the model with the right n_clusters ---
+        if model_class == "SpectralBiclustering":
+            model = model_cls(n_clusters=(n_row, n_col), **model_kwargs)
+            use_n_col = n_col
+        elif model_class == "SpectralCoclustering":
+            model = model_cls(n_clusters=n_row, **model_kwargs)
+            # n_col not defined for this estimator
+            use_n_col = n_row
+        elif model_class == "GeneralizedDoubleKMeans":
+            # GDKM uses n_row_clusters and n_col_clusters
+            model = model_cls(
+                n_row_clusters=n_row,
+                n_col_clusters=n_col,  # Global V (tied columns)
+                tie_columns=True,  # Use tied columns mode
+                **model_kwargs,
+            )
+            use_n_col = n_col
+        elif model_class == "TiedGDKM":
+            model = model_cls(
+                n_row_clusters=n_row,
+                n_col_clusters=n_col,
+                **model_kwargs,
+            )
+            use_n_col = n_col
+        else:
+            # Default case for other clustering models (SpectralClustering, HDBSCAN, etc.)
+            model = model_cls(n_clusters=n_row, **model_kwargs)
+            use_n_col = n_row
+    except Exception as e:
+        logger.error(f"Error building model {model_class}: {e}")
+        raise
+    return model, use_n_col
+
+
 def compute_spectral_clustering_cv_scores(
     data,
     *,
@@ -282,7 +376,7 @@ def log_cluster_sizes(labels, kind="row", k_expected=None, log_level="INFO"):
 def compute_biclustering_scores(
     data,
     *,
-    model_class,
+    model_name: str = "SpectralBiclustering",
     model_kwargs=None,
     row_range=range(2, 6),
     col_range=range(2, 6),
@@ -325,36 +419,10 @@ def compute_biclustering_scores(
                 continue
 
             use_n_col = n_col  # reset per iteration
-            logger.info(f"Evaluating n_row={n_row}, n_col={n_col}")
             try:
-                # --- Build the model with the right n_clusters ---
-                if model_class.__name__ == "SpectralBiclustering":
-                    model = model_class(n_clusters=(n_row, n_col), **model_kwargs)
-                elif model_class.__name__ == "SpectralCoclustering":
-                    model = model_class(n_clusters=n_row, **model_kwargs)
-                    # n_col not defined for this estimator
-                    use_n_col = n_row
-                elif model_class.__name__ == "GeneralizedDoubleKMeans":
-                    # GDKM uses n_row_clusters and n_col_clusters_list
-                    # n_col_clusters_list = [
-                    #    n_col
-                    # ] * n_row  # same n_col for each row cluster
-                    model = model_class(
-                        n_row_clusters=n_row,
-                        n_col_clusters=n_col,  # NEW: global V if n_col_clusters is not None
-                        # n_col_clusters_list=n_col_clusters_list,
-                        **model_kwargs,
-                    )
-                elif model_class.__name__ == "TiedGDKM":
-                    model = model_class(
-                        n_row_clusters=n_row,
-                        n_col_clusters=n_col,  # NEW: global V if n_col_clusters is not None
-                        **model_kwargs,
-                    )
-                else:
-                    model = model_class(n_clusters=n_row, **model_kwargs)
-                    use_n_col = n_row
-
+                model, use_n_col = get_ClusterModel(
+                    model_name, n_row, n_col, **model_kwargs
+                )
                 # fit
                 model.fit(X)
 
@@ -661,7 +729,7 @@ def cluster_data(
     store_fn: Optional[Path] = None,
     item_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
-    model_class=SpectralBiclustering,
+    model_name="SpectralBiclustering",
     row_range: range = range(2, 5),
     col_range: range = range(2, 5),
     min_cluster_size: int = 2,
@@ -698,7 +766,7 @@ def cluster_data(
     # Run biclustering grid search
     mav_df = compute_biclustering_scores(
         data=norm_data,
-        model_class=model_class,
+        model_name=model_name,
         row_range=row_range,
         col_range=col_range,
         true_row_labels=None,
