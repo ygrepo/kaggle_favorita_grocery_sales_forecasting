@@ -20,6 +20,18 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         norm="l2",
         ensure_min_size: int = 1,  # NEW: optionally enforce min size per cluster
     ):
+        """
+        Initialize GeneralizedDoubleKMeans.
+
+        Parameters
+        ----------
+        norm : str, default="l2"
+            Distance norm to use. Options: "l1", "l2", "huber", "mav_ratio".
+            - "l1": L1 norm (Manhattan distance)
+            - "l2": L2 norm (Euclidean distance)
+            - "huber": Huber loss (robust to outliers)
+            - "mav_ratio": Mean Absolute Value ratio (MAE / MAV)
+        """
         self.n_row_clusters = n_row_clusters
         self.n_col_clusters = n_col_clusters
         self.n_col_clusters_list = n_col_clusters_list
@@ -218,8 +230,14 @@ def _update_U_tied(X, C, V, norm="l2"):
     elif norm == "huber":
         for p in range(P):
             errs[:, p] = np.sum(huber_loss(X - prototypes[p]), axis=1)
+    elif norm == "mav_ratio":
+        for p in range(P):
+            diff = X - prototypes[p]  # (I, J)
+            mae = np.sum(np.abs(diff), axis=1)  # mean absolute error per row
+            mav = np.sum(np.abs(X), axis=1)  # mean absolute value per row
+            errs[:, p] = mae / np.maximum(mav, 1e-12)  # MAV ratio per row
     else:
-        raise ValueError("Unsupported norm")
+        raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
     U = np.zeros((I, P), dtype=int)
     U[np.arange(I), np.argmin(errs, axis=1)] = 1
     return U
@@ -241,8 +259,14 @@ def _update_V_tied(X, U, C, norm="l2"):
     elif norm == "huber":
         for q in range(Q):
             errs[:, q] = np.sum(huber_loss(X - bases[:, [q]]), axis=0)
+    elif norm == "mav_ratio":
+        for q in range(Q):
+            diff = X - bases[:, [q]]  # (I, J)
+            mae = np.sum(np.abs(diff), axis=0)  # mean absolute error per column
+            mav = np.sum(np.abs(X), axis=0)  # mean absolute value per column
+            errs[:, q] = mae / np.maximum(mav, 1e-12)  # MAV ratio per column
     else:
-        raise ValueError("Unsupported norm")
+        raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
     V = np.zeros((J, Q), dtype=int)
     V[np.arange(J), np.argmin(errs, axis=1)] = 1
     return V
@@ -256,7 +280,12 @@ def _loss_tied(X, U, C, V, norm="l2"):
         return float(np.sum(np.abs(X - recon)))
     if norm == "huber":
         return float(np.sum(huber_loss(X - recon)))
-    raise ValueError("Unsupported norm")
+    if norm == "mav_ratio":
+        diff = X - recon
+        mae = np.sum(np.abs(diff))
+        mav = np.sum(np.abs(X))
+        return float(mae / max(mav, 1e-12))  # MAV ratio as loss
+    raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
 
 
 def _globalize_item_labels_from_Vlist(V_list, U):
@@ -394,7 +423,7 @@ def update_U(X, C_blocks, V_list, norm="l2"):
         reconstructed = cp @ Vp.T  # shape: (1, J)
         reconstructed = np.tile(reconstructed, (I, 1))  # broadcast to (I, J)
 
-        # Compute squared reconstruction error for each row
+        # Compute reconstruction error for each row
         diff = X - reconstructed  # shape: (I, J)
         if norm == "l2":
             errors[:, p] = np.sum(diff**2, axis=1)  # shape: (I,)
@@ -402,8 +431,14 @@ def update_U(X, C_blocks, V_list, norm="l2"):
             errors[:, p] = np.sum(np.abs(diff), axis=1)  # shape: (I,)
         elif norm == "huber":
             errors[:, p] = np.sum(huber_loss(diff), axis=1)  # shape: (I,)
+        elif norm == "mav_ratio":
+            mae = np.sum(np.abs(diff), axis=1)  # mean absolute error per row
+            mav = np.sum(np.abs(X), axis=1)  # mean absolute value per row
+            errors[:, p] = mae / np.maximum(mav, 1e-12)  # MAV ratio per row
         else:
-            raise ValueError("Unsupported norm type: use 'l1' or 'l2'")
+            raise ValueError(
+                "Unsupported norm type: use 'l1', 'l2', 'huber', or 'mav_ratio'"
+            )
 
     # Assign each row to the cluster with minimum reconstruction error
     new_U = np.zeros((I, P), dtype=int)
@@ -470,8 +505,15 @@ def update_V(X, U, C_blocks, Q_list, norm="l2"):
                 errors[j] = np.sum(np.abs(Xp[:, j][:, None] - cp), axis=0)
             elif norm == "huber":
                 errors[j] = np.sum(huber_loss(Xp[:, j][:, None] - cp), axis=0)
+            elif norm == "mav_ratio":
+                diff = Xp[:, j][:, None] - cp  # (n_rows_p, Qp)
+                mae = np.sum(np.abs(diff), axis=0)  # sum absolute error per centroid
+                mav = np.sum(np.abs(Xp[:, j]))  # sum absolute value for column j
+                errors[j] = mae / max(mav, 1e-12)  # MAV ratio per centroid
             else:
-                raise ValueError("Unsupported norm type: use 'l1' or 'l2'")
+                raise ValueError(
+                    "Unsupported norm type: use 'l1', 'l2', 'huber', or 'mav_ratio'"
+                )
 
         # Assign each column j to the column cluster q with minimum reconstruction error
         assignments = np.argmin(errors, axis=1)
@@ -527,8 +569,14 @@ def compute_loss(X, U, C_blocks, V_list, norm="l2"):
             loss += np.sum(np.abs(diff))
         elif norm == "huber":
             loss += np.sum(huber_loss(diff))
+        elif norm == "mav_ratio":
+            mae = np.sum(np.abs(diff))
+            mav = np.sum(np.abs(X * mask))  # only consider rows in cluster p
+            loss += mae / max(mav, 1e-12)  # MAV ratio for cluster p
         else:
-            raise ValueError("Unsupported norm type: use 'l1' or 'l2'")
+            raise ValueError(
+                "Unsupported norm type: use 'l1', 'l2', 'huber', or 'mav_ratio'"
+            )
 
     return loss
 
