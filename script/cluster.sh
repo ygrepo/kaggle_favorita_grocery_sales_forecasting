@@ -18,8 +18,9 @@ STORE_ITEM_MATRIX_FN=""
 ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_item_cluster.csv"
 STORE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_store_cluster.csv"
 
-MAV_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_mav"
-mkdir -p "$MAV_OUTPUT_FN"
+MAV_OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_mav_gdkm,csv"
+ONLY_BEST_MODEL_PATH="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_best_modelgdkm.csv"
+ONLY_TOP_N_CLUSTERS_PATH="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_gdkm_top_2.csv"
 ONLY_BEST_MODEL="True"
 ONLY_TOP_N_CLUSTERS="2"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
@@ -34,6 +35,9 @@ LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
 LOG_LEVEL="DEBUG"
+MAX_ITER="200"  
+TOL="1e-5"  
+NORM="mav_ratio"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -45,6 +49,8 @@ while [[ $# -gt 0 ]]; do
     --only_top_n_clusters) ONLY_TOP_N_CLUSTERS="$2"; shift 2 ;;
     --store_item_matrix_fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
     --mav_output_fn) MAV_OUTPUT_FN="$2"; shift 2 ;;
+    --only_best_model_path) ONLY_BEST_MODEL_PATH="$2"; shift 2 ;;
+    --only_top_n_clusters_path) ONLY_TOP_N_CLUSTERS_PATH="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --item_fn) ITEM_FN="$2"; shift 2 ;;
     --store_fn) STORE_FN="$2"; shift 2 ;;
@@ -71,6 +77,8 @@ echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
 echo "Item fn: $ITEM_FN" | tee -a "$LOG_FILE"
 echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
 echo "MAV output fn: $MAV_OUTPUT_FN" | tee -a "$LOG_FILE"
+echo "Only best model path: $ONLY_BEST_MODEL_PATH" | tee -a "$LOG_FILE"
+echo "Only top n clusters path: $ONLY_TOP_N_CLUSTERS_PATH" | tee -a "$LOG_FILE"
 echo "Only best model: $ONLY_BEST_MODEL" | tee -a "$LOG_FILE"
 echo "Only top n clusters: $ONLY_TOP_N_CLUSTERS" | tee -a "$LOG_FILE"
 echo "Min cluster size: $MIN_CLUSTER_SIZE" | tee -a "$LOG_FILE"
@@ -86,6 +94,8 @@ python "${SCRIPT_DIR}/cluster.py" \
   --data_fn "$DATA_FN" \
   --store_item_matrix_fn "$STORE_ITEM_MATRIX_FN" \
   --mav_output_fn "$MAV_OUTPUT_FN" \
+  --only_best_model_path "$ONLY_BEST_MODEL_PATH" \
+  --only_top_n_clusters_path "$ONLY_TOP_N_CLUSTERS_PATH" \
   --output_fn "$OUTPUT_FN" \
   --item_fn "$ITEM_FN" \
   --store_fn "$STORE_FN" \
@@ -97,6 +107,9 @@ python "${SCRIPT_DIR}/cluster.py" \
   --skip_invalid "$SKIP_INVALID" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
+  --max_iter "$MAX_ITER" \
+  --tol "$TOL" \
+  --norm "$NORM" \
    2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script

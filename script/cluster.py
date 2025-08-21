@@ -84,6 +84,36 @@ def parse_args():
         help="Path to MAV output file (relative to project root)",
     )
     parser.add_argument(
+        "--only_best_model_path",
+        type=str,
+        default="",
+        help="Path to only best model output file (relative to project root)",
+    )
+    parser.add_argument(
+        "--only_top_n_clusters_path",
+        type=str,
+        default="",
+        help="Path to only top n clusters output file (relative to project root)",
+    )
+    parser.add_argument(
+        "--max_iter",
+        type=int,
+        default=200,
+        help="Maximum number of iterations",
+    )
+    parser.add_argument(
+        "--tol",
+        type=float,
+        default=1e-5,
+        help="Tolerance for convergence",
+    )
+    parser.add_argument(
+        "--norm",
+        type=str,
+        default="mav_ratio",
+        help="Norm to use",
+    )
+    parser.add_argument(
         "--only_best_model",
         type=bool,
         default=True,
@@ -136,6 +166,8 @@ def main():
     else:
         store_item_matrix_fn = None
     mav_output_fn = Path(args.mav_output_fn).resolve()
+    only_best_model_path = Path(args.only_best_model_path).resolve()
+    only_top_n_clusters_path = Path(args.only_top_n_clusters_path).resolve()
     output_fn = Path(args.output_fn).resolve()
     row_range = args.row_range
     col_range = args.col_range
@@ -152,6 +184,11 @@ def main():
         logger.info(f"  Store fn: {store_fn}")
         logger.info(f"  Store item matrix fn: {store_item_matrix_fn}")
         logger.info(f"  MAV output fn: {mav_output_fn}")
+        logger.info(f"  Only best model path: {only_best_model_path}")
+        logger.info(f"  Only top n clusters path: {only_top_n_clusters_path}")
+        logger.info(f"  Max iter: {args.max_iter}")
+        logger.info(f"  Tolerance: {args.tol}")
+        logger.info(f"  Norm: {args.norm}")
         logger.info(f"  Row range: {row_range}")
         logger.info(f"  Col range: {col_range}")
         logger.info(f"  Only best model: {args.only_best_model}")
@@ -162,10 +199,18 @@ def main():
 
         # Load and preprocess data
         df = load_raw_data(data_fn)
+        model_kwargs = {
+            "max_iter": args.max_iter,
+            "tol": args.tol,
+            "random_state": 123,
+            "norm": args.norm,
+        }
         cluster_data(
             df,
             store_item_matrix_fn=store_item_matrix_fn,
             mav_df_fn=mav_output_fn,
+            only_best_model_path=only_best_model_path,
+            only_top_n_clusters_path=only_top_n_clusters_path,
             item_fn=item_fn,
             store_fn=store_fn,
             output_fn=output_fn,
@@ -175,6 +220,7 @@ def main():
             only_top_n_clusters=args.only_top_n_clusters,
             min_cluster_size=args.min_cluster_size,
             skip_invalid=str2bool(args.skip_invalid),
+            model_kwargs=model_kwargs,
             log_level=args.log_level,
         )
         logger.info("Data clustering completed successfully")
