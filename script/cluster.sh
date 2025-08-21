@@ -26,8 +26,8 @@ ONLY_TOP_N_CLUSTERS="2"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_gdkm.parquet"
 MODEL="GeneralizedDoubleKMeans"
 
-ROW_RANGE="5:20"
-COL_RANGE="5:20"
+ROW_RANGE="5:10"
+COL_RANGE="5:10"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
 MIN_CLUSTER_SIZE="2"
@@ -38,7 +38,7 @@ LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
 LOG_LEVEL="DEBUG"
 MAX_ITER="200"  
 TOL="1e-5"  
-NORM="mav_ratio"
+NORM="l1"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
