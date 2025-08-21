@@ -11,6 +11,7 @@ from sklearn.cluster import (
 from pathlib import Path
 from src.data_utils import normalize_data, mav_by_cluster, median_mean_transform
 from src.gdkm import GeneralizedDoubleKMeans
+from src.solver_gdkm import SolverGDKM
 from typing import Optional
 
 import logging
@@ -282,12 +283,12 @@ def compute_biclustering_scores(
     data,
     *,
     model_class,
+    model_kwargs=None,
     row_range=range(2, 6),
     col_range=range(2, 6),
     col_mav_name: str = "store_item_mav",
     col_cluster_mav_name: str = "store_cluster_item_cluster_mav",
     true_row_labels=None,  # kept for future ARI if you want it
-    model_kwargs=None,
     min_cluster_size=2,
     skip_invalid=True,
     log_level="INFO",
@@ -342,6 +343,12 @@ def compute_biclustering_scores(
                         n_row_clusters=n_row,
                         n_col_clusters=n_col,  # NEW: global V if n_col_clusters is not None
                         # n_col_clusters_list=n_col_clusters_list,
+                        **model_kwargs,
+                    )
+                elif model_class.__name__ == "SolverGDKM":
+                    model = model_class(
+                        n_row_clusters=n_row,
+                        n_col_clusters=n_col,  # NEW: global V if n_col_clusters is not None
                         **model_kwargs,
                     )
                 else:

@@ -6,6 +6,17 @@ from sklearn.model_selection import KFold
 import pandas as pd
 from sklearn.base import BaseEstimator, BiclusterMixin
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _get_stats(norm: str):
+    if norm == "l1":
+        return "median"
+    else:
+        return "mean"
+
 
 class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
     def __init__(
@@ -19,6 +30,7 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         random_state=None,
         norm="l2",
         ensure_min_size: int = 1,  # NEW: optionally enforce min size per cluster
+        huber_delta: float = 1.0,  # NEW: Huber loss parameter
     ):
         """
         Initialize GeneralizedDoubleKMeans.
@@ -40,7 +52,10 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         self.tol = tol
         self.random_state = random_state
         self.norm = norm
+        self.stats = _get_stats(norm)
+        logger.info(f"Initialized with norm={norm}, stats={self.stats}")
         self.ensure_min_size = ensure_min_size
+        self.huber_delta = huber_delta
 
     def __repr__(self, N_CHAR_MAX: int = 700) -> str:
         """String representation of the GeneralizedDoubleKMeans object."""
@@ -59,6 +74,8 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
         params.append(f"random_state={self.random_state}")
         params.append(f"norm='{self.norm}'")
         params.append(f"ensure_min_size={self.ensure_min_size}")
+        params.append(f"huber_delta={self.huber_delta}")
+        params.append(f"stats='{self.stats}'")
 
         s = f"GeneralizedDoubleKMeans({', '.join(params)})"
         if N_CHAR_MAX is not None and N_CHAR_MAX > 0 and len(s) > N_CHAR_MAX:
@@ -76,9 +93,11 @@ class GeneralizedDoubleKMeans(BaseEstimator, BiclusterMixin):
             # ===== TIED COLUMNS PATH =====
             U, V = _init_UV_tied(I, J, self.n_row_clusters, self.n_col_clusters, rng)
             prev_obj = np.inf
-            for it in range(self.max_iter):
-                C = _update_C_tied(X, U, V)  # C: (P, Q)
-                U = _update_U_tied(X, C, V, self.norm)  # U: (I, P) one-hot
+            for _ in range(self.max_iter):
+                C = _update_C_tied(X, U, V, stat=self.stats)  # C: (P, Q)
+                U = _update_U_tied(
+                    X, C, V, self.norm, huber_delta=self.huber_delta
+                )  # U: (I, P) one-hot
                 V = _update_V_tied(X, U, C, self.norm)  # V: (J, Q) one-hot
                 _enforce_min_size(U, axis=0, min_k=self.ensure_min_size, rng=rng)
                 _enforce_min_size(V, axis=0, min_k=self.ensure_min_size, rng=rng)
@@ -195,81 +214,194 @@ def _enforce_min_size(M, axis, min_k, rng):
             M[i, k] = 1
 
 
-def _update_C_tied(X, U, V):
-    """C = argmin ||X - U C V^T|| given one-hot U,V → C[p,q] = mean of block (p,q)."""
+def _update_C_tied(X, U, V, *, stat="mean"):
+    """
+    Vectorized C update (P x Q) for one-hot U (I x P), V (J x Q).
+    stat='mean' (L2-optimal) or 'median' (L1-optimal).
+    """
+    I, J = X.shape
     P = U.shape[1]
     Q = V.shape[1]
-    C = np.zeros((P, Q), dtype=float)
-    for p in range(P):
-        rmask = U[:, p] == 1
-        if not rmask.any():
-            continue
-        Xp = X[rmask]  # (n_p, J)
-        for q in range(Q):
-            cmask = V[:, q] == 1
-            if not cmask.any():
+
+    # Compute block sums & counts with matrix multiplies:
+    # sums[p,q] = sum_{i in p, j in q} X[i,j]
+    sums = U.T @ X @ V  # (P, Q)
+    counts = (U.T @ np.ones((I, 1))) @ (np.ones((1, J)) @ V)  # (P, Q)
+
+    if stat == "mean":
+        C = sums / np.maximum(counts, 1e-12)
+        # Optional: keep zeros when truly empty
+        C[counts == 0] = 0.0
+        return C
+
+    elif stat == "median":
+        # True L1-optimal block statistics: per-block medians
+        # This path falls back to masked loops only over non-empty blocks.
+        C = np.zeros((P, Q), dtype=X.dtype)
+        row_assign = np.argmax(U, axis=1)  # (I,)
+        col_assign = np.argmax(V, axis=1)  # (J,)
+        for p in range(P):
+            rmask = row_assign == p
+            if not rmask.any():
                 continue
-            block = Xp[:, cmask]
-            C[p, q] = block.mean() if block.size else 0.0
-    return C
+            Xp = X[rmask]  # (n_p, J)
+            for q in range(Q):
+                cmask = col_assign == q
+                if not cmask.any():
+                    continue
+                block = Xp[:, cmask]
+                if block.size:
+                    C[p, q] = np.median(block)
+                # else leave at 0.0
+        return C
+
+    else:
+        raise ValueError("stat must be 'mean' or 'median'")
 
 
-def _update_U_tied(X, C, V, norm="l2"):
-    """Assign each row i to p that minimizes ||x_i - C[p,:] @ V^T||."""
+# def _update_C_tied(X, U, V):
+#     """C = argmin ||X - U C V^T|| given one-hot U,V → C[p,q] = mean of block (p,q)."""
+#     P = U.shape[1]
+#     Q = V.shape[1]
+#     C = np.zeros((P, Q), dtype=float)
+#     for p in range(P):
+#         rmask = U[:, p] == 1
+#         if not rmask.any():
+#             continue
+#         Xp = X[rmask]  # (n_p, J)
+#         for q in range(Q):
+#             cmask = V[:, q] == 1
+#             if not cmask.any():
+#                 continue
+#             block = Xp[:, cmask]
+#             C[p, q] = block.mean() if block.size else 0.0
+#     return C
+
+
+def _update_U_tied(X, C, V, norm="l2", huber_delta=1.0):
+    """
+    Vectorized row assignment: U[i,:] = one-hot argmin_p loss(x_i, prototype_p).
+    """
     I, J = X.shape
     P, Q = C.shape
+
+    # prototypes[p, j] = C[p, q(j)]
     prototypes = C @ V.T  # (P, J)
-    errs = np.zeros((I, P))
+
+    # Broadcast to (I, P, J): compare each row to each prototype row
+    # X_exp[i, p, j] = X[i, j]
+    X_exp = X[:, None, :]  # (I, 1, J)
+    P_exp = prototypes[None, :, :]  # (1, P, J)
+    R = X_exp - P_exp  # residuals (I, P, J)
+
     if norm == "l2":
-        for p in range(P):
-            diff = X - prototypes[p]  # (I, J)
-            errs[:, p] = np.sum(diff * diff, axis=1)
+        errs = np.sum(R * R, axis=2)  # (I, P)
     elif norm == "l1":
-        for p in range(P):
-            errs[:, p] = np.sum(np.abs(X - prototypes[p]), axis=1)
+        errs = np.sum(np.abs(R), axis=2)  # (I, P)
     elif norm == "huber":
-        for p in range(P):
-            errs[:, p] = np.sum(huber_loss(X - prototypes[p]), axis=1)
+        errs = np.sum(huber_loss(R, delta=huber_delta), axis=2)
     elif norm == "mav_ratio":
-        for p in range(P):
-            diff = X - prototypes[p]  # (I, J)
-            mae = np.sum(np.abs(diff), axis=1)  # mean absolute error per row
-            mav = np.sum(np.abs(X), axis=1)  # mean absolute value per row
-            errs[:, p] = mae / np.maximum(mav, 1e-12)  # MAV ratio per row
+        mae = np.sum(np.abs(R), axis=2)  # per (i,p)
+        mav = np.sum(np.abs(X), axis=1, keepdims=True)  # (I,1)
+        errs = mae / np.maximum(mav, 1e-12)
     else:
-        raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
+        raise ValueError("Unsupported norm: 'l1', 'l2', 'huber', or 'mav_ratio'")
+
     U = np.zeros((I, P), dtype=int)
     U[np.arange(I), np.argmin(errs, axis=1)] = 1
     return U
 
 
-def _update_V_tied(X, U, C, norm="l2"):
-    """Assign each column j to q that minimizes ||x_:j - U @ C[:, q]||."""
+# def _update_U_tied(X, C, V, norm="l2"):
+#     """Assign each row i to p that minimizes ||x_i - C[p,:] @ V^T||."""
+#     I, J = X.shape
+#     P, Q = C.shape
+#     prototypes = C @ V.T  # (P, J)
+#     errs = np.zeros((I, P))
+#     if norm == "l2":
+#         for p in range(P):
+#             diff = X - prototypes[p]  # (I, J)
+#             errs[:, p] = np.sum(diff * diff, axis=1)
+#     elif norm == "l1":
+#         for p in range(P):
+#             errs[:, p] = np.sum(np.abs(X - prototypes[p]), axis=1)
+#     elif norm == "huber":
+#         for p in range(P):
+#             errs[:, p] = np.sum(huber_loss(X - prototypes[p]), axis=1)
+#     elif norm == "mav_ratio":
+#         for p in range(P):
+#             diff = X - prototypes[p]  # (I, J)
+#             mae = np.sum(np.abs(diff), axis=1)  # mean absolute error per row
+#             mav = np.sum(np.abs(X), axis=1)  # mean absolute value per row
+#             errs[:, p] = mae / np.maximum(mav, 1e-12)  # MAV ratio per row
+#     else:
+#         raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
+#     U = np.zeros((I, P), dtype=int)
+#     U[np.arange(I), np.argmin(errs, axis=1)] = 1
+#     return U
+
+
+def _update_V_tied(X, U, C, norm="l2", huber_delta=1.0):
+    """
+    Vectorized column assignment: V[j,:] = one-hot argmin_q loss(x_:j, basis_q).
+    """
     I, J = X.shape
     P, Q = C.shape
+
+    # bases[i, q] = C[p(i), q]
     bases = U @ C  # (I, Q)
-    errs = np.zeros((J, Q))
+
+    # Broadcast to (J, Q, I) by working row-major then swapping axes:
+    # Compare each column to each basis column across rows.
+    X_col = X.T[:, None, :]  # (J, 1, I)
+    B_col = bases.T[None, :, :]  # (1, Q, I)
+    R = X_col - B_col  # residuals (J, Q, I)
+
     if norm == "l2":
-        for q in range(Q):
-            diff = X - bases[:, [q]]  # (I, J)
-            errs[:, q] = np.sum((diff * diff), axis=0)
+        errs = np.sum(R * R, axis=2)  # (J, Q)
     elif norm == "l1":
-        for q in range(Q):
-            errs[:, q] = np.sum(np.abs(X - bases[:, [q]]), axis=0)
+        errs = np.sum(np.abs(R), axis=2)  # (J, Q)
     elif norm == "huber":
-        for q in range(Q):
-            errs[:, q] = np.sum(huber_loss(X - bases[:, [q]]), axis=0)
+        errs = np.sum(huber_loss(R, delta=huber_delta), axis=2)
     elif norm == "mav_ratio":
-        for q in range(Q):
-            diff = X - bases[:, [q]]  # (I, J)
-            mae = np.sum(np.abs(diff), axis=0)  # mean absolute error per column
-            mav = np.sum(np.abs(X), axis=0)  # mean absolute value per column
-            errs[:, q] = mae / np.maximum(mav, 1e-12)  # MAV ratio per column
+        mae = np.sum(np.abs(R), axis=2)  # per (j,q)
+        mav = np.sum(np.abs(X), axis=0, keepdims=True).T  # (J,1)
+        errs = mae / np.maximum(mav, 1e-12)
     else:
-        raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
+        raise ValueError("Unsupported norm: 'l1', 'l2', 'huber', or 'mav_ratio'")
+
     V = np.zeros((J, Q), dtype=int)
     V[np.arange(J), np.argmin(errs, axis=1)] = 1
     return V
+
+
+# def _update_V_tied(X, U, C, norm="l2"):
+#     """Assign each column j to q that minimizes ||x_:j - U @ C[:, q]||."""
+#     I, J = X.shape
+#     P, Q = C.shape
+#     bases = U @ C  # (I, Q)
+#     errs = np.zeros((J, Q))
+#     if norm == "l2":
+#         for q in range(Q):
+#             diff = X - bases[:, [q]]  # (I, J)
+#             errs[:, q] = np.sum((diff * diff), axis=0)
+#     elif norm == "l1":
+#         for q in range(Q):
+#             errs[:, q] = np.sum(np.abs(X - bases[:, [q]]), axis=0)
+#     elif norm == "huber":
+#         for q in range(Q):
+#             errs[:, q] = np.sum(huber_loss(X - bases[:, [q]]), axis=0)
+#     elif norm == "mav_ratio":
+#         for q in range(Q):
+#             diff = X - bases[:, [q]]  # (I, J)
+#             mae = np.sum(np.abs(diff), axis=0)  # mean absolute error per column
+#             mav = np.sum(np.abs(X), axis=0)  # mean absolute value per column
+#             errs[:, q] = mae / np.maximum(mav, 1e-12)  # MAV ratio per column
+#     else:
+#         raise ValueError("Unsupported norm: use 'l1', 'l2', 'huber', or 'mav_ratio'")
+#     V = np.zeros((J, Q), dtype=int)
+#     V[np.arange(J), np.argmin(errs, axis=1)] = 1
+#     return V
 
 
 def _loss_tied(X, U, C, V, norm="l2"):
