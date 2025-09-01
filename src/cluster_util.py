@@ -1,18 +1,18 @@
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold
-from sklearn.metrics import adjusted_rand_score, silhouette_score
+from sklearn.metrics import silhouette_score
 from sklearn.cluster import (
     SpectralBiclustering,
     SpectralClustering,
     SpectralCoclustering,
-    HDBSCAN,
 )
 from pathlib import Path
-from src.data_utils import normalize_data, mav_by_cluster, median_mean_transform
+from src.data_utils import normalize_data, mav_by_cluster
 from src.gdkm import GeneralizedDoubleKMeans
 from src.solver_gdkm import TiedGDKM
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple
+
 
 import logging
 
@@ -41,7 +41,6 @@ def get_ClusterClass(model_class_name: str) -> object:
         "SpectralBiclustering": SpectralBiclustering,
         "SpectralCoclustering": SpectralCoclustering,
         "SpectralClustering": SpectralClustering,
-        "HDBSCAN": HDBSCAN,
         "GeneralizedDoubleKMeans": GeneralizedDoubleKMeans,
         "TiedGDKM": TiedGDKM,
     }
@@ -116,173 +115,6 @@ def get_ClusterModel(
         raise
     return model, use_n_col
 
-
-def compute_spectral_clustering_cv_scores(
-    data,
-    *,
-    model_class=SpectralBiclustering,
-    n_clusters_row_range=range(2, 6),
-    cv_folds=3,
-    true_row_labels=None,
-    model_kwargs=None,
-):
-    """Cross‑validate Spectral[Bic|Co]clustering and SpectralClustering."""
-
-    def _safe_mean(arr):
-        return np.nan if np.all(np.isnan(arr)) else np.nanmean(arr)
-
-    if model_kwargs is None:
-        model_kwargs = {}
-    model_kwargs = dict(model_kwargs)
-    model_kwargs.setdefault("random_state", 42)
-
-    X = np.asarray(data)
-    n_rows, n_cols = X.shape
-    results = []
-    kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
-
-    # ───────────────────────────────────────────────────────────────────
-    # 0.  *NEW* — find the *smallest* training‑fold size
-    # ───────────────────────────────────────────────────────────────────
-    min_train_samples = int(np.floor(n_rows * (cv_folds - 1) / cv_folds))
-    max_row_clusters = min(n_rows, min_train_samples)
-    n_clusters_row_range = [k for k in n_clusters_row_range if k <= max_row_clusters]
-
-    # Decide how many loop dimensions we actually have
-    if model_class is SpectralClustering:
-        col_range = [None]
-        loop_over_col = False
-    elif model_class is SpectralCoclustering:
-        col_range = [None]
-        loop_over_col = False
-    else:  # SpectralBiclustering
-        col_range = [None]
-        #        col_range = [c for c in n_clusters_col_range if c <= n_cols]
-        loop_over_col = False
-
-    # ───────────────────────────────────────────────────────────────────
-    # 1.  Grid search
-    # ───────────────────────────────────────────────────────────────────
-    for n_row in n_clusters_row_range:
-        logger.info(f"Evaluating n_row={n_row}")
-        for n_col in col_range:
-            msg = f"Evaluating n_row={n_row}"
-            if loop_over_col:
-                msg += f", n_col={n_col}"
-            logger.info(msg)
-
-            pve_list, sil_list, ari_list = [], [], []
-
-            for train_idx, test_idx in kf.split(X):
-
-                logger.info(f"\tFold {kf.get_n_splits()}")
-                # *NEW* — skip this fold if it has too few samples
-                if n_row > len(train_idx):
-                    pve_list.append(np.nan)
-                    sil_list.append(np.nan)
-                    ari_list.append(np.nan)
-                    continue
-
-                X_train, X_test = X[train_idx], X[test_idx]
-
-                try:
-                    # Instantiate model
-                    if model_class is SpectralClustering:
-                        model = model_class(n_clusters=n_row, **model_kwargs)
-                    elif model_class is SpectralCoclustering:
-                        model = model_class(n_clusters=n_row, **model_kwargs)
-                    else:  # SpectralBiclustering
-                        n_col_eff = n_row if n_col is None else n_col
-                        model = model_class(
-                            n_clusters=(n_row, n_col_eff), **model_kwargs
-                        )
-
-                    model.fit(X_train)
-
-                    # Row labels
-                    if hasattr(model, "row_labels_"):
-                        row_labels = model.row_labels_
-                    elif hasattr(model, "labels_"):
-                        row_labels = model.labels_
-                    else:  # SpectralCoclustering
-                        row_labels = np.argmax(model.rows_, axis=0)
-
-                    # % Variance explained
-                    global_mean = X_train.mean(axis=0)
-                    total_ss = np.sum((X_test - global_mean) ** 2)
-
-                    recon_error = 0.0
-                    for xi in X_test:
-                        best_err = np.inf
-                        for cid in range(n_row):
-                            mask = row_labels == cid
-                            if np.any(mask):
-                                centroid = X_train[mask].mean(axis=0)
-                                best_err = min(
-                                    best_err,
-                                    np.linalg.norm(xi - centroid) ** 2,
-                                )
-                        recon_error += best_err
-                    pve_list.append(100 * (1 - recon_error / total_ss))
-
-                    # Predicted labels for test rows
-                    test_labels = np.array(
-                        [
-                            np.argmin(
-                                [
-                                    (
-                                        np.linalg.norm(
-                                            xi - X_train[row_labels == cid].mean(axis=0)
-                                        )
-                                        if np.any(row_labels == cid)
-                                        else np.inf
-                                    )
-                                    for cid in range(n_row)
-                                ]
-                            )
-                            for xi in X_test
-                        ]
-                    )
-
-                    # ARI
-                    if true_row_labels is not None:
-                        ari_list.append(
-                            adjusted_rand_score(true_row_labels[test_idx], test_labels)
-                        )
-
-                    # Silhouette
-                    try:
-                        sil_list.append(silhouette_score(X_test, test_labels))
-                    except ValueError:
-                        sil_list.append(np.nan)
-
-                except Exception as e:
-                    fail_msg = f"[FAIL] n_row={n_row}"
-                    if loop_over_col:
-                        fail_msg += f", n_col={n_col}"
-                    logger.error(f"{fail_msg} → {e}")
-                    pve_list.append(np.nan)
-                    sil_list.append(np.nan)
-                    ari_list.append(np.nan)
-
-            results.append(
-                {
-                    "n_row": n_row,
-                    "n_col": n_col if loop_over_col else np.nan,
-                    "Explained Variance (%)": _safe_mean(pve_list),
-                    "Mean Silhouette": _safe_mean(sil_list),
-                    "Mean ARI": _safe_mean(ari_list),
-                }
-            )
-
-    return pd.DataFrame(results)
-
-
-import logging
-import numpy as np
-from sklearn.metrics import silhouette_score
-
-logger = logging.getLogger(__name__)
 
 # ----------------------------- helpers -----------------------------
 
@@ -459,14 +291,13 @@ def log_cluster_sizes(labels, kind="row", k_expected=None, log_level="INFO"):
         lvl(f"  - Cluster {lab}: {cnt} members")
 
 
-import numpy as np
-from typing import Optional, Dict, Any, Tuple
-
-
 def _canon_labels(labels: np.ndarray) -> Tuple[np.ndarray, int]:
     """
     Map arbitrary integer labels to 0..K-1 (stable order).
     Returns (mapped_labels, K).
+    This function canonicalizes any integer labels
+    to that range and returns both the mapped labels and K
+    (the number of unique labels)
     """
     labs = np.asarray(labels, dtype=int)
     uniq = np.unique(labs)
@@ -514,6 +345,7 @@ def block_reconstruct_from_labels(
     )
 
     if no_col_clustering:
+        logger.info("No column clustering detected.")
         # Row-only clustering: C is per-row-cluster centroid across columns
         if stat == "mean":
             counts = U.sum(axis=0, keepdims=True).T.astype(float)  # (P,1)
@@ -532,6 +364,7 @@ def block_reconstruct_from_labels(
 
     else:
         # True biclustering: build V and block means C[p,q]
+        logger.info("Biclustering with column detected.")
         V = np.eye(Q, dtype=int)[col_labels]  # (J,Q)
 
         if stat == "mean":
@@ -564,6 +397,17 @@ def block_reconstruct_from_labels(
     Xc = X - X.mean(axis=0, keepdims=True)
     tss = float(np.sum(Xc * Xc))
     rss = float(np.sum((X - Xhat) ** 2))
+    # 1) Verify the pieces
+    logger.info(f"TSS:{tss},RSS:{rss}, PVE%:{100 * (1 - rss / max(tss, 1e-12))}")
+
+    # 2) Sanity checks
+    assert tss >= 0 and rss >= 0
+    # If PVE < 0 → RSS > TSS: model worse than per-column mean baseline.
+
+    # 3) Alignment sanity (common pitfall)
+    # row_labels should have len == X.shape[0]
+    # col_labels should have len == X.shape[1] (if used)
+
     pve = 100.0 * (1.0 - rss / max(tss, 1e-12)) if tss > 0 else np.nan
 
     return {
@@ -687,85 +531,6 @@ def compute_biclustering_scores(
                     else:
                         raise RuntimeError(msg)
 
-                # # --- Build cluster assignment tables ---
-                # store_clusters = pd.DataFrame(
-                #     {"store": data.index, "store_cluster": row_labels.astype(int)}
-                # )
-                # item_clusters = pd.DataFrame(
-                #     {"item": data.columns, "item_cluster": col_labels.astype(int)}
-                # )
-                # df_assignments = pd.DataFrame(
-                #     {
-                #         "store": np.repeat(data.index.values, len(data.columns)),
-                #         "item": np.tile(data.columns.values, len(data.index)),
-                #     }
-                # )
-
-                # df_assignments = df_assignments.merge(
-                #     store_clusters, on="store", how="left"
-                # ).merge(item_clusters, on="item", how="left")
-
-                # # --- MAV computation (per (store,item) and per (store_cluster,item_cluster)) ---
-                # per_store_item, per_cluster = mav_by_cluster(
-                #     df_assignments,
-                #     data,
-                #     col_mav_name=col_mav_name,
-                #     col_cluster_mav_name=col_cluster_mav_name,
-                # )
-
-                # # --- Global variance metrics across all (store,item) points ---
-                # global_mean = per_store_item[col_mav_name].mean()
-
-                # # Between-cluster variance (weighted by cluster size)
-                # if len(per_cluster) > 1:
-                #     between_num = (
-                #         (per_cluster[f"{col_cluster_mav_name}_mean"] - global_mean) ** 2
-                #         * per_cluster["n_obs"]
-                #     ).sum()
-                #     # df = N - 1
-                #     between_var = between_num / max(per_store_item.shape[0] - 1, 1)
-                # else:
-                #     between_var = np.nan
-
-                # # Within-cluster variance (pooled)
-                # if len(per_cluster) > 0:
-                #     within_num = (
-                #         per_cluster[f"{col_cluster_mav_name}_within_var"]
-                #         * (per_cluster["n_obs"] - 1)
-                #     ).sum()
-                #     denom = per_store_item.shape[0] - len(per_cluster)
-                #     within_var = within_num / denom if denom > 0 else np.nan
-                # else:
-                #     within_var = np.nan
-
-                # if np.isnan(within_var) or within_var <= 0:
-                #     ratio_between_within = np.nan
-                # else:
-                #     ratio_between_within = between_var / within_var
-
-                # # --- PVE (by nearest-row-centroid reconstruction) & Silhouette on rows ---
-                # global_mean_vec = X.mean(axis=0)
-                # total_ss = float(np.sum((X - global_mean_vec) ** 2))
-                # # row centroids
-                # row_centroids = []
-                # for cid in range(n_row):
-                #     mask = row_labels == cid
-                #     if np.any(mask):
-                #         row_centroids.append(X[mask].mean(axis=0))
-                #     else:
-                #         row_centroids.append(None)
-
-                # # reconstruction error: nearest centroid
-                # recon_error = 0.0
-                # for xi in X:
-                #     dists = [
-                #         np.linalg.norm(xi - c) if c is not None else np.inf
-                #         for c in row_centroids
-                #     ]
-                #     recon_error += float(np.min(dists) ** 2)
-                # pve = (
-                #     100.0 * (1.0 - (recon_error / total_ss)) if total_ss > 0 else np.nan
-                # )
                 # --- Build cluster assignment tables (unchanged) ---
                 store_clusters = pd.DataFrame(
                     {"store": data.index, "store_cluster": row_labels.astype(int)}
@@ -815,6 +580,11 @@ def compute_biclustering_scores(
                     within_var = within_num / denom if denom > 0 else np.nan
                 else:
                     within_var = np.nan
+                assert np.isfinite(within_var)
+                assert np.isfinite(between_var)
+                assert within_var >= 0.0
+                assert between_var >= 0.0
+                assert within_var <= between_var
 
                 ratio_between_within = (
                     between_var / within_var
@@ -839,32 +609,6 @@ def compute_biclustering_scores(
                 logger.info(
                     f"PVE row-only: {pve_row:.2f}%  |  PVE block: {pve_block:.2f}%"
                 )
-                # Xhat = res["Xhat"]  # reconstructed matrix
-                # C    = res["C"]     # block means
-
-                # P = int(n_row)
-                # Q = int(
-                #     use_n_col
-                #     if "use_n_col" in locals() and use_n_col is not None
-                #     else n_col
-                # )
-                # U = np.eye(P, dtype=int)[row_labels]  # (I,P)
-                # V = np.eye(Q, dtype=int)[col_labels]  # (J,Q)
-
-                # # Block means C[p,q] = mean of X over rows in p and cols in q
-                # row_counts = U.sum(axis=0).astype(float)  # (P,)
-                # col_counts = V.sum(axis=0).astype(float)  # (Q,)
-                # counts = np.outer(row_counts, col_counts)  # (P,Q)
-                # sums = U.T @ X @ V  # (P,Q)
-                # C = sums / np.maximum(counts, 1e-12)
-                # C[counts == 0] = 0.0
-
-                # # Reconstruction and explained variance
-                # Xhat = U @ C @ V.T
-                # X_centered = X - X.mean(axis=0, keepdims=True)
-                # rss = float(np.sum((X - Xhat) ** 2))
-                # tss = float(np.sum(X_centered**2))
-                # pve = 100.0 * (1.0 - rss / max(tss, 1e-12)) if tss > 0 else np.nan
 
                 try:
                     # --- Silhouette (use model's own labels, fallback to columns) ---
@@ -881,12 +625,6 @@ def compute_biclustering_scores(
                         min_cluster_size=min_cluster_size,
                         log_level=log_level,
                     )
-                # sil = safe_silhouette(
-                #     X,
-                #     row_labels=row_labels,
-                #     col_labels=col_labels,
-                #     log_level=log_level,
-                # )
 
                 except Exception:
                     sil = np.nan
@@ -1042,8 +780,13 @@ def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.S
     used = [(c, order[c]) for c in sort_cols if c in d.columns]
     if used:
         by, ascending = zip(*used)
-        d = d.sort_values(list(by), ascending=list(ascending),
-                        kind="mergesort", na_position="last", ignore_index=True)
+        d = d.sort_values(
+            list(by),
+            ascending=list(ascending),
+            kind="mergesort",
+            na_position="last",
+            ignore_index=True,
+        )
     else:
         d = d.copy()
 
@@ -1062,7 +805,6 @@ def pick_best_biclustering_setting(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.S
 def cluster_data(
     df: pd.DataFrame,
     *,
-    freq: str = "W",
     store_item_matrix_fn: Optional[Path] = None,
     mav_df_fn: Optional[Path] = None,
     only_best_model: bool = True,
@@ -1093,7 +835,7 @@ def cluster_data(
 
     # Build normalized + raw matrices
     norm_data = normalize_data(
-        df, freq=freq, log_transform=False, median_transform=False, mean_transform=True
+        df, log_transform=False, median_transform=False, mean_transform=True
     ).fillna(0)
 
     logger.info(f"Number of items: {df['item'].nunique()}")

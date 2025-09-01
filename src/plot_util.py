@@ -8,11 +8,10 @@ from scipy.stats import sem, t
 from matplotlib.ticker import MaxNLocator
 from typing import Sequence, Union, Mapping
 import math
-import scipy.cluster.hierarchy as sch
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 Number = Union[int, float]
-
-from src.utils import reorder_data
 
 
 def plot_loss_with_comparison(
@@ -1231,3 +1230,158 @@ def plot_biclustering_elbows(
     plt.close(fig)
 
     return df_sorted  # return sorted df for inspection
+
+
+def plot_block_annot_heatmap(
+    df_long,
+    *,
+    value_col="growth_rate_1",
+    block_col="block_id",
+    row_col="store",
+    col_col="item",
+    date_col="start_date",
+    date=None,
+    fmt="{:.2f}",
+    cell_h=0.9,
+    cell_w=0.6,
+    font_size=11,
+    row_order=None,
+    col_order=None,
+    on_missing_date="latest",  # "latest" or "error"
+):
+    df = df_long.copy()
+
+    if date_col and date_col in df.columns:
+        # ensure datetime
+        df[date_col] = pd.to_datetime(df[date_col])
+
+        if date is None:
+            date = df[date_col].max()
+        else:
+            date = pd.to_datetime(date)
+
+        dfx = df[df[date_col] == date]
+        if dfx.empty:
+            if on_missing_date == "latest":
+                date = df[date_col].max()
+                dfx = df[df[date_col] == date]
+                print(
+                    f"[info] requested date not found; using latest available: {date.date()}"
+                )
+            else:
+                raise ValueError(f"No rows for date {date.date()}")
+
+        df = dfx
+
+    # one row per (row_col, col_col), no aggregation
+    key = [row_col, col_col]
+    dup_mask = df.duplicated(subset=key, keep=False)
+    if dup_mask.any():
+        g1 = df.groupby(key)[value_col].nunique()
+        g2 = df.groupby(key)[block_col].nunique()
+        bad = g1[(g1 > 1) | (g2 > 1)]
+        if len(bad) > 0:
+            raise ValueError(
+                "Duplicates with different values/blocks; refuse to aggregate."
+            )
+        df = df.drop_duplicates(subset=key)
+
+    val = df.pivot(index=row_col, columns=col_col, values=value_col)
+    blk = df.pivot(index=row_col, columns=col_col, values=block_col)
+
+    if row_order is not None:
+        row_order = [r for r in row_order if r in blk.index]
+        blk = blk.reindex(index=row_order)
+        val = val.reindex(index=row_order)
+    else:
+        blk = blk.sort_index(axis=0)
+        val = val.reindex(index=blk.index)
+
+    if col_order is not None:
+        col_order = [c for c in col_order if c in blk.columns]
+        blk = blk.reindex(columns=col_order)
+        val = val.reindex(columns=col_order)
+    else:
+        blk = blk.sort_index(axis=1)
+        val = val.reindex(columns=blk.columns)
+
+    # categories present on this slice
+    uniq = pd.Series(blk.to_numpy().ravel()).dropna()
+    uniq = np.sort(uniq.astype(int).unique())
+    n = len(uniq)
+
+    # guard: if nothing present, show empty grid gracefully
+    if n == 0:
+        print("[warn] no block ids present on this slice; showing a blank grid.")
+        H = max(4, cell_h * blk.shape[0])
+        W = max(6, cell_w * blk.shape[1])
+        fig, ax = plt.subplots(figsize=(W, H))
+        ax.set_axis_off()
+        return
+
+    id2idx = {bid: i for i, bid in enumerate(uniq)}
+    mapped = (
+        pd.Series(blk.to_numpy().ravel())
+        .map(lambda x: id2idx.get(int(x)) if pd.notna(x) else np.nan)
+        .to_numpy()
+        .reshape(blk.shape)
+    )
+    blk_idx = pd.DataFrame(mapped, index=blk.index, columns=blk.columns)
+    mask = blk_idx.isna().to_numpy()
+
+    colors = sns.color_palette("tab20", n) if n <= 20 else sns.color_palette("husl", n)
+    cmap = ListedColormap(colors)
+    cmap.set_bad("#f0f0f0")
+    norm = BoundaryNorm(np.arange(-0.5, n + 0.5, 1.0), n)
+
+    A = val.to_numpy(dtype=float)
+    annot = np.empty_like(A, dtype=object)
+    annot[:] = ""
+    m = ~np.isnan(A)
+    if m.any():
+        annot[m] = np.vectorize(lambda x: fmt.format(x))(A[m])
+
+    H = max(4, cell_h * blk.shape[0])
+    W = max(6, cell_w * blk.shape[1])
+    fig, ax = plt.subplots(figsize=(W, H))
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="2%", pad=0.15)
+
+    sns.heatmap(
+        blk_idx,
+        cmap=cmap,
+        norm=norm,
+        mask=mask,
+        cbar=True,
+        cbar_ax=cax,
+        cbar_kws={"shrink": 1.0, "aspect": 25},
+        square=True,
+        linewidths=1.0,
+        linecolor="white",
+        annot=annot,
+        fmt="",
+        annot_kws={"fontsize": font_size, "fontweight": "bold"},
+        ax=ax,
+    )
+
+    ax.set_xlabel(col_col)
+    ax.set_ylabel(row_col)
+    ttl = f"Blocks colored by {block_col}"
+    if date_col and date is not None:
+        ttl += f" — {pd.to_datetime(date).date()}"
+    ax.set_title(ttl)
+    ax.set_xticklabels(
+        blk_idx.columns.astype(str), rotation=90, ha="center", fontsize=9
+    )
+    ax.set_yticklabels(blk_idx.index.astype(str), rotation=0, va="center", fontsize=9)
+
+    cbar = ax.collections[0].colorbar
+    cbar.set_ticks(np.arange(n))
+    cbar.set_ticklabels(uniq)
+    cbar.ax.tick_params(labelsize=8)
+    cbar.set_label(block_col, fontsize=9)
+
+    plt.tight_layout()
+    plt.show()

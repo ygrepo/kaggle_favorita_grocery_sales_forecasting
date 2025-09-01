@@ -733,6 +733,160 @@ def add_rolling_sales_summaries(
     return out
 
 
+def generate_growth_rate_features(
+    df: pd.DataFrame,
+    window_size: int = 1,
+    *,
+    calendar_aligned: bool = True,
+    log_level: str = "INFO",
+    output_path: Optional[Path] = None,
+    weight_col: str = "weight",  # <- keep this
+    promo_col: str = "onpromotion",  # <- daily flags kept as *_day_i
+) -> pd.DataFrame:
+    """
+    For each rolling window, build one row per (store,item) with:
+      sales_day_1..window_size,
+      growth_rate_1..window_size  where growth_rate_i = (sales_i - sales_{i-1})/sales_{i-1},
+      weight (assumed constant per store-item),
+      onpromotion_day_1..window_size (0/1, aligned to the window dates).
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info(f"Total rows: {len(df)}")
+
+    # --- Precompute a single weight per (store,item); user says no variability
+    if weight_col in df.columns:
+        w_src = df[["store", "item", weight_col]].dropna(subset=[weight_col])
+        if not w_src.empty:
+            # pick the first value per pair (constant by assumption)
+            weight_map = w_src.groupby(["store", "item"], sort=False)[
+                weight_col
+            ].first()
+        else:
+            weight_map = pd.Series(dtype=float)
+    else:
+        weight_map = pd.Series(dtype=float)
+
+    windows = generate_aligned_windows(
+        df, window_size, calendar_aligned=calendar_aligned
+    )
+    records: List[dict] = []
+
+    for window_dates in windows:
+        window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
+        logger.info(f"Processing window: {window_idx[0]} to {window_idx[-1]}")
+
+        w_df = df[df["date"].isin(window_idx)].copy()
+
+        # Sales (sum across potential duplicate rows)
+        sales_wide = w_df.pivot_table(
+            index=["store", "item"],
+            columns="date",
+            values="unit_sales",
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+
+        # On-promo flags (max handles duplicates; treat missing as 0)
+        promo_wide = None
+        if promo_col in w_df.columns:
+            promo_wide = w_df.pivot_table(
+                index=["store", "item"],
+                columns="date",
+                values=promo_col,
+                aggfunc="max",
+                fill_value=0,
+            )
+
+        if sales_wide.empty:
+            continue
+
+        for (store, item), s_sales in sales_wide.iterrows():
+            s_sales = s_sales.reindex(window_idx, fill_value=0.0)
+
+            # align promo row if present
+            if promo_wide is not None and (store, item) in promo_wide.index:
+                s_promo = promo_wide.loc[(store, item)].reindex(
+                    window_idx, fill_value=0
+                )
+            else:
+                s_promo = pd.Series(0, index=window_idx)
+
+            row = {
+                "start_date": window_idx[0],
+                "store_item": f"{store}_{item}",
+                "store": store,
+                "item": item,
+            }
+
+            # weight (constant per pair)
+            row[weight_col] = (
+                weight_map.get((store, item))
+                if isinstance(weight_map.index, pd.MultiIndex)
+                else np.nan
+            )
+
+            # per-day sales, promo flags, and growth
+            for i, d in enumerate(window_idx[:window_size], start=1):
+                curr = float(s_sales.loc[d]) if pd.notna(s_sales.loc[d]) else np.nan
+                row[f"sales_day_{i}"] = curr
+                row[f"{promo_col}_day_{i}"] = (
+                    int(s_promo.loc[d]) if pd.notna(s_promo.loc[d]) else 0
+                )
+
+                # previous: calendar day for i==1; otherwise previous in-window
+                if i == 1:
+                    prev_day = pd.to_datetime(d) - pd.DateOffset(days=1)
+                    prev_vals = df.loc[
+                        (df["store"] == store)
+                        & (df["item"] == item)
+                        & (df["date"] == prev_day),
+                        "unit_sales",
+                    ]
+                    prev = float(prev_vals.sum()) if not prev_vals.empty else np.nan
+                else:
+                    prev = row[f"sales_day_{i-1}"]
+
+                # your rule: prev==0 or missing -> NaN
+                row[f"growth_rate_{i}"] = (
+                    np.nan
+                    if (not np.isfinite(prev)) or prev == 0
+                    else (curr - prev) / prev
+                )
+
+            records.append(row)
+
+        del sales_wide, promo_wide
+
+    # --- Column order
+    base_cols = ["start_date", "store_item", "store", "item", weight_col]
+    sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
+    growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+    promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+    cols = base_cols + sales_cols + growth_cols + promo_cols
+
+    out = pd.DataFrame.from_records(records)
+    if out.empty:
+        out = pd.DataFrame(columns=cols)
+    else:
+        # ensure all expected columns exist and are ordered
+        for c in cols:
+            if c not in out:
+                out[c] = np.nan
+        out = out[cols]
+
+    if output_path is not None:
+        logger.info(f"Saving growth rate features to {output_path}")
+        if output_path.suffix == ".parquet":
+            out.to_parquet(output_path)
+        else:
+            out.to_csv(output_path, index=False)
+        debug_fn = output_path.with_name("debug_subset.csv")
+        out.head(50).to_csv(debug_fn, index=False)
+        logger.info(f"Saved debug sample to {debug_fn}")
+
+    return out
+
+
 def generate_sales_features(
     df: pd.DataFrame,
     window_size: int = 1,
@@ -1315,28 +1469,29 @@ def zscore_with_axis(
 def median_mean_transform(
     df: pd.DataFrame,
     *,
-    freq="W",
+    # freq="W",
+    column_name="unit_sales",
     median_transform=True,
     mean_transform=False,
 ) -> pd.DataFrame:
     if median_transform:
-        df = (
-            df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
-                "unit_sales"
-            ]
-            .median()
-            .reset_index()
-        )
-        df = df.groupby(["store", "item"])["unit_sales"].median().unstack(fill_value=0)
+        # df = (
+        #     df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
+        #         "unit_sales"
+        #     ]
+        #     .median()
+        #     .reset_index()
+        # )
+        df = df.groupby(["store", "item"])[column_name].median().unstack(fill_value=0)
     elif mean_transform:
-        df = (
-            df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
-                "unit_sales"
-            ]
-            .mean()
-            .reset_index()
-        )
-        df = df.groupby(["store", "item"])["unit_sales"].mean().unstack(fill_value=0)
+        # df = (
+        #     df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
+        #         "unit_sales"
+        #     ]
+        #     .mean()
+        #     .reset_index()
+        # )
+        df = df.groupby(["store", "item"])[column_name].mean().unstack(fill_value=0)
     else:
         raise ValueError("Set either median_transform or mean_transform to True.")
     return df
@@ -1344,7 +1499,9 @@ def median_mean_transform(
 
 def normalize_data(
     df: pd.DataFrame,
-    freq="W",
+    # freq="W",
+    *,
+    column_name="unit_sales",
     median_transform=True,
     mean_transform=False,
     log_transform=True,
@@ -1358,9 +1515,7 @@ def normalize_data(
     ----------
     df : pd.DataFrame
         Must include ['date', 'store', 'item', 'unit_sales']
-    freq : str
-        Resample frequency (e.g., 'W' for weekly)
-    median_transform : bool
+    # median_transform : bool
         Use median aggregation
     mean_transform : bool
         Use mean aggregation
@@ -1377,7 +1532,10 @@ def normalize_data(
         A normalized store × item matrix
     """
     df = median_mean_transform(
-        df, freq=freq, median_transform=median_transform, mean_transform=mean_transform
+        df,
+        column_name=column_name,
+        median_transform=median_transform,
+        mean_transform=mean_transform,
     )
 
     if log_transform:
@@ -1394,7 +1552,6 @@ def normalize_data(
 
 def normalize_store_item_data(
     df: pd.DataFrame,
-    freq="W",
     median_transform=True,
     mean_transform=False,
     log_transform=True,
@@ -1409,8 +1566,6 @@ def normalize_store_item_data(
     ----------
     df : pd.DataFrame
         Must include ['date', 'store', 'item', 'unit_sales']
-    freq : str
-        Resample frequency (e.g., 'W' for weekly)
     median_transform : bool
         Use median aggregation
     mean_transform : bool
@@ -1435,7 +1590,6 @@ def normalize_store_item_data(
     # Create the normalized matrix using the existing normalize_data function
     norm_matrix = normalize_data(
         df,
-        freq=freq,
         median_transform=median_transform,
         mean_transform=mean_transform,
         log_transform=log_transform,
