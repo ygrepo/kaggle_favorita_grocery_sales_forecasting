@@ -10,7 +10,8 @@ from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
-from typing import List, Optional, Iterator, Tuple
+from typing import List, Optional, Iterator
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -849,8 +850,8 @@ def generate_growth_rate_features(
                 # your rule: prev==0 or missing -> NaN
                 row[f"growth_rate_{i}"] = (
                     np.nan
-                    if (not np.isfinite(prev)) or prev == 0
-                    else (curr - prev) / prev
+                    if (not np.isfinite(prev)) or prev == 0 or math.isnan(curr)
+                    else (curr - prev) / prev * 100.0
                 )
 
             records.append(row)
@@ -1781,3 +1782,19 @@ def mav_by_cluster(
     )
 
     return per_store_item, per_cluster
+
+
+def collapse_block_id_by_store_item(df, how="mean"):
+    """
+    Collapse to one row per (store,item) using mean/median for the value,
+    keeping the (unique) block_id.
+    """
+    # sanity: block_id must be unique per pair
+    bad = df.groupby(["store", "item"])["block_id"].nunique() > 1
+    if bad.any():
+        raise ValueError("Some (store,item) pairs have multiple block_id values.")
+
+    agg_fn = {"mean": "mean", "median": "median"}[how]
+    return df.groupby(["store", "item"], as_index=False).agg(
+        growth_rate_1=("growth_rate_1", agg_fn), block_id=("block_id", "first")
+    )

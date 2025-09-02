@@ -1,10 +1,11 @@
 # Implementation: Binary Multi-Hard Tri-Factorization (scikit-learn style)
 # with Gaussian/Poisson losses
 import numpy as np
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Any
 import pandas as pd
 from sklearn.base import BaseEstimator, ClusterMixin
 from sklearn.utils.validation import check_array
+from sklearn.cluster import KMeans
 
 import logging
 
@@ -13,6 +14,14 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
+    v = vec[vec >= 0]
+    if v.size == 0:
+        return -1
+    counts = np.bincount(v, minlength=K)
+    return int(np.argmax(counts))  # ties → lowest index
 
 
 class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
@@ -522,25 +531,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         return out
 
-    def overlap_report(self) -> pd.DataFrame:
-        """
-        Return a compact report of overlap statistics per axis:
-          - #clusters per row and per column, plus simple histograms.
-        """
-        self.check_fitted()
-        row_k = self.U_.sum(axis=1)
-        col_k = self.V_.sum(axis=1)
-        rep = {
-            "rows_total": int(row_k.size),
-            "rows_mean_k": float(row_k.mean()),
-            "rows_frac_gt1": float((row_k > 1).mean()),
-            "cols_total": int(col_k.size),
-            "cols_mean_k": float(col_k.mean()),
-            "cols_frac_gt1": float((col_k > 1).mean()),
-        }
-        df = pd.DataFrame({"metric": rep.keys(), "value": rep.values()})
-        return df
-
     def get_row_clusters(self, *, as_bool: bool = False) -> np.ndarray:
         """
         Return the binary multi-hot row memberships U.
@@ -589,11 +579,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             setattr(self, k, v)
         return self
 
-    def __repr__(self) -> str:
+    def __repr__(self, N_CHAR_MAX: int = 700) -> str:
         """Return string representation of the estimator."""
         params = self.get_params()
         param_str = ", ".join([f"{k}={v}" for k, v in params.items()])
-        return f"{self.__class__.__name__}({param_str})"
+        s = f"{self.__class__.__name__}({param_str})"
+        if N_CHAR_MAX is not None and N_CHAR_MAX > 0 and len(s) > N_CHAR_MAX:
+            return s[: N_CHAR_MAX - 3] + "..."
+        return s
 
     def show_memberships(
         self,
@@ -1008,14 +1001,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         r_star = out["r_star"]  # (I,J)
         R = self.B_.shape[0]
 
-        def _mode_ignore_minus1(vec: np.ndarray) -> int:
-            v = vec[vec >= 0]
-            if v.size == 0:
-                return -1
-            counts = np.bincount(v, minlength=R)
-            return int(np.argmax(counts))  # ties → lowest index
-
-        labels = np.apply_along_axis(_mode_ignore_minus1, 1, r_star)
+        labels = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
         return labels
 
     def primary_column_labels(
@@ -1087,82 +1073,133 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         )
         c_star = out["c_star"]  # (I,J)
         C = self.B_.shape[1]
-
-        def _mode_ignore_minus1_col(vec: np.ndarray) -> int:
-            v = vec[vec >= 0]
-            if v.size == 0:
-                return -1
-            counts = np.bincount(v, minlength=C)
-            return int(np.argmax(counts))
-
-        labels = np.apply_along_axis(_mode_ignore_minus1_col, 0, c_star)
+        labels = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
         return labels
+
+    def allowed_mask_from_gap(
+        self, *, min_keep: int = 4, eps: float = 1e-12
+    ) -> np.ndarray:
+        """Binary mask over B selecting 'strong' blocks via the largest |B| gap."""
+        if self.B_ is None:
+            raise ValueError("Model has not been fitted yet")
+        absB = np.abs(self.B_).ravel()
+        vals = np.sort(absB)[::-1]
+        vals = vals[vals > eps]
+        if vals.size == 0:
+            return np.zeros_like(self.B_, dtype=bool)
+        if vals.size <= min_keep:
+            cut = vals[-1]
+            return np.abs(self.B_) >= cut
+        drops = vals[:-1] - vals[1:]
+        k = int(np.argmax(drops) + 1)
+        k = max(min_keep, k)
+        cut = vals[k - 1]
+        return np.abs(self.B_) >= cut
+
+    def filter_blocks(
+        self,
+        X: np.ndarray,
+        *,
+        mask: np.ndarray | None = None,
+        min_keep: int = 4,
+        method: str = "gaussian_delta",
+    ) -> Dict[str, Any]:
+        """
+        Filter the blocks by a boolean mask.
+        """
+        if self.B_ is None:
+            raise ValueError("Model has not been fitted yet")
+        if mask is None:
+            mask = self.allowed_mask_from_gap(min_keep=min_keep)
+
+        # per-cell assignment with the mask
+        assign = self.assign_unique_blocks(
+            X, method=method, allowed_mask=mask, on_empty="fallback"
+        )
+        return assign
+
+    def get_row_col_orders(
+        self,
+        assign: Dict[str, Any],
+        norm_data: pd.DataFrame,
+    ) -> Tuple[List[int], List[int]]:
+        r_star, c_star = assign["r_star"], assign["c_star"]
+        R, C = self.B_.shape
+        store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
+        item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
+        row_order = (
+            pd.Series(store_r, index=norm_data.index).sort_values().index.tolist()
+        )
+        col_order = (
+            pd.Series(item_c, index=norm_data.columns).sort_values().index.tolist()
+        )
+        return row_order, col_order
+
+    def get_store_item_assignments(
+        self,
+        assign: Dict[str, Any],
+        norm_data: pd.DataFrame,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        r_star, c_star = assign["r_star"], assign["c_star"]
+        R, C = self.B_.shape
+        store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
+        item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
+        store_assign = pd.DataFrame({"store_r": store_r}, index=norm_data.index)
+        item_assign = pd.DataFrame({"item_c": item_c}, index=norm_data.columns)
+        return store_assign, item_assign
+
+    def explain_blocks(
+        self,
+        X: np.ndarray,
+        assign: pd.DataFrame,
+        row_names: np.ndarray,
+        col_names: np.ndarray,
+        top_k: int = 5,
+    ) -> pd.DataFrame:
+        used = np.unique(assign["block_id"])
+        used = used[used >= 0]
+        rows = []
+        U, B, V = self.U_, self.B_, self.V_
+        R, C = B.shape
+        for b in used:
+            r, c = int(b // C), int(b % C)
+            cells = assign["block_id"] == b
+            rows.append(
+                {
+                    "block_id": int(b),
+                    "r": r,
+                    "c": c,
+                    "B_rc": float(B[r, c]),
+                    "n_cells": int(cells.sum()),
+                    "coverage_%": 100.0 * cells.mean(),
+                    "mean": float(X[cells].mean()),
+                    "median": float(np.median(X[cells])),
+                    "stores_in_r": [
+                        row_names[i] for i in np.where(U[:, r] == 1)[0][:top_k]
+                    ],
+                    "items_in_c": [
+                        col_names[j] for j in np.where(V[:, c] == 1)[0][:top_k]
+                    ],
+                }
+            )
+        return pd.DataFrame(rows).sort_values("B_rc", ascending=False)
 
 
 # --- small utilities ---------------------------------------------------------
 
 
-def _allowed_mask_from_gap(B: np.ndarray, *, min_keep: int = 4, eps: float = 1e-12):
-    absB = np.abs(B).ravel()
-    vals = np.sort(absB)[::-1]
-    vals = vals[vals > eps]
-    if vals.size == 0:
-        return np.zeros_like(B, dtype=bool)
-    if vals.size <= min_keep:
-        cut = vals[-1]
-        return np.abs(B) >= cut
-    drops = vals[:-1] - vals[1:]
-    k = int(np.argmax(drops) + 1)
-    k = max(min_keep, k)
-    cut = vals[k - 1]
-    return np.abs(B) >= cut
-
-
-def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
-    vec = vec[vec >= 0]
-    if vec.size == 0:
-        return 0
-    return int(np.argmax(np.bincount(vec, minlength=K)))
-
-
-# --- one helper to: assign → update df_long → sort by store_r/item_c ----
-def update_sort(
-    est: BinaryTriFactorizationEstimator,
-    X: np.ndarray,
+def get_normalized_assignments(
+    assign: Dict[str, Any],
     norm_data: pd.DataFrame,
     *,
-    method: str = "gaussian_delta",
-    min_keep: int = 4,
     row_col: str = "store",
     col_col: str = "item",
     value_col: str = "growth_rate_1",
-) -> Tuple[
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-    np.ndarray,
-    pd.DataFrame,
-    List[int],
-    List[int],
-]:
-    """Assign blocks on the fitted matrix, create a long table with values+block_id,
-    and compute sort orders by dominant store_r / item_c."""
-    # 1) keep only strong blocks
-    mask = _allowed_mask_from_gap(est.B_, min_keep=min_keep)
+) -> pd.DataFrame:
 
-    # 2) per-cell assignment with the mask
-    assign = est.assign_unique_blocks(
-        X, method=method, allowed_mask=mask, on_empty="fallback"
-    )
     block_id_mat = assign["block_id"]
-    r_star, c_star = assign["r_star"], assign["c_star"]
-    R, C = est.B_.shape
 
-    # 3) single label per store/item (for sorting only)
-    store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
-    item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-
-    # 4) long (store,item,block_id)
+    # long (store,item,block_id)
     blk_long = (
         pd.DataFrame(block_id_mat, index=norm_data.index, columns=norm_data.columns)
         .stack()
@@ -1171,7 +1208,42 @@ def update_sort(
         .rename(columns={"level_0": row_col, "level_1": col_col})
     )
 
-    # 5) long values from the SAME matrix used for clustering
+    # long values from the SAME matrix used for clustering
+    df = (
+        norm_data.stack()
+        .rename(value_col)
+        .reset_index()
+        .rename(columns={"level_0": row_col, "level_1": col_col})
+    )
+
+    # store, item, value, block_id (no date column)
+    df = df.merge(blk_long, on=[row_col, col_col], how="left")
+
+    return df
+
+
+def merge_assignments(
+    df: pd.DataFrame,
+    assign: Dict[str, Any],
+    norm_data: pd.DataFrame,
+    *,
+    row_col: str = "store",
+    col_col: str = "item",
+    value_col: str = "growth_rate_1",
+) -> pd.DataFrame:
+
+    block_id_mat = assign["block_id"]
+
+    # long (store,item,block_id)
+    blk_long = (
+        pd.DataFrame(block_id_mat, index=norm_data.index, columns=norm_data.columns)
+        .stack()
+        .rename("block_id")
+        .reset_index()
+        .rename(columns={"level_0": row_col, "level_1": col_col})
+    )
+
+    # long values from the SAME matrix used for clustering
     val_long = (
         norm_data.stack()
         .rename(value_col)
@@ -1179,80 +1251,49 @@ def update_sort(
         .rename(columns={"level_0": row_col, "level_1": col_col})
     )
 
-    # 6) plotting table: store, item, value, block_id (no date column)
-    df_plot = val_long.merge(blk_long, on=[row_col, col_col], how="left")
-
-    # 7) sort orders
-    row_order = pd.Series(store_r, index=norm_data.index).sort_values().index.tolist()
-    col_order = pd.Series(item_c, index=norm_data.columns).sort_values().index.tolist()
-
-    store_assign = pd.DataFrame({"store_r": store_r}, index=norm_data.index)
-    item_assign = pd.DataFrame({"item_c": item_c}, index=norm_data.columns)
-    return df_plot, store_assign, item_assign, mask, assign, row_order, col_order
-
-
-def merge_assignments(
-    df: pd.DataFrame,
-    est: BinaryTriFactorizationEstimator,
-    X: np.ndarray,
-    norm_data: pd.DataFrame,
-    value_col: str = "growth_rate_1",
-    min_keep: int = 6,
-) -> pd.DataFrame:
-
-    df_assign, _, _, _, _, _, _ = update_sort(
-        est, X, norm_data, value_col=value_col, min_keep=min_keep
-    )
+    # plotting table: store, item, value, block_id (no date column)
+    val_long = val_long.merge(blk_long, on=[row_col, col_col], how="left")
 
     # attach per-(store,item) block_id
-    df_assign = df_assign[["store", "item", "block_id"]].drop_duplicates()
+    val_long = val_long[["store", "item", "block_id"]].drop_duplicates()
 
-    # (optional) ensure key dtypes match the matrix labels
-    df["store"] = df["store"].astype(norm_data.index.dtype)
-    df["item"] = df["item"].astype(norm_data.columns.dtype)
-
-    df = df.merge(df_assign, on=["store", "item"], how="left", validate="m:1")
+    df = df.merge(val_long, on=["store", "item"], how="left", validate="m:1")
     return df
 
 
-def explain_blocks(
+def summarize_blocks_for_merge(
     est: BinaryTriFactorizationEstimator,
     X: np.ndarray,
-    assign: pd.DataFrame,
-    row_names: np.ndarray,
-    col_names: np.ndarray,
-    top_k: int = 5,
+    assign: Dict[str, Any],
 ) -> pd.DataFrame:
-    U, B, V = est.U_, est.B_, est.V_
-    R, C = B.shape
-    used = np.unique(assign["block_id"])
+    """Per-block stats from the current assignment."""
+    R, C = est.B_.shape
+    bid = assign["block_id"]
+    used = np.unique(bid)
     used = used[used >= 0]
     rows = []
     for b in used:
+        mask = bid == b
+        vals = X[mask]
         r, c = int(b // C), int(b % C)
-        cells = assign["block_id"] == b
         rows.append(
             {
                 "block_id": int(b),
                 "r": r,
                 "c": c,
-                "B_rc": float(B[r, c]),
-                "n_cells": int(cells.sum()),
-                "coverage_%": 100.0 * cells.mean(),
-                "x_mean": float(X[cells].mean()),
-                "x_median": float(np.median(X[cells])),
-                "stores_in_r": [
-                    row_names[i] for i in np.where(U[:, r] == 1)[0][:top_k]
-                ],
-                "items_in_c": [col_names[j] for j in np.where(V[:, c] == 1)[0][:top_k]],
+                "B_rc": float(est.B_[r, c]),
+                "n_cells": int(mask.sum()),
+                "coverage_%": 100.0 * mask.mean(),
+                "mean": float(vals.mean()) if vals.size else np.nan,
+                "median": float(np.median(vals)) if vals.size else np.nan,
             }
         )
-
-    return pd.DataFrame(rows).sort_values("B_rc", ascending=False)
+    return pd.DataFrame(rows).sort_values("block_id").reset_index(drop=True)
 
 
 def explain_coverage(
-    est: BinaryTriFactorizationEstimator, assign: pd.DataFrame
+    est: BinaryTriFactorizationEstimator,
+    assign: Dict[str, Any],
 ) -> pd.DataFrame:
 
     # per-block coverage as a matrix
@@ -1269,3 +1310,105 @@ def explain_coverage(
     )
     cov = cov.style.background_gradient(cmap="Blues", axis=None)
     return cov
+
+
+def merge_blocks_by_stat(
+    assign: Dict[str, Any],
+    df: pd.DataFrame,
+    norm_data: pd.DataFrame,
+    est: BinaryTriFactorizationEstimator,
+    *,
+    stat: str = "mean",
+    scheme: str = "sign",
+    k: int = 2,
+) -> pd.DataFrame:
+    """
+    Merge active blocks using a single statistic of their cells.
+
+    stat:   "mean" or "median"   (drives grouping)
+    scheme: "sign" | "kmeans"
+      - "sign": positives vs negatives (by chosen stat)
+      - "kmeans": k-means in 1D on the chosen stat (k groups)
+    """
+    summ = summarize_blocks_for_merge(est, norm_data.to_numpy(), assign)
+    stat_col = "mean" if stat == "mean" else "median"
+    s = summ[stat_col].to_numpy()
+
+    if scheme == "sign":
+        # 0 = nonnegative, 1 = negative → two groups
+        merged = (s < 0).astype(int)
+        # order: group 0 (>=0) first, group 1 (<0) next
+        if stat == "mean":
+            order = np.argsort(
+                [
+                    s[merged == g].mean() if (merged == g).any() else np.inf
+                    for g in [0, 1]
+                ]
+            )
+        else:
+            medians = [
+                np.median(s[merged == g]) if (merged == g).any() else np.inf
+                for g in [0, 1]
+            ]
+            order = np.argsort(np.array(medians))
+        remap = {int(g_old): int(g_new) for g_new, g_old in enumerate(order)}
+        summ["merged_id"] = [remap[int(g)] for g in merged]
+
+    elif scheme == "kmeans":
+        km = KMeans(n_clusters=k, n_init=10, random_state=0)
+        labs = km.fit_predict(s.reshape(-1, 1))
+        # reorder clusters by mean stat so ids are consistent
+        if stat == "mean":
+            stat_df = pd.Series(s).groupby(labs).mean().sort_values()
+        else:
+            stat_df = pd.Series(s).groupby(labs).median().sort_values()
+        remap = {int(old): int(new) for new, old in enumerate(stat_df.index)}
+        summ["merged_id"] = [remap[int(g)] for g in labs]
+
+    else:
+        raise ValueError("scheme must be 'sign' or 'kmeans'")
+
+    # map original block_id -> merged_id
+    mapping = dict(zip(summ["block_id"].tolist(), summ["merged_id"].tolist()))
+
+    # build merged block-id matrix
+    bid = assign["block_id"].copy()
+    bid_merged = np.full_like(bid, fill_value=-1, dtype=int)
+    # vectorized map
+    flat = bid.ravel()
+    out = np.array([mapping.get(int(b), -1) for b in flat], dtype=int)
+    bid_merged = out.reshape(bid.shape)
+
+    # Use bid_merged
+    df_assign = (
+        pd.DataFrame(bid_merged, index=norm_data.index, columns=norm_data.columns)
+        .stack()
+        .rename("merged_block_id")
+        .reset_index()
+        .rename(columns={"level_0": "store", "level_1": "item"})
+    )
+
+    # attach to your training df
+    df = df.drop(columns=["block_id"], errors="ignore").merge(
+        df_assign[["store", "item", "merged_block_id"]],
+        on=["store", "item"],
+        how="left",
+        validate="m:1",
+    )
+    df.rename(columns={"merged_block_id": "block_id"}, inplace=True)
+    return df
+
+
+def _mode_min(s: pd.Series) -> int:
+    m = s.mode()
+    return int(m.min()) if not m.empty else -1
+
+
+def get_row_col_orders(df: pd.DataFrame) -> Tuple[List[int], List[int]]:
+    row_order = (
+        df.groupby("store")["block_id"].agg(_mode_min).sort_values().index.tolist()
+    )
+    col_order = (
+        df.groupby("item")["block_id"].agg(_mode_min).sort_values().index.tolist()
+    )
+    return row_order, col_order
