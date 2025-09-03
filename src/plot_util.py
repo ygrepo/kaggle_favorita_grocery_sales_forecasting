@@ -10,8 +10,13 @@ from typing import Sequence, Union, Mapping
 import math
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+import logging
+from pathlib import Path
 
 Number = Union[int, float]
+
+
+logger = logging.getLogger(__name__)
 
 
 def plot_loss_with_comparison(
@@ -1229,37 +1234,50 @@ def plot_biclustering_elbows(
     plt.show()
     plt.close(fig)
 
-    return df_sorted  # return sorted df for inspection
+    return df_sorted
 
 
 def plot_block_annot_heatmap(
-    df_long,
+    df: pd.DataFrame,
     *,
-    value_col="growth_rate_1",
-    block_col="block_id",
-    row_col="store",
-    col_col="item",
-    date_col="start_date",
-    date=None,
-    fmt="{:.2f}",
-    cell_h=0.9,
-    cell_w=0.6,
-    font_size=11,
-    row_order=None,
-    col_order=None,
-    on_missing_date="latest",  # "latest" or "error"
+    ttl: str | None = None,
+    value_col: str = "growth_rate_1",
+    block_col: str = "block_id",
+    row_col: str = "store",
+    col_col: str = "item",
+    date_col: str = "start_date",
+    date: str | None = None,
+    x_label: str = "SKU",
+    y_label: str = "Store",
+    fmt: str = "{:.2f}",
+    cell_h: float = 0.9,
+    cell_w: float = 0.6,
+    font_size: int = 11,
+    row_order: list | None = None,
+    col_order: list | None = None,
+    on_missing_date: str = "latest",
+    fn: Path | None = None,
+    # NEW args
+    figsize: tuple[float, float] | None = None,
+    xlabel_size: int | None = None,
+    ylabel_size: int | None = None,
+    label_weight: str = "bold",
+    xtick_size: int = 9,
+    ytick_size: int = 9,
+    xtick_rotation: float = 90,
+    ytick_rotation: float = 0,
 ):
-    df = df_long.copy()
+    if xlabel_size is None:
+        xlabel_size = font_size
+    if ylabel_size is None:
+        ylabel_size = font_size
 
     if date_col and date_col in df.columns:
-        # ensure datetime
         df[date_col] = pd.to_datetime(df[date_col])
-
         if date is None:
             date = df[date_col].max()
         else:
             date = pd.to_datetime(date)
-
         dfx = df[df[date_col] == date]
         if dfx.empty:
             if on_missing_date == "latest":
@@ -1270,10 +1288,8 @@ def plot_block_annot_heatmap(
                 )
             else:
                 raise ValueError(f"No rows for date {date.date()}")
-
         df = dfx
 
-    # one row per (row_col, col_col), no aggregation
     key = [row_col, col_col]
     dup_mask = df.duplicated(subset=key, keep=False)
     if dup_mask.any():
@@ -1305,17 +1321,19 @@ def plot_block_annot_heatmap(
         blk = blk.sort_index(axis=1)
         val = val.reindex(columns=blk.columns)
 
-    # categories present on this slice
     uniq = pd.Series(blk.to_numpy().ravel()).dropna()
     uniq = np.sort(uniq.astype(int).unique())
     n = len(uniq)
 
-    # guard: if nothing present, show empty grid gracefully
     if n == 0:
-        print("[warn] no block ids present on this slice; showing a blank grid.")
+        logger.warning(
+            "[warn] no block ids present on this slice; showing a blank grid."
+        )
         H = max(4, cell_h * blk.shape[0])
         W = max(6, cell_w * blk.shape[1])
-        fig, ax = plt.subplots(figsize=(W, H))
+        if figsize is not None:
+            W, H = figsize
+        _, ax = plt.subplots(figsize=(W, H))
         ax.set_axis_off()
         return
 
@@ -1341,11 +1359,13 @@ def plot_block_annot_heatmap(
     if m.any():
         annot[m] = np.vectorize(lambda x: fmt.format(x))(A[m])
 
+    # Figure size: from args if given, else from cell_h/w and grid size
     H = max(4, cell_h * blk.shape[0])
     W = max(6, cell_w * blk.shape[1])
-    fig, ax = plt.subplots(figsize=(W, H))
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    if figsize is not None:
+        W, H = figsize
 
+    _, ax = plt.subplots(figsize=(W, H))
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="2%", pad=0.15)
 
@@ -1366,22 +1386,39 @@ def plot_block_annot_heatmap(
         ax=ax,
     )
 
-    ax.set_xlabel(col_col)
-    ax.set_ylabel(row_col)
-    ttl = f"Blocks colored by {block_col}"
+    # Axis labels: bold and sized
+    ax.set_xlabel(x_label, fontsize=xlabel_size, fontweight=label_weight)
+    ax.set_ylabel(y_label, fontsize=ylabel_size, fontweight=label_weight)
+
+    ttl = ttl or f"Blocks colored by {block_col}"
     if date_col and date is not None:
         ttl += f" — {pd.to_datetime(date).date()}"
     ax.set_title(ttl)
+
+    # Tick labels (row/col names) with controllable rotation + size
     ax.set_xticklabels(
-        blk_idx.columns.astype(str), rotation=90, ha="center", fontsize=9
+        blk_idx.columns.astype(str),
+        rotation=xtick_rotation,
+        ha="center",
+        fontsize=xtick_size,
+        fontweight=label_weight,
     )
-    ax.set_yticklabels(blk_idx.index.astype(str), rotation=0, va="center", fontsize=9)
+    ax.set_yticklabels(
+        blk_idx.index.astype(str),
+        rotation=ytick_rotation,
+        va="center",
+        fontsize=ytick_size,
+        fontweight=label_weight,
+    )
 
     cbar = ax.collections[0].colorbar
     cbar.set_ticks(np.arange(n))
     cbar.set_ticklabels(uniq)
     cbar.ax.tick_params(labelsize=8)
-    cbar.set_label(block_col, fontsize=9)
+    cbar.set_label("Cluster ID", fontsize=9)
 
     plt.tight_layout()
+    if fn:
+        logger.info(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()

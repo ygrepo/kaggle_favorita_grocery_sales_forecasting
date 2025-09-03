@@ -445,7 +445,6 @@ def compute_biclustering_scores(
     col_range=range(2, 6),
     col_mav_name: str = "store_item_mav",
     col_cluster_mav_name: str = "store_cluster_item_cluster_mav",
-    true_row_labels=None,  # kept for future ARI if you want it
     min_cluster_size=2,
     skip_invalid=True,
     log_level="INFO",
@@ -854,7 +853,6 @@ def cluster_data(
         model_name=model_name,
         row_range=row_range,
         col_range=col_range,
-        true_row_labels=None,
         min_cluster_size=min_cluster_size,
         skip_invalid=skip_invalid,
         model_kwargs=model_kwargs,
