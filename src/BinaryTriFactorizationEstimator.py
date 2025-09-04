@@ -5,7 +5,6 @@ from typing import Optional, Tuple, Dict, List, Any
 import pandas as pd
 from sklearn.base import BaseEstimator, ClusterMixin
 from sklearn.utils.validation import check_array
-from sklearn.cluster import KMeans
 
 import logging
 
@@ -17,6 +16,21 @@ logger = logging.getLogger(__name__)
 
 
 def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
+    r"""
+    Compute the mode of a vector, ignoring -1 values.
+
+    Parameters
+    ----------
+    vec : (N,) int array
+        Vector to compute the mode of.
+    K : int
+        Number of clusters.
+
+    Returns
+    -------
+    mode : int
+        Most frequent non-negative value in vec, or -1 if all values are negative.
+    """
     v = vec[vec >= 0]
     if v.size == 0:
         return -1
@@ -809,6 +823,116 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         return {"tss": tss, "rss": rss, "pve": pve, "baseline": baseline}
 
+    def compute_tss_rss_pve_per_block(
+        self,
+        X: np.ndarray,
+        baseline: str = "column_mean",
+        return_dataframe: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Compute TSS, RSS, and PVE statistics per block ID.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Original data matrix
+        baseline : str, default="column_mean"
+            Baseline for TSS computation:
+            - "column_mean": TSS = ||X - column_means||²_F (per-column centering)
+            - "grand_mean": TSS = ||X - grand_mean||²_F (global centering)
+            - "zero": TSS = ||X||²_F (no centering)
+        return_dataframe : bool, default=True
+            If True, return results as pandas DataFrame; if False, return as dict
+
+        Returns
+        -------
+        dict or pd.DataFrame
+            Per-block statistics with columns/keys:
+            - block_id: Block identifier (r*C + c)
+            - r, c: Row and column cluster indices
+            - n_cells: Number of cells in this block
+            - tss: Total sum of squares for this block
+            - rss: Residual sum of squares for this block
+            - pve: Percent variance explained for this block
+            - baseline: Baseline method used
+        """
+        self.check_fitted()
+        X = np.asarray(X, dtype=np.float64)
+        Xhat = self.Xhat_
+        B = self.B_
+        I, J = X.shape
+        R, C = B.shape
+
+        # Get block assignments for each cell
+        block_assignments = self.assign_cells_to_blocks(X)
+        block_ids = block_assignments["block_id"]
+
+        # Get unique block IDs (excluding -1 for unassigned)
+        unique_blocks = np.unique(block_ids)
+        unique_blocks = unique_blocks[unique_blocks >= 0]
+
+        results = []
+
+        for block_id in unique_blocks:
+            # Get mask for cells in this block
+            mask = block_ids == block_id
+            if not mask.any():
+                continue
+
+            # Extract data for this block
+            X_block = X[mask]
+            Xhat_block = Xhat[mask]
+
+            # Compute RSS for this block
+            rss = float(np.sum((X_block - Xhat_block) ** 2))
+
+            # Compute TSS for this block based on baseline
+            if baseline == "column_mean":
+                # Use global column means as baseline
+                col_means = X.mean(axis=0)
+                # Get column indices for this block
+                row_indices, col_indices = np.where(mask)
+                baseline_values = col_means[col_indices]
+                tss = float(np.sum((X_block - baseline_values) ** 2))
+            elif baseline == "grand_mean":
+                grand_mean = float(X.mean())
+                tss = float(np.sum((X_block - grand_mean) ** 2))
+            elif baseline == "zero":
+                tss = float(np.sum(X_block**2))
+            else:
+                raise ValueError(
+                    f"Unknown baseline '{baseline}'. "
+                    "Choose from: 'column_mean', 'grand_mean', 'zero'"
+                )
+
+            # Compute PVE
+            pve = 100.0 * (1.0 - rss / max(tss, 1e-12)) if tss > 0 else np.nan
+
+            # Get block coordinates
+            r = int(block_id // C)
+            c = int(block_id % C)
+
+            results.append(
+                {
+                    "block_id": int(block_id),
+                    "r": r,
+                    "c": c,
+                    "n_cells": int(mask.sum()),
+                    "tss": tss,
+                    "rss": rss,
+                    "pve": pve,
+                    "B_rc": float(B[r, c]),
+                    "baseline": baseline,
+                }
+            )
+
+        if return_dataframe:
+            import pandas as pd
+
+            return pd.DataFrame(results).sort_values("block_id").reset_index(drop=True)
+        else:
+            return {"per_block_stats": results, "baseline": baseline}
+
     def score(self, X: np.ndarray) -> Dict[str, float]:
         """
         Compute diagnostics on a given X using the learned factors:
@@ -1129,9 +1253,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             if np.isfinite(global_scores).any():
                 gr, gc = np.unravel_index(np.argmax(global_scores), global_scores.shape)
             else:
-                gr = gc = (
-                    0  # no allowed blocks at all (arbitrary fallback; caller may choose 'raise')
-                )
+                gr = gc = 0  # no allowed blocks at all (arbitrary fallback)
 
         # --- Main loop over cells (i,j) ---
         for i in range(I):
@@ -1512,6 +1634,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         mask: np.ndarray | None = None,
         min_keep: int = 4,
         method: str = "gaussian_delta",
+        return_frame: bool = False,
     ) -> Dict[str, Any]:
         """
         Filter the blocks by a boolean mask.
@@ -1523,8 +1646,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         # per-cell assignment with the mask
         assign = self.assign_unique_blocks(
-            X, method=method, allowed_mask=mask, on_empty="fallback"
+            X,
+            method=method,
+            allowed_mask=mask,
+            on_empty="fallback",
+            return_frame=return_frame,
         )
+        if return_frame:
+            return assign["as_frame"]
         return assign
 
     def get_row_col_orders(
@@ -1592,232 +1721,3 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 }
             )
         return pd.DataFrame(rows).sort_values("B_rc", ascending=False)
-
-
-# --- small utilities ---------------------------------------------------------
-
-
-def get_normalized_assignments(
-    assign: Dict[str, Any],
-    norm_data: pd.DataFrame,
-    *,
-    row_col: str = "store",
-    col_col: str = "item",
-    value_col: str = "growth_rate_1",
-) -> pd.DataFrame:
-
-    block_id_mat = assign["block_id"]
-
-    # long (store,item,block_id)
-    blk_long = (
-        pd.DataFrame(block_id_mat, index=norm_data.index, columns=norm_data.columns)
-        .stack()
-        .rename("block_id")
-        .reset_index()
-        .rename(columns={"level_0": row_col, "level_1": col_col})
-    )
-
-    # long values from the SAME matrix used for clustering
-    df = (
-        norm_data.stack()
-        .rename(value_col)
-        .reset_index()
-        .rename(columns={"level_0": row_col, "level_1": col_col})
-    )
-
-    # store, item, value, block_id (no date column)
-    df = df.merge(blk_long, on=[row_col, col_col], how="left")
-
-    return df
-
-
-def merge_assignments(
-    df: pd.DataFrame,
-    assign: Dict[str, Any],
-    norm_data: pd.DataFrame,
-    *,
-    row_col: str = "store",
-    col_col: str = "item",
-    value_col: str = "growth_rate_1",
-) -> pd.DataFrame:
-
-    block_id_mat = assign["block_id"]
-
-    # long (store,item,block_id)
-    blk_long = (
-        pd.DataFrame(block_id_mat, index=norm_data.index, columns=norm_data.columns)
-        .stack()
-        .rename("block_id")
-        .reset_index()
-        .rename(columns={"level_0": row_col, "level_1": col_col})
-    )
-
-    # long values from the SAME matrix used for clustering
-    val_long = (
-        norm_data.stack()
-        .rename(value_col)
-        .reset_index()
-        .rename(columns={"level_0": row_col, "level_1": col_col})
-    )
-
-    # plotting table: store, item, value, block_id (no date column)
-    val_long = val_long.merge(blk_long, on=[row_col, col_col], how="left")
-
-    # attach per-(store,item) block_id
-    val_long = val_long[["store", "item", "block_id"]].drop_duplicates()
-
-    df = df.merge(val_long, on=["store", "item"], how="left", validate="m:1")
-    return df
-
-
-def summarize_blocks_for_merge(
-    est: BinaryTriFactorizationEstimator,
-    X: np.ndarray,
-    assign: Dict[str, Any],
-) -> pd.DataFrame:
-    """Per-block stats from the current assignment."""
-    R, C = est.B_.shape
-    bid = assign["block_id"]
-    used = np.unique(bid)
-    used = used[used >= 0]
-    rows = []
-    for b in used:
-        mask = bid == b
-        vals = X[mask]
-        r, c = int(b // C), int(b % C)
-        rows.append(
-            {
-                "block_id": int(b),
-                "r": r,
-                "c": c,
-                "B_rc": float(est.B_[r, c]),
-                "n_cells": int(mask.sum()),
-                "coverage_%": 100.0 * mask.mean(),
-                "mean": float(vals.mean()) if vals.size else np.nan,
-                "median": float(np.median(vals)) if vals.size else np.nan,
-            }
-        )
-    return pd.DataFrame(rows).sort_values("block_id").reset_index(drop=True)
-
-
-def explain_coverage(
-    est: BinaryTriFactorizationEstimator,
-    assign: Dict[str, Any],
-) -> pd.DataFrame:
-
-    # per-block coverage as a matrix
-    cov = pd.DataFrame(
-        [
-            [
-                (assign["block_id"] == (r * est.B_.shape[1] + c)).sum()
-                for c in range(est.B_.shape[1])
-            ]
-            for r in range(est.B_.shape[0])
-        ],
-        index=[f"r{r}" for r in range(est.B_.shape[0])],
-        columns=[f"c{c}" for c in range(est.B_.shape[1])],
-    )
-    cov = cov.style.background_gradient(cmap="Blues", axis=None)
-    return cov
-
-
-def merge_blocks_by_stat(
-    assign: Dict[str, Any],
-    df: pd.DataFrame,
-    norm_data: pd.DataFrame,
-    est: BinaryTriFactorizationEstimator,
-    *,
-    stat: str = "mean",
-    scheme: str = "sign",
-    k: int = 2,
-) -> pd.DataFrame:
-    """
-    Merge active blocks using a single statistic of their cells.
-
-    stat:   "mean" or "median"   (drives grouping)
-    scheme: "sign" | "kmeans"
-      - "sign": positives vs negatives (by chosen stat)
-      - "kmeans": k-means in 1D on the chosen stat (k groups)
-    """
-    summ = summarize_blocks_for_merge(est, norm_data.to_numpy(), assign)
-    stat_col = "mean" if stat == "mean" else "median"
-    s = summ[stat_col].to_numpy()
-
-    if scheme == "sign":
-        # 0 = nonnegative, 1 = negative → two groups
-        merged = (s < 0).astype(int)
-        # order: group 0 (>=0) first, group 1 (<0) next
-        if stat == "mean":
-            order = np.argsort(
-                [
-                    s[merged == g].mean() if (merged == g).any() else np.inf
-                    for g in [0, 1]
-                ]
-            )
-        else:
-            medians = [
-                np.median(s[merged == g]) if (merged == g).any() else np.inf
-                for g in [0, 1]
-            ]
-            order = np.argsort(np.array(medians))
-        remap = {int(g_old): int(g_new) for g_new, g_old in enumerate(order)}
-        summ["merged_id"] = [remap[int(g)] for g in merged]
-
-    elif scheme == "kmeans":
-        km = KMeans(n_clusters=k, n_init=10, random_state=0)
-        labs = km.fit_predict(s.reshape(-1, 1))
-        # reorder clusters by mean stat so ids are consistent
-        if stat == "mean":
-            stat_df = pd.Series(s).groupby(labs).mean().sort_values()
-        else:
-            stat_df = pd.Series(s).groupby(labs).median().sort_values()
-        remap = {int(old): int(new) for new, old in enumerate(stat_df.index)}
-        summ["merged_id"] = [remap[int(g)] for g in labs]
-
-    else:
-        raise ValueError("scheme must be 'sign' or 'kmeans'")
-
-    # map original block_id -> merged_id
-    mapping = dict(zip(summ["block_id"].tolist(), summ["merged_id"].tolist()))
-
-    # build merged block-id matrix
-    bid = assign["block_id"].copy()
-    bid_merged = np.full_like(bid, fill_value=-1, dtype=int)
-    # vectorized map
-    flat = bid.ravel()
-    out = np.array([mapping.get(int(b), -1) for b in flat], dtype=int)
-    bid_merged = out.reshape(bid.shape)
-
-    # Use bid_merged
-    df_assign = (
-        pd.DataFrame(bid_merged, index=norm_data.index, columns=norm_data.columns)
-        .stack()
-        .rename("merged_block_id")
-        .reset_index()
-        .rename(columns={"level_0": "store", "level_1": "item"})
-    )
-
-    # attach to your training df
-    df = df.drop(columns=["block_id"], errors="ignore").merge(
-        df_assign[["store", "item", "merged_block_id"]],
-        on=["store", "item"],
-        how="left",
-        validate="m:1",
-    )
-    df.rename(columns={"merged_block_id": "block_id"}, inplace=True)
-    return df
-
-
-def _mode_min(s: pd.Series) -> int:
-    m = s.mode()
-    return int(m.min()) if not m.empty else -1
-
-
-def get_row_col_orders(df: pd.DataFrame) -> Tuple[List[int], List[int]]:
-    row_order = (
-        df.groupby("store")["block_id"].agg(_mode_min).sort_values().index.tolist()
-    )
-    col_order = (
-        df.groupby("item")["block_id"].agg(_mode_min).sort_values().index.tolist()
-    )
-    return row_order, col_order
