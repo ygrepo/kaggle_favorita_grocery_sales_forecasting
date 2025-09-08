@@ -1,7 +1,7 @@
 # Implementation: Binary Multi-Hard Tri-Factorization (scikit-learn style)
 # with Gaussian/Poisson losses
 import numpy as np
-from typing import Optional, Tuple, Dict, List, Any
+from typing import Optional, Tuple, Dict, List, Any, Callable
 import pandas as pd
 from sklearn.base import BaseEstimator, ClusterMixin
 from sklearn.utils.validation import check_array
@@ -380,7 +380,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 if self.loss == "gaussian":
                     # Clean residual for row i (remove current recon; add back own contributions)
                     # Row i update (your Block1):
-                    self._greedy_update_membership(
+                    self._greedy_update_gaussian(
                         X=X,
                         Xhat=Xhat,
                         memberships=U,
@@ -415,7 +415,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             for j in range(J):
                 if self.loss == "gaussian":
-                    self._greedy_update_membership(
+                    self._greedy_update_gaussian(
                         X=X,
                         Xhat=Xhat,
                         memberships=V,
@@ -475,7 +475,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         return self
 
     # -------- Helpers / API --------
-    def _greedy_update_membership(
+    def _greedy_update_gaussian(
         self,
         X: np.ndarray,
         Xhat: np.ndarray,
@@ -1409,7 +1409,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         X = check_array(
             X, dtype=np.float64, ensure_2d=True, force_all_finite="allow-nan"
         )
-        X = np.nan_to_num(X, copy=False)  # be robust to NaNs
+        X = np.nan_to_num(X)  # be robust to NaNs
 
         R, C = self.B_.shape
         J = self.V_.shape[0]
@@ -1472,7 +1472,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         X = check_array(
             X, dtype=np.float64, ensure_2d=True, force_all_finite="allow-nan"
         )
-        X = np.nan_to_num(X, copy=False)
+        X = np.nan_to_num(X)
 
         J = self.V_.shape[0]
         if X.shape[1] != J:
@@ -1575,7 +1575,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             X = check_array(
                 X, dtype=np.float64, ensure_2d=True, force_all_finite="allow-nan"
             )
-            X = np.nan_to_num(X, copy=False)
+            X = np.nan_to_num(X)
             I, C = H.shape
             if X.shape[0] != I:
                 raise ValueError(f"X has {X.shape[0]} rows, but model expects {I}.")
@@ -1610,22 +1610,73 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     def allowed_mask_from_gap(
         self, *, min_keep: int = 4, eps: float = 1e-12
     ) -> np.ndarray:
-        """Binary mask over B selecting 'strong' blocks via the largest |B| gap."""
+        """
+        Return a boolean (R×C) mask over B_ that keeps the 'strong' blocks.
+
+        Heuristic:
+        1) Rank the |B| entries from largest to smallest (ignoring near-zeros).
+        2) Find the biggest *gap* between consecutive magnitudes.
+        3) Keep everything at or above the magnitude where that biggest gap occurs,
+            but always keep at least `min_keep` entries.
+
+        Parameters
+        ----------
+        min_keep : int
+            Minimum number of block coefficients to keep, even if the gap suggests fewer.
+        eps : float
+            Values with |B| <= eps are treated as effectively zero and ignored for gap finding.
+
+        Returns
+        -------
+        np.ndarray (dtype=bool, same shape as B_)
+            True where the block is kept (allowed), False otherwise.
+        """
+        # Must be fitted to have B_
         if self.B_ is None:
             raise ValueError("Model has not been fitted yet")
+
+        # 1) Collect absolute values of all block weights into a flat vector
         absB = np.abs(self.B_).ravel()
-        vals = np.sort(absB)[::-1]
-        vals = vals[vals > eps]
+
+        # 2) Sort descending and drop (near-)zeros so they don't affect the gap
+        vals = np.sort(absB)[::-1]  # descending
+        vals = vals[vals > eps]  # ignore near-zero entries
+
+        # If nothing left after thresholding, return an all-False mask
         if vals.size == 0:
             return np.zeros_like(self.B_, dtype=bool)
+
+        # If the number of non-negligible entries is small, keep them all
         if vals.size <= min_keep:
-            cut = vals[-1]
+            cut = vals[-1]  # the smallest of what's left
             return np.abs(self.B_) >= cut
+
+        # 3) Compute adjacent drops (gaps) in the sorted magnitude curve:
+        #    drops[i] = vals[i] - vals[i+1]
         drops = vals[:-1] - vals[1:]
+
+        # 4) Find the largest gap and keep everything up to that index (inclusive)
+        #    +1 because k items correspond to indices 0..k-1 in `vals`
         k = int(np.argmax(drops) + 1)
+
+        # 5) Enforce minimum keep
         k = max(min_keep, k)
+
+        # 6) Threshold: keep anything with |B| >= the k-th value
         cut = vals[k - 1]
         return np.abs(self.B_) >= cut
+
+    def blockmask_to_cellmask(self, allowed_mask: np.ndarray) -> np.ndarray:
+        """
+        allowed_mask: (R, C) boolean or {0,1}
+        Returns: (I, J) boolean cell-level mask:
+        True if cell (i,j) can see at least one allowed block (r,c)
+        """
+        # U,V are binary
+        U, V = self.U_, self.V_
+        A = U.astype(int) @ allowed_mask.astype(int)  # (I, C)
+        M = A @ V.astype(int).T  # (I, J)
+        return M > 0
 
     def filter_blocks(
         self,
@@ -1721,3 +1772,30 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 }
             )
         return pd.DataFrame(rows).sort_values("B_rc", ascending=False)
+
+    @classmethod
+    def factory(
+        cls, **frozen_kwargs
+    ) -> Callable[..., "BinaryTriFactorizationEstimator"]:
+        """
+        Returns a callable builder:
+            builder(n_row_clusters, n_col_clusters, *, random_state=None, **overrides) -> estimator
+        `frozen_kwargs` are fixed defaults; `overrides` allow per-call tweaks.
+        """
+
+        def _builder(
+            n_row_clusters: int,
+            n_col_clusters: int,
+            *,
+            random_state: Optional[int] = None,
+            **overrides: Any,
+        ) -> "BinaryTriFactorizationEstimator":
+            kw: Dict[str, Any] = dict(frozen_kwargs)
+            kw.update(overrides)
+            kw["n_row_clusters"] = int(n_row_clusters)
+            kw["n_col_clusters"] = int(n_col_clusters)
+            if random_state is not None:
+                kw["random_state"] = int(random_state)
+            return cls(**kw)
+
+        return _builder

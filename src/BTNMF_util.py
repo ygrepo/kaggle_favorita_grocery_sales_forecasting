@@ -1,8 +1,9 @@
 import numpy as np
-from typing import Dict, Any, Iterable, Tuple, Optional
+from typing import Dict, Any, Iterable, Optional, Callable
 import pandas as pd
 from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
+from src.data_utils import normalize_data
 from dataclasses import dataclass
 
 import logging
@@ -366,107 +367,141 @@ def compute_pve(
 # ----------------------------
 # Fast per-block ablation ΔLoss
 # ----------------------------
+
+
+def compute_all_block_delta_losses(
+    est: BinaryTriFactorizationEstimator, X: np.ndarray, mask: np.ndarray = None
+):
+
+    # If B is larger, trim a view
+    U, B, V = est.factors()
+    # Use aligned dims from U and V
+    R = U.shape[1]
+    C = V.shape[1]
+    # B = est.B_
+    if B.shape != (R, C):
+        B = B[:R, :C]
+
+    dmat = np.zeros((R, C), dtype=float)
+    for r in range(R):
+        for c in range(C):
+            dmat[r, c] = ablate_block_delta_loss(est, X, r, c, B=B, mask=mask)
+    return dmat
+
+
 def ablate_block_delta_loss(
     est: BinaryTriFactorizationEstimator,
     X: np.ndarray,
     r: int,
     c: int,
+    B: np.ndarray,
     mask: np.ndarray = None,
-) -> float:
+):
     """
     ΔLoss_rc = Loss(X, Xhat_without_rc) - Loss(X, Xhat_full)
     where removing block (r,c) is a rank-1 update:
        Xhat_without = Xhat - B_rc * (U[:,r] ⊗ V[:,c])
     Positive Δ means the block is helpful.
     """
-    U, V, B = est.factors()
+    U, _, V = est.factors()
     Xhat = est.reconstruct()
-    loss_name = est.loss
+    # U, V, B, Xhat = est.U_, est.V_, Bview, est.Xhat_
 
     b_rc = float(B[r, c])
     if b_rc == 0.0:
         return 0.0
-
-    # rank-1 contribution of block (r,c)
+    loss_name = est.loss
+    L_full = model_loss(X, Xhat, loss_name, mask)
+    # rank-1 contribution with current U/V
     outer = np.outer(U[:, r].astype(float), V[:, c].astype(float))
     Xhat_wo = Xhat - b_rc * outer
-
-    L_full = model_loss(X, Xhat, loss_name, mask)
     L_wo = model_loss(X, Xhat_wo, loss_name, mask)
     return L_wo - L_full
-
-
-def compute_all_block_delta_losses(
-    est: BinaryTriFactorizationEstimator, X: np.ndarray, mask: np.ndarray = None
-):
-    _, _, B = est.factors()
-    R, C = B.shape
-    dmat = np.zeros((R, C), dtype=float)
-    for r in range(R):
-        for c in range(C):
-            dmat[r, c] = ablate_block_delta_loss(est, X, r, c, mask=mask)
-    return dmat  # ΔLoss per block
 
 
 # ----------------------------
 # WCV / BCV / silhouette-like
 # ----------------------------
+
+
 def compute_block_wcv_bcv_silhouette(
-    X: np.ndarray, assign_dict: Dict[str, Any], R: int, C: int, mask: np.ndarray = None
-):
+    X: np.ndarray,
+    assign_dict: Dict[str, Any],
+    R: int,
+    C: int,
+    mask: np.ndarray | None = None,
+) -> pd.DataFrame:
     """
     Using per-cell assignments from assign_unique_blocks(...):
-      - assign_dict["r_star"], ["c_star"] with -1 for unassigned.
-    Returns:
-      DataFrame with per-block: n, mean, WCV, BCV_nearest, silhouette_like
+      - assign_dict["r_star"], assign_dict["c_star"] with -1 for unassigned.
+
+    Returns a DataFrame with per-block rows (r,c) and columns:
+      ["r", "c", "n", "mean", "WCV", "BCV_nearest", "silhouette_like"].
+
+    Notes:
+      - WCV is mean squared deviation within the (r,c) block.
+      - BCV_nearest is the minimum squared separation between this block mean
+        and any other block's mean.
+      - silhouette_like is in [-1, 1]; higher is better separation vs compactness.
     """
-    r_star = assign_dict["r_star"]
-    c_star = assign_dict["c_star"]
+    # Per-cell block assignments (shape must match X)
+    r_star = assign_dict["r_star"]  # shape (I,J), values in {0..R-1} or -1
+    c_star = assign_dict["c_star"]  # shape (I,J), values in {0..C-1} or -1
     I, J = r_star.shape
 
-    # observed mask
+    # Observed mask: include only cells that are both observed and assigned to some block
     if mask is None:
         obs_mask = np.ones_like(r_star, dtype=bool)
     else:
         obs_mask = mask.astype(bool)
 
-    # collect per-block cells
-    stats = []
-    block_means = np.full((R, C), np.nan, dtype=float)
-    block_ns = np.zeros((R, C), dtype=int)
+    # Prepare outputs: per-block mean and count (n)
+    stats = []  # list of rows for the final DataFrame
+    block_means = np.full((R, C), np.nan)  # block centroids (means)
+    block_ns = np.zeros((R, C), dtype=int)  # cell counts per block
 
+    # First pass: compute per-block means and counts
     for r in range(R):
         for c in range(C):
+            # cells that belong to block (r,c), are observed, and not unassigned
             sel = (r_star == r) & (c_star == c) & obs_mask
-            n = int(np.sum(sel))
+            n = int(sel.sum())
             block_ns[r, c] = n
             if n > 0:
                 vals = X[sel].astype(float)
-                mu = float(np.mean(vals))
-                block_means[r, c] = mu
+                block_means[r, c] = float(vals.mean())
 
-    # WCV per block
+    # Second pass: compute WCV, nearest-BCV, and silhouette-like per block
     for r in range(R):
         for c in range(C):
             n = block_ns[r, c]
+
+            # If this block has no cells, emit a row with NaNs for stats
             if n == 0:
-                stats.append((r, c, 0, np.nan, np.nan, np.nan))
+                # BUGFIX: include the 'mean' slot; previously one field short
+                stats.append((r, c, 0, np.nan, np.nan, np.nan, np.nan))
                 continue
+
+            # Gather this block's values and mean
             sel = (r_star == r) & (c_star == c) & obs_mask
             vals = X[sel].astype(float)
             mu = block_means[r, c]
+
+            # WCV = mean squared deviation from the block mean
             wcv = float(np.mean((vals - mu) ** 2))
 
-            # BCV as nearest-centroid separation in mean-space
+            # BCV_nearest = min squared distance to any other defined block mean
             diffs = []
             for p in range(R):
                 for q in range(C):
-                    if (p == r and q == c) or np.isnan(block_means[p, q]):
+                    if p == r and q == c:
                         continue
-                    diffs.append((mu - block_means[p, q]) ** 2)
+                    other_mu = block_means[p, q]
+                    if not np.isnan(other_mu):
+                        diffs.append((mu - other_mu) ** 2)
             bcv = float(np.min(diffs)) if diffs else np.nan
 
-            # silhouette-like score in [−1,1]
+            # Silhouette-like: (bcv - wcv) / max(bcv, wcv), in [-1, 1]
             if np.isnan(bcv):
                 sil = np.nan
             else:
@@ -475,6 +510,7 @@ def compute_block_wcv_bcv_silhouette(
 
             stats.append((r, c, n, mu, wcv, bcv, sil))
 
+    # Assemble tidy per-block DataFrame
     df = pd.DataFrame(
         stats,
         columns=["r", "c", "n", "mean", "WCV", "BCV_nearest", "silhouette_like"],
@@ -495,6 +531,85 @@ def coverage_from_assign(assign_dict: Dict[str, Any]):
     return float(np.mean(r_star >= 0))  # fraction of cells assigned
 
 
+def _baseline_array(
+    X: np.ndarray, loss_name: str, mask: np.ndarray | None
+) -> np.ndarray:
+    """
+    Constant-mean baseline:
+      - Gaussian: baseline = mean(X[mask])
+      - Poisson : baseline = mean-rate μ = mean(X[mask])
+    """
+    obs = X if mask is None else X[mask]
+    mu = float(np.mean(obs))
+    return np.full_like(X, mu, dtype=float)
+
+
+# ---------- AIC/BIC helpers ----------
+def _obs_count(mask: np.ndarray | None, X: np.ndarray) -> int:
+    """Number of observed cells; if no mask, count all cells in X."""
+    if mask is None:
+        return int(X.size)
+    mask = mask.astype(bool)
+    if mask.shape != X.shape:
+        raise ValueError(f"mask shape {mask.shape} must match X shape {X.shape}")
+    return int(np.sum(mask))
+
+
+def neg_loglik_from_loss(
+    loss_name: str, X: np.ndarray, Xhat: np.ndarray, mask=None
+) -> float:
+    """
+    Return a quantity proportional to negative log-likelihood.
+    (Exact constants cancel in AIC/BIC comparisons across same data.)
+    """
+    if loss_name == "gaussian":
+        return gaussian_loss(X, Xhat, mask=mask)  # SSE ~ 2*negLL up to sigma^2 scale
+    elif loss_name == "poisson":
+        return poisson_nll(X, Xhat, mask=mask)  # exact NLL (up to const)
+    else:
+        raise ValueError(f"Unknown loss: {loss_name}")
+
+
+def aic_bic_scores(
+    loss_name: str,
+    X: np.ndarray,
+    Xhat: np.ndarray,
+    R: int,
+    C: int,
+    mask: np.ndarray | None = None,
+) -> tuple[float, float]:
+    # Effective number of free parameters in the model
+    # Here, we only count entries in B (R×C matrix).
+    # U and V are binary membership matrices, not treated as free parameters here.
+    k = int(R * C)
+
+    # Number of observed data points (cells in X).
+    # If a mask is provided, only those entries count as "observed".
+    N = _obs_count(mask, X)
+
+    # Compute negative log-likelihood (NLL) of the fitted model
+    # - Gaussian loss → SSE-based surrogate
+    # - Poisson loss  → exact Poisson NLL
+    nll = neg_loglik_from_loss(loss_name, X, Xhat, mask=mask)
+
+    # Put both Gaussian and Poisson families on the same "2*negLL" scale
+    # (AIC/BIC are usually defined in terms of -2 log likelihood)
+    two_nll = 2.0 * nll
+
+    # Akaike Information Criterion (AIC):
+    # AIC = 2k - 2logL ≈ 2k + 2*NLL (constants dropped)
+    # Penalizes model complexity (k parameters) but not as strongly as BIC.
+    AIC = 2.0 * k + two_nll
+
+    # Bayesian Information Criterion (BIC):
+    # BIC = log(N)*k - 2logL ≈ log(N)*k + 2*NLL
+    # Penalizes model complexity more strongly for large N.
+    BIC = np.log(max(N, 1)) * k + two_nll
+
+    # Return both scores as floats
+    return float(AIC), float(BIC)
+
+
 # ----------------------------
 # Gini concentration
 # ----------------------------
@@ -502,6 +617,8 @@ def gini_concentration(x: np.ndarray, eps: float = 1e-12) -> float:
     """
     Gini in [0,1]: 0 = perfectly even, 1 = all mass on one entry.
     Works on any nonnegative array. Flattens and ignores NaNs.
+    0 means all entries contribute equally.
+    1 means one entry dominates all others.
     """
     v = np.asarray(x, dtype=float).ravel()
     v = v[np.isfinite(v)]
@@ -525,13 +642,16 @@ def gini_concentration(x: np.ndarray, eps: float = 1e-12) -> float:
 
 @dataclass
 class FitResult:
-    est: Any
-    train_loss: float
+    est: BinaryTriFactorizationEstimator
+    loss: float
+    percent_loss: float
+    rmse: float
+    percent_rmse: float
     seed: int
 
 
 def _fit_with_restarts(
-    estimator: BinaryTriFactorizationEstimator,
+    est_maker: Callable[..., BinaryTriFactorizationEstimator],
     X: np.ndarray,
     n_row: int,
     n_col: int,
@@ -547,47 +667,89 @@ def _fit_with_restarts(
 
     best = None
     for s in list(seeds)[:restarts]:
-        est = estimator.copy()
-        est.n_row_clusters = n_row
-        est.n_col_clusters = n_col
-        # If your estimator accepts random_state, pass it via fit_kwargs
-        if hasattr(est, "random_state"):
-            est.random_state = s
+        est = est_maker(n_row, n_col, random_state=s)
         est.fit(X)
         # training loss (use the same metric family as model_loss)
-        tr_loss = model_loss(X, est.Xhat_, getattr(est, "loss", "gaussian"))
-        if (best is None) or (tr_loss < best.train_loss):
-            best = FitResult(est=est, train_loss=tr_loss, seed=s)
+        Xhat = est.reconstruct()
+        loss = model_loss(X, Xhat, getattr(est, "loss", "gaussian"))
+        if (best is None) or (loss < best.loss):
+            percent_loss = 100.0 * loss / np.sum(X**2)
+            rmse = np.sqrt(np.mean((X - Xhat) ** 2))
+            percent_rmse = 100.0 * rmse / np.sqrt(np.mean(X**2))
+
+            best = FitResult(
+                est=est,
+                loss=loss,
+                percent_loss=percent_loss,
+                rmse=rmse,
+                percent_rmse=percent_rmse,
+                seed=s,
+            )
     return best
+
+
+def make_gap_cellmask(min_keep: int = 6):
+    """
+    Returns a callable that, given a *fitted* estimator est, builds a cell-level (I, J) mask
+    by (a) selecting strong blocks with the gap heuristic, then (b) projecting to (I, J).
+    """
+
+    def _fn(est: BinaryTriFactorizationEstimator) -> np.ndarray:
+        allowed = est.allowed_mask_from_gap(min_keep=min_keep)  # (R, C)
+        # Sanity checks
+        U, B, V = est.factors()
+        assert (
+            U is not None and V is not None and B is not None
+        ), "Estimator must be fitted"
+        assert allowed.shape == B.shape, f"allowed {allowed.shape} != B {B.shape}"
+        cell_mask = est.blockmask_to_cellmask(allowed)  # (I, J)
+        return cell_mask
+
+    return _fn
 
 
 # ----------------------------
 # Sweep R×C and compute metrics
 # ----------------------------
 def sweep_btf_grid(
-    estimator: BinaryTriFactorizationEstimator,
+    est_maker: Callable[..., BinaryTriFactorizationEstimator],
     X: np.ndarray,
     R_list: Iterable[int],
     C_list: Iterable[int],
     *,
     restarts: int = 3,
     seeds: Optional[Iterable[int]] = None,
-    mask: Optional[np.ndarray] = None,
-    assign_method_if_gauss: str = "gaussian_delta",
-    assign_method_if_pois: str = "poisson_delta",
+    min_keep: int = 6,
     fit_kwargs: Optional[Dict[str, Any]] = None,
+    log_level: str = "INFO",
 ) -> pd.DataFrame:
     """
     Returns a DataFrame with one row per (n_row, n_col) containing:
-      - train_loss, val-like PVE (on X vs Xhat), sil_mean,
+      - loss, val-like PVE (on X vs Xhat), sil_mean,
         ΔLoss_total, ΔLoss_gini, frac_weak (20th pct), B_sparsity, coverage,
         plus shapes and seed of the chosen restart.
+
+    Parameters
+    ----------
+    R_list : Iterable[int] or range
+        Row cluster counts to try. Can be a list [2, 3, 5] or range(2, 6)
+    C_list : Iterable[int] or range
+        Column cluster counts to try. Can be a list [2, 3, 5] or range(2, 6)
     """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    # Convert ranges to lists if needed
+    if isinstance(R_list, range):
+        R_list = list(R_list)
+    if isinstance(C_list, range):
+        C_list = list(C_list)
+
     rows = []
     for R in R_list:
         for C in C_list:
+            logger.info(f"Fitting BTF with R={R}, C={C}")
             fitres = _fit_with_restarts(
-                estimator,
+                est_maker,
                 X,
                 n_row=R,
                 n_col=C,
@@ -599,16 +761,27 @@ def sweep_btf_grid(
             loss_name = getattr(est, "loss", "gaussian")
 
             # --- PVE ---
-            pve = compute_pve(X, est.Xhat_, loss_name=loss_name, mask=mask)
+            Xhat = est.reconstruct()
+            if min_keep > 0:
+                logger.info(f"Computing cell mask for R={R}, C={C}")
+                mask = make_gap_cellmask(min_keep=min_keep)(est)
+            else:
+                mask = None
+            pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
+
+            N_all = X.size
+            N_obs = _obs_count(mask, X)
+            mask_coverage = N_obs / N_all if N_all > 0 else np.nan
 
             # --- Assignments (for WCV/BCV and coverage) ---
             assign = est.assign_unique_blocks(
                 X=X,
                 method=(
-                    assign_method_if_gauss
-                    if loss_name == "gaussian"
-                    else assign_method_if_pois
+                    "gaussian_delta" if est.loss == "gaussian" else "poisson_delta"
                 ),
+                allowed_mask=(
+                    np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
+                ),  # drop weakest 20% blocks
             )
 
             # --- Silhouette-like (WCV/BCV) ---
@@ -622,16 +795,43 @@ def sweep_btf_grid(
             )
 
             # --- Ablations ---
-            delta_mat = compute_all_block_delta_losses(est, X, mask=mask)
-            delta_flat = delta_mat[np.isfinite(delta_mat)]
-            total_delta = float(np.sum(delta_flat))
-            thresh = np.percentile(delta_flat, 20) if delta_flat.size else np.nan
-            frac_weak = (
-                float(np.mean(delta_flat < thresh)) if delta_flat.size else np.nan
-            )
+            # Compute ΔLoss for every block (r,c) in the factorization
+            # ΔLoss_rc = Loss_without_block - Loss_full
+            # Positive values mean the block is "helpful"
+            ablation_mat = compute_all_block_delta_losses(est, X, mask=mask)
+
+            # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
+            ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
+            abl_pos = np.clip(ablation_flat, 0.0, None)
+
+            # Total contribution of all blocks (sum of ΔLoss values)
+            # Measures how much the model benefits overall from all blocks
+            total_block_contribution = float(np.sum(abl_pos))
+
+            # 20th percentile of block ΔLoss values (a "weak block" threshold)
+            # If many blocks have ΔLoss below this, they are considered "weak"
+            thresh = np.percentile(abl_pos, 20) if abl_pos.size else np.nan
+
+            # Fraction of blocks whose ΔLoss is below the 20th percentile
+            # i.e., what proportion of blocks are "weak" compared to the rest
+            # frac_weak: proportion of blocks considered weak.
+            frac_weak = float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
+
             gini = (
-                gini_concentration(np.maximum(delta_flat, 0.0))
-                if delta_flat.size
+                gini_concentration(np.maximum(ablation_flat, 0.0))
+                if ablation_flat.size
+                else np.nan
+            )
+
+            # N = _obs_count(mask, X)
+            # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
+            per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
+
+            base = _baseline_array(X, loss_name, mask)
+            baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
+            rel_block_contribution = (
+                (total_block_contribution / baseline_loss)
+                if baseline_loss > 0
                 else np.nan
             )
 
@@ -639,68 +839,80 @@ def sweep_btf_grid(
             b_sparsity = sparsity_of_B(est, tol=1e-4)
             coverage = coverage_from_assign(assign)
 
+            # --- AIC/BIC-like penalized scores ---
+            Xhat = est.reconstruct()
+            AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=mask)
+
             rows.append(
                 {
                     "n_row": R,
                     "n_col": C,
+                    "Mask_Nobs": N_obs,
+                    "Mask_Coverage": mask_coverage,
                     "seed": fitres.seed,
-                    "TrainLoss": fitres.train_loss,
+                    "Loss": fitres.loss,
+                    "Percent_Loss": fitres.percent_loss,
+                    "RMSE": fitres.rmse,
+                    "Percent_RMSE": fitres.percent_rmse,
                     "PVE": pve,
                     "Mean Silhouette": sil_mean,
-                    "DeltaLoss_Total": total_delta,
-                    "DeltaLoss_Gini": gini,
-                    "DeltaLoss_FracWeak20": frac_weak,
+                    "BlockContribution_Total": total_block_contribution,
+                    # "DeltaLoss_PerCell": delta_per_cell,
+                    "BlockContribution_PerCell": per_cell_block_contribution,
+                    "BlockContribution_RelBaseline": rel_block_contribution,
+                    "BlockContribution_FracWeak20": frac_weak,
+                    "BlockContribution_Gini": gini,
                     "B_Sparsity": b_sparsity,
                     "Coverage": coverage,
+                    "AIC": AIC,
+                    "BIC": BIC,
                 }
             )
+
     return pd.DataFrame(rows)
 
 
 # ----------------------------
 # Rank settings — flexible order
 # ----------------------------
-def pick_best_btf_setting(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
-    """
-    Rank by a sensible default:
-      Maximize:  PVE, Mean Silhouette, DeltaLoss_Gini, Coverage
-      Minimize:  TrainLoss, DeltaLoss_FracWeak20, B_Sparsity, n_row, n_col
-    Feel free to edit the order to your preference.
-    """
-    if df is None or df.empty:
-        raise ValueError("No settings to rank (empty DF).")
 
+
+def pick_best_btf_setting(
+    df: pd.DataFrame, max_pve_drop: float = 0.01, min_sil: float = -0.05
+) -> tuple[pd.DataFrame, pd.Series]:
     d = df.copy()
-    # Coerce numerics & clean
-    for c in [
-        "PVE",
-        "Mean Silhouette",
-        "DeltaLoss_Gini",
-        "Coverage",
-        "TrainLoss",
-        "DeltaLoss_FracWeak20",
-        "B_Sparsity",
-        "n_row",
-        "n_col",
-    ]:
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce")
-    d = d.replace([np.inf, -np.inf], np.nan)
+    # Per-obs scores help compare across N
+    if {"AIC", "BIC", "Coverage"}.issubset(d.columns):
+        N = d["Coverage"] * 0 + 1  # placeholder if you don’t have N per row
+    # Filter by silhouette
+    if "Mean Silhouette" in d.columns:
+        d = d[d["Mean Silhouette"] >= min_sil]
+        if d.empty:  # if too strict, back off once
+            d = df.copy()
+    # PVE within epsilon of best
+    if "PVE" in d.columns:
+        pve_star = d["PVE"].max()
+        d = d[d["PVE"] >= pve_star - max_pve_drop]
 
-    # Desired order:
+    # Now rank: favor simplicity and structure after the filter
     sort_cols = [
-        "PVE",
-        "Mean Silhouette",
-        "DeltaLoss_Gini",
-        "Coverage",
-        "TrainLoss",
-        "DeltaLoss_FracWeak20",
-        "B_Sparsity",
+        "BIC",  # minimize: penalized fit
+        "Mean Silhouette",  # maximize: cluster separation
+        "BlockContribution_RelBaseline",  # maximize: relative gain
+        "BlockContribution_Gini",  # maximize: concentrated signal
+        "BlockContribution_FracWeak20",  # minimize: few weak blocks
         "n_row",
-        "n_col",
+        "n_col",  # minimize model size
     ]
-    # False = descending (maximize), True = ascending (minimize)
-    ascending = [False, False, False, False, True, True, True, True, True]
+    ascending = [
+        True,  # BIC
+        False,  # Silhouette
+        False,  # BlockContribution_RelBaseline
+        False,  # BlockContribution_Gini
+        True,  # BlockContribution_FracWeak20
+        True,
+        True,  # size
+    ]
 
     used = [(c, a) for c, a in zip(sort_cols, ascending) if c in d.columns]
     if used:
@@ -713,11 +925,35 @@ def pick_best_btf_setting(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
             ignore_index=True,
         )
 
-    # Best representative per (n_row,n_col)
+    # best unique (n_row,n_col)
     if not {"n_row", "n_col"}.issubset(d.columns):
-        raise ValueError("Missing n_row/n_col; cannot rank settings.")
+        raise ValueError("Missing n_row/n_col")
     settings_sorted = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
-    if settings_sorted.empty:
-        raise ValueError("No unique (n_row, n_col) settings to rank.")
-    best_row = settings_sorted.iloc[0].copy()
-    return settings_sorted, best_row
+    best = settings_sorted.iloc[0].copy()
+    return settings_sorted, best
+
+
+def normalize_data_and_fit_estimator(
+    df: pd.DataFrame,
+    est_maker: Callable[..., BinaryTriFactorizationEstimator],
+    n_row: int,
+    n_col: int,
+    random_state: int = 0,
+    min_keep: int = 6,
+) -> tuple[BinaryTriFactorizationEstimator, dict]:
+    # Build normalized + raw matrices
+    norm_data = normalize_data(
+        df,
+        column_name="growth_rate_1",
+        log_transform=False,
+        median_transform=False,
+        mean_transform=True,
+        zscore_rows=False,
+        zscore_cols=True,
+    ).fillna(0)
+    est = est_maker(n_row, n_col, random_state=random_state)
+    est.fit(norm_data.to_numpy())
+    assign = est.filter_blocks(
+        X=norm_data.to_numpy(), min_keep=min_keep, return_frame=False
+    )
+    return est, assign
