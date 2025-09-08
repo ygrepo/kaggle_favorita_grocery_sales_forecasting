@@ -7,6 +7,7 @@ import torch
 import random
 import logging
 import numpy as np
+import pandas as pd
 
 
 def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
@@ -83,3 +84,17 @@ def set_seed(seed: int = 42):
 
     # For full reproducibility in future versions
     os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def save_csv_or_parquet(df: pd.DataFrame, fn: Path) -> None:
+    if fn.suffix == ".parquet":
+        df.to_parquet(fn)
+    else:
+        df.to_csv(fn, index=False)
+
+
+def read_csv_or_parquet(fn: Path) -> pd.DataFrame:
+    if fn.suffix == ".parquet":
+        return pd.read_parquet(fn)
+    else:
+        return pd.read_csv(fn)

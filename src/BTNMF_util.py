@@ -4,7 +4,10 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
 from src.data_utils import normalize_data
+from src.utils import save_csv_or_parquet
 from dataclasses import dataclass
+from src.plot_util import plot_block_annot_heatmap
+from pathlib import Path
 
 import logging
 
@@ -957,3 +960,148 @@ def normalize_data_and_fit_estimator(
         X=norm_data.to_numpy(), min_keep=min_keep, return_frame=False
     )
     return est, assign
+
+
+def cluster_data_and_explain_blocks(
+    df: pd.DataFrame,
+    row_range: range,
+    col_range: range,
+    alpha: float = 1e-2,
+    beta: float = 0.6,
+    block_l1: float = 0.0,
+    b_inner: int = 15,
+    max_iter: int = 50,
+    tol: float = 1e-5,
+    max_pve_drop: float = 0.01,
+    min_sil: float = -0.05,
+    min_keep: int = 6,
+    top_k: Optional[int] = None,
+    top_rank_fn: Optional[Path] = None,
+    summary_fn: Optional[Path] = None,
+    output_fn: Optional[Path] = None,
+    figure_fn: Optional[Path] = None,
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    # Freeze your defaults once, then sweep:
+    make_btf = BinaryTriFactorizationEstimator.factory(
+        k_row=None,
+        k_col=None,
+        loss="gaussian",
+        alpha=alpha,
+        beta=beta,
+        block_l1=block_l1,  # 0 = off; >0 = L1 on B (0.01 = good start)
+        b_inner=b_inner,  # inner prox steps for B when block_l1>0
+        max_iter=max_iter,
+        tol=tol,
+    )
+
+    # Define your grid
+    R_list = row_range
+    C_list = col_range
+    norm_data = normalize_data(
+        df,
+        column_name="growth_rate_1",
+        log_transform=False,
+        median_transform=False,
+        mean_transform=True,
+        zscore_rows=False,
+        zscore_cols=True,
+    ).fillna(0)
+
+    # Run the sweep
+    grid_df = sweep_btf_grid(
+        make_btf,
+        norm_data.to_numpy(dtype=np.float32),
+        R_list,
+        C_list,
+        restarts=3,
+        seeds=range(123, 999),  # optional
+        min_keep=min_keep,
+        fit_kwargs={"max_iter": max_iter, "tol": tol},
+    )
+
+    # Rank and pick the best
+    ranked_df, best = pick_best_btf_setting(
+        grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
+    )
+
+    if top_rank_fn is not None:
+        logger.info(f"Saving top {top_k} ranked_df to {top_rank_fn}")
+        top_k_df = ranked_df.iloc[:top_k]
+        top_k_df.to_csv(top_rank_fn, index=False)
+
+    est_maker = BinaryTriFactorizationEstimator.factory(
+        n_row_clusters=best["n_row"],
+        n_col_clusters=best["n_col"],
+        k_row=None,
+        k_col=None,
+        loss="gaussian",
+        alpha=alpha,
+        beta=beta,
+        block_l1=block_l1,
+        b_inner=b_inner,
+        max_iter=max_iter,
+        tol=tol,
+    )
+    n_row = best["n_row"]
+    n_col = best["n_col"]
+    est, assign = normalize_data_and_fit_estimator(
+        df, est_maker, n_row, n_col, random_state=0, min_keep=min_keep
+    )
+    if summary_fn is not None:
+        summary = est.explain_blocks(
+            X=norm_data.to_numpy(),
+            assign=assign,
+            row_names=norm_data.index.to_numpy(),
+            col_names=norm_data.columns.to_numpy(),
+            top_k=5,
+        )
+        logger.info(f"Saving summary to {summary_fn}")
+        summary.to_csv(summary_fn, index=False)
+    norm_data = normalize_data(
+        df,
+        column_name="growth_rate_1",
+        log_transform=False,
+        median_transform=False,
+        mean_transform=True,
+        zscore_rows=False,
+        zscore_cols=False,
+    ).fillna(0)
+    df2 = get_normalized_assignments(
+        assign, norm_data
+    )  # contains unique per-cell block_id
+
+    # plot (no dates in this table)
+    row_order, col_order = get_sorted_row_col(df2)
+    plot_block_annot_heatmap(
+        df2,
+        ttl="Store-SKU Clusters",
+        value_col="growth_rate_1",
+        block_col="block_id",
+        row_col="store",
+        col_col="item",
+        date_col=None,
+        row_order=row_order,
+        col_order=col_order,
+        fmt="{:.0f}",
+        cell_h=0.6,
+        cell_w=0.75,
+        font_size=11,
+        # figsize=(6, 4),
+        xlabel_size=14,
+        ylabel_size=14,
+        label_weight="bold",
+        fn=figure_fn,
+        xtick_rotation=45,
+        show_plot=False,
+    )
+    df = df.merge(
+        df2.drop(columns="growth_rate_1", axis=1), on=["store", "item"], how="left"
+    )
+
+    if output_fn is not None:
+        logger.info(f"Saving output to {output_fn}")
+        save_csv_or_parquet(df, output_fn)
+
+    return df

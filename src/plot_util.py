@@ -1266,6 +1266,7 @@ def plot_block_annot_heatmap(
     ytick_size: int = 9,
     xtick_rotation: float = 90,
     ytick_rotation: float = 0,
+    show_plot: bool = True,
 ):
     if xlabel_size is None:
         xlabel_size = font_size
@@ -1421,4 +1422,5 @@ def plot_block_annot_heatmap(
     if fn:
         logger.info(f"Saving plot to {fn}")
         plt.savefig(fn, dpi=300, bbox_inches="tight")
-    plt.show()
+    if show_plot:
+        plt.show()
