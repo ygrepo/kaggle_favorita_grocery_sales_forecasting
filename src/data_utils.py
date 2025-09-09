@@ -245,6 +245,7 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
     except Exception as e:
         logger.error(f"Error loading data: {e}")
 
+
 def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
     """
     Load and preprocess training data as a Polars LazyFrame (GPU-ready).
@@ -287,42 +288,56 @@ def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
         lf = lf.with_columns(pl.lit(None).alias("onpromotion"))
 
     # 4) Cast dtypes + parse date
-    lf = lf.with_columns([
-        # Parse dates; tolerate various formats
-        pl.col("date").str.strptime(pl.Date, strict=False).alias("date"),
-        pl.col("store").cast(pl.UInt16, strict=False),
-        pl.col("item").cast(pl.UInt32, strict=False),
-        pl.col("unit_sales").cast(pl.Float32, strict=False),
-        pl.col("weight").cast(pl.Float32, strict=False),
-        # Normalize onpromotion to 0/1 Int8 (True/False/NULL -> 1/0/0)
-        pl.when(pl.col("onpromotion").is_null())
-          .then(0)
-          .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
-          .then(1)
-          .otherwise(0)
-          .cast(pl.Int8)
-          .alias("onpromotion"),
-    ])
+    lf = lf.with_columns(
+        [
+            # Parse dates; tolerate various formats
+            pl.col("date").str.strptime(pl.Date, strict=False).alias("date"),
+            pl.col("store").cast(pl.UInt16, strict=False),
+            pl.col("item").cast(pl.UInt32, strict=False),
+            pl.col("unit_sales").cast(pl.Float32, strict=False),
+            pl.col("weight").cast(pl.Float32, strict=False),
+            # Normalize onpromotion to 0/1 Int8 (True/False/NULL -> 1/0/0)
+            pl.when(pl.col("onpromotion").is_null())
+            .then(0)
+            .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("onpromotion"),
+        ]
+    )
 
     # 5) Build/clean store_item (Utf8). If missing/null, compose from store/item.
     lf = lf.with_columns(
         pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
-          .then(pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8))
-          .otherwise(pl.col("store_item").cast(pl.Utf8))
-          .alias("store_item")
+        .then(
+            pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)
+        )
+        .otherwise(pl.col("store_item").cast(pl.Utf8))
+        .alias("store_item")
     )
 
     # 6) Fill numeric nulls where appropriate (avoid global fill that clobbers strings)
-    lf = lf.with_columns([
-        pl.col("unit_sales").fill_null(0.0),
-        pl.col("weight").fill_null(0.0),
-    ])
+    lf = lf.with_columns(
+        [
+            pl.col("unit_sales").fill_null(0.0),
+            pl.col("weight").fill_null(0.0),
+        ]
+    )
 
     # 7) Optional: sort lazily (Polars supports lazy sort; it materializes on collect)
     lf = lf.sort(["store_item", "date"])
 
     # Keep a clean column order similar to your pandas version
-    base_cols = ["date", "store_item", "store", "item", "unit_sales", "onpromotion", "weight"]
+    base_cols = [
+        "date",
+        "store_item",
+        "store",
+        "item",
+        "unit_sales",
+        "onpromotion",
+        "weight",
+    ]
     other_cols = [c for c in lf.columns if c not in set(base_cols)]
     lf = lf.select(base_cols + other_cols)
 
@@ -969,7 +984,6 @@ def generate_growth_rate_features(
     return out
 
 
-
 def generate_growth_rate_features_polars(
     df: pd.DataFrame,
     window_size: int = 1,
@@ -979,9 +993,9 @@ def generate_growth_rate_features_polars(
     output_path: Optional[Path] = None,
     weight_col: str = "weight",
     promo_col: str = "onpromotion",
-    generate_aligned_windows=None,   # pass your existing function
-    save_csv_or_parquet=None,        # pass your existing function
-    use_gpu: bool = False,           # <- flip this on to use Polars GPU engine
+    generate_aligned_windows=None,  # pass your existing function
+    save_csv_or_parquet=None,  # pass your existing function
+    use_gpu: bool = False,  # <- flip this on to use Polars GPU engine
 ) -> pd.DataFrame:
     """
     Vectorized Polars implementation (CPU or GPU). Output columns/semantics match your pandas version.
@@ -994,20 +1008,28 @@ def generate_growth_rate_features_polars(
     pdf["date"] = pd.to_datetime(pdf["date"])
     pl_df = pl.from_pandas(pdf)
 
-    engine = "gpu" if use_gpu else "python"   # python engine = multithreaded CPU
+    engine = "gpu" if use_gpu else "python"  # python engine = multithreaded CPU
+
     # Helper: aggregate then pivot wide for a given value/agg
     def pivot_agg(wdf: pl.DataFrame, value: str, agg: str) -> pl.DataFrame:
         lf = (
             wdf.lazy()
             .group_by(["store", "item", "date"])
             .agg(pl.col(value).agg(agg))
-            .pivot(index=["store", "item"], columns="date", values=value, aggregate_function="first")
+            .pivot(
+                index=["store", "item"],
+                columns="date",
+                values=value,
+                aggregate_function="first",
+            )
         )
         return lf.collect(engine=engine)
 
     # Weight map: first non-null per (store,item)
     if weight_col in pl_df.columns:
-        w_src = pl_df.select(["store", "item", weight_col]).drop_nulls(subset=[weight_col])
+        w_src = pl_df.select(["store", "item", weight_col]).drop_nulls(
+            subset=[weight_col]
+        )
         if w_src.height > 0:
             weight_map = (
                 w_src.lazy()
@@ -1032,7 +1054,11 @@ def generate_growth_rate_features_polars(
         logger.info(f"Processing window: {window_idx[0]} to {window_idx[-1]}")
 
         # Filter to this window
-        w = pl_df.lazy().filter(pl.col("date").is_in(pl.Series(window_idx))).collect(engine=engine)
+        w = (
+            pl_df.lazy()
+            .filter(pl.col("date").is_in(pl.Series(window_idx)))
+            .collect(engine=engine)
+        )
         if w.height == 0:
             continue
 
@@ -1042,11 +1068,16 @@ def generate_growth_rate_features_polars(
         # PROMO: max duplicates -> pivot wide, fill nulls with 0
         promo_wide = None
         if promo_col in w.columns:
-            promo_wide = pivot_agg(w.select(["store", "item", "date", promo_col]), promo_col, "max").fill_null(0)
+            promo_wide = pivot_agg(
+                w.select(["store", "item", "date", promo_col]), promo_col, "max"
+            ).fill_null(0)
 
         # Ensure all window dates exist as columns and in order
-        desired_cols = [pl.datetime(start_dt.tz_localize(None).tz_localize(None)).dt.truncate("1d")]  # dummy; not used
+        desired_cols = [
+            pl.datetime(start_dt.tz_localize(None).tz_localize(None)).dt.truncate("1d")
+        ]  # dummy; not used
         desired_cols = list(window_idx)  # pandas timestamps
+
         # Add missing date cols as zeros and reorder
         def _ensure_cols(frame: pl.DataFrame, zero_value):
             if frame is None:
@@ -1076,11 +1107,21 @@ def generate_growth_rate_features_polars(
         if promo_wide is not None:
             p = promo_wide
             for i, d in enumerate(desired_cols, start=1):
-                p = p.with_columns(pl.col(d).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
-            p = p.select(["store", "item"] + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)])
+                p = p.with_columns(
+                    pl.col(d).cast(pl.Int8).alias(f"{promo_col}_day_{i}")
+                )
+            p = p.select(
+                ["store", "item"]
+                + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+            )
             base = base.join(p, on=["store", "item"], how="left")
         else:
-            base = base.with_columns([pl.lit(0).alias(f"{promo_col}_day_{i}") for i in range(1, window_size + 1)])
+            base = base.with_columns(
+                [
+                    pl.lit(0).alias(f"{promo_col}_day_{i}")
+                    for i in range(1, window_size + 1)
+                ]
+            )
 
         # growth_rate_1 uses previous calendar day sum
         prev_day = (start_dt - pd.DateOffset(days=1)).to_pydatetime()
@@ -1095,22 +1136,30 @@ def generate_growth_rate_features_polars(
 
         def safe_growth(curr: str, prev: str | None) -> pl.Expr:
             p = pl.col(prev) if prev else pl.col(curr)  # placeholder
-            return pl.when(pl.col(prev).is_null() | (pl.col(prev) == 0) | pl.col(curr).is_null())
-            .then(pl.lit(None, dtype=pl.Float32))
-            .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
-            .alias(curr.replace("sales_day_", "growth_rate_"))
+            return (
+                pl.when(
+                    pl.col(prev).is_null()
+                    | (pl.col(prev) == 0)
+                    | pl.col(curr).is_null()
+                )
+                .then(pl.lit(None, dtype=pl.Float32))
+                .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
+                .alias(curr.replace("sales_day_", "growth_rate_"))
+            )
 
         # growth_rate_1
-        base = base.with_columns(
-            safe_growth("sales_day_1", "prev")
-        )
+        base = base.with_columns(safe_growth("sales_day_1", "prev"))
 
         # growth_rate_i>1 compares to previous in-window day
         for i in range(2, window_size + 1):
             curr = f"sales_day_{i}"
             prev = f"sales_day_{i-1}"
             base = base.with_columns(
-                pl.when(pl.col(prev).is_null() | (pl.col(prev) == 0) | pl.col(curr).is_null())
+                pl.when(
+                    pl.col(prev).is_null()
+                    | (pl.col(prev) == 0)
+                    | pl.col(curr).is_null()
+                )
                 .then(pl.lit(None, dtype=pl.Float32))
                 .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
                 .alias(f"growth_rate_{i}")
@@ -1119,10 +1168,16 @@ def generate_growth_rate_features_polars(
         base = base.drop("prev")
 
         # start_date + store_item
-        base = base.with_columns([
-            pl.lit(start_dt.to_pydatetime()).alias("start_date"),
-            (pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)).alias("store_item"),
-        ])
+        base = base.with_columns(
+            [
+                pl.lit(start_dt.to_pydatetime()).alias("start_date"),
+                (
+                    pl.col("store").cast(pl.Utf8)
+                    + pl.lit("_")
+                    + pl.col("item").cast(pl.Utf8)
+                ).alias("store_item"),
+            ]
+        )
 
         # Final column order
         cols = (
