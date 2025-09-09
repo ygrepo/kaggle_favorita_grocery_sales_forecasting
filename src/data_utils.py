@@ -1009,7 +1009,7 @@ def generate_growth_rate_features_polars(
     logger.info(f"Total rows: {len(df)}")
 
     # Convert to Polars
-    pdf = df.copy()
+    pdf = df
     pdf["date"] = pd.to_datetime(pdf["date"])
     pl_df = pl.from_pandas(pdf)
 
