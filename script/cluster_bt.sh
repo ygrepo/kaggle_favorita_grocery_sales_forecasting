@@ -15,40 +15,55 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 
-ROW_RANGE="5:10"
-COL_RANGE="5:10"
+ROW_RANGE="5:20"
+COL_RANGE="5:20"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
-MIN_CLUSTER_SIZE="2"
-SKIP_INVALID="True"
+
+ALPHA="1e-2"
+BETA="0.6"
+BLOCK_L1="0.0"
+B_INNER="15"
+MAX_ITER="200"  
+TOL="1e-5"  
+MAX_PVE_DROP="0.01"  
+MIN_SIL="-0.05"  
+MIN_KEEP="6"  
+TOP_K="10"  
+
+
+TOP_RANK_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_top_rank.csv"
+SUMMARY_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_summary.csv"
+FIGURE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_figure.png"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt.parquet"
+
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
 LOG_LEVEL="DEBUG"
-MAX_ITER="200"  
-TOL="1e-5"  
-NORM="l1"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_dir) DATA_DIR="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
-    --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    --only_best_model) ONLY_BEST_MODEL="$2"; shift 2 ;;
-    --only_top_n_clusters) ONLY_TOP_N_CLUSTERS="$2"; shift 2 ;;
-    --store_item_matrix_fn) STORE_ITEM_MATRIX_FN="$2"; shift 2 ;;
-    --mav_output_fn) MAV_OUTPUT_FN="$2"; shift 2 ;;
-    --only_best_model_path) ONLY_BEST_MODEL_PATH="$2"; shift 2 ;;
-    --only_top_n_clusters_path) ONLY_TOP_N_CLUSTERS_PATH="$2"; shift 2 ;;
-    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
-    --item_fn) ITEM_FN="$2"; shift 2 ;;
-    --store_fn) STORE_FN="$2"; shift 2 ;;
-    --model) MODEL="$2"; shift 2 ;;
     --row_range) ROW_RANGE="$2"; shift 2 ;;
     --col_range) COL_RANGE="$2"; shift 2 ;;
-    --min_cluster_size) MIN_CLUSTER_SIZE="$2"; shift 2 ;;
-    --skip_invalid) SKIP_INVALID="$2"; shift 2 ;;
+    --alpha) ALPHA="$2"; shift 2 ;;
+    --beta) BETA="$2"; shift 2 ;;
+    --block_l1) BLOCK_L1="$2"; shift 2 ;;
+    --b_inner) B_INNER="$2"; shift 2 ;;
+    --max_iter) MAX_ITER="$2"; shift 2 ;;
+    --tol) TOL="$2"; shift 2 ;;
+    --max_pve_drop) MAX_PVE_DROP="$2"; shift 2 ;;
+    --min_sil) MIN_SIL="$2"; shift 2 ;;
+    --min_keep) MIN_KEEP="$2"; shift 2 ;;
+    --top_k) TOP_K="$2"; shift 2 ;;
+    --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
+    --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
+    --figure_fn) FIGURE_FN="$2"; shift 2 ;;
+    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
+    --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_file) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -64,45 +79,46 @@ mkdir -p "$LOG_DIR"
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
-echo "Store item matrix fn: $STORE_ITEM_MATRIX_FN" | tee -a "$LOG_FILE"
-echo "Item fn: $ITEM_FN" | tee -a "$LOG_FILE"
-echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
-echo "MAV output fn: $MAV_OUTPUT_FN" | tee -a "$LOG_FILE"
-echo "Only best model path: $ONLY_BEST_MODEL_PATH" | tee -a "$LOG_FILE"
-echo "Only top n clusters path: $ONLY_TOP_N_CLUSTERS_PATH" | tee -a "$LOG_FILE"
-echo "Only best model: $ONLY_BEST_MODEL" | tee -a "$LOG_FILE"
-echo "Only top n clusters: $ONLY_TOP_N_CLUSTERS" | tee -a "$LOG_FILE"
-echo "Min cluster size: $MIN_CLUSTER_SIZE" | tee -a "$LOG_FILE"
-echo "Skip invalid: $SKIP_INVALID" | tee -a "$LOG_FILE"
-echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
-echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Row range: $ROW_RANGE" | tee -a "$LOG_FILE"
 echo "Col range: $COL_RANGE" | tee -a "$LOG_FILE"
-echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
-echo "Model: $MODEL" | tee -a "$LOG_FILE"
+echo "Alpha: $ALPHA" | tee -a "$LOG_FILE"
+echo "Beta: $BETA" | tee -a "$LOG_FILE"
+echo "Block l1: $BLOCK_L1" | tee -a "$LOG_FILE"
+echo "B inner: $B_INNER" | tee -a "$LOG_FILE"
+echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
+echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
+echo "Max PVE drop: $MAX_PVE_DROP" | tee -a "$LOG_FILE"
+echo "Min Silhouette: $MIN_SIL" | tee -a "$LOG_FILE"
+echo "Min keep: $MIN_KEEP" | tee -a "$LOG_FILE"
+echo "Top k: $TOP_K" | tee -a "$LOG_FILE"
+echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
+echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
+echo "Figure fn: $FIGURE_FN" | tee -a "$LOG_FILE"
+echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
+echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/cluster.py" \
+
+python "${SCRIPT_DIR}/cluster_bt.py" \
   --data_fn "$DATA_FN" \
-  --store_item_matrix_fn "$STORE_ITEM_MATRIX_FN" \
-  --mav_output_fn "$MAV_OUTPUT_FN" \
-  --only_best_model_path "$ONLY_BEST_MODEL_PATH" \
-  --only_top_n_clusters_path "$ONLY_TOP_N_CLUSTERS_PATH" \
-  --output_fn "$OUTPUT_FN" \
-  --item_fn "$ITEM_FN" \
-  --store_fn "$STORE_FN" \
-  --model "$MODEL" \
   --row_range "$ROW_RANGE" \
   --col_range "$COL_RANGE" \
-  --only_best_model "$ONLY_BEST_MODEL" \
-  --only_top_n_clusters "$ONLY_TOP_N_CLUSTERS" \
-  --min_cluster_size "$MIN_CLUSTER_SIZE" \
-  --skip_invalid "$SKIP_INVALID" \
-  --log_dir "$LOG_DIR" \
-  --log_level "$LOG_LEVEL" \
+  --alpha "$ALPHA" \
+  --beta "$BETA" \
+  --block_l1 "$BLOCK_L1" \
+  --b_inner "$B_INNER" \
   --max_iter "$MAX_ITER" \
   --tol "$TOL" \
-  --norm "$NORM" \
+  --max_pve_drop "$MAX_PVE_DROP" \
+  --min_sil "$MIN_SIL" \
+  --min_keep "$MIN_KEEP" \
+  --top_k "$TOP_K" \
+  --top_rank_fn "$TOP_RANK_FN" \
+  --summary_fn "$SUMMARY_FN" \
+  --figure_fn "$FIGURE_FN" \
+  --output_fn "$OUTPUT_FN" \
+  --log_dir "$LOG_DIR" \
+  --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
 
 # Check the exit status of the Python script

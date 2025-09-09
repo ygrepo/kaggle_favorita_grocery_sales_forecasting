@@ -899,7 +899,7 @@ def pick_best_btf_setting(
 
     # Now rank: favor simplicity and structure after the filter
     sort_cols = [
-        "BIC",  # minimize: penalized fit
+        "PVE",  # maximize: explained variance
         "Mean Silhouette",  # maximize: cluster separation
         "BlockContribution_RelBaseline",  # maximize: relative gain
         "BlockContribution_Gini",  # maximize: concentrated signal
@@ -908,7 +908,7 @@ def pick_best_btf_setting(
         "n_col",  # minimize model size
     ]
     ascending = [
-        True,  # BIC
+        False,  # PVE
         False,  # Silhouette
         False,  # BlockContribution_RelBaseline
         False,  # BlockContribution_Gini
