@@ -3,8 +3,9 @@ from typing import Dict, Any, Iterable, Optional, Callable
 import pandas as pd
 from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
-from src.data_utils import normalize_data, generate_growth_rate_features
+from src.data_utils import normalize_data, generate_growth_rate_features, generate_growth_rate_features_polars
 from src.utils import save_csv_or_parquet
+from src.model_utils import is_gpu_available
 from dataclasses import dataclass
 from src.plot_util import plot_block_annot_heatmap
 from pathlib import Path
@@ -985,7 +986,11 @@ def cluster_data_and_explain_blocks(
 ) -> pd.DataFrame:
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     # First create growth rate features
-    df = generate_growth_rate_features(df, output_path=growth_rate_fn)
+    if is_gpu_available():
+        df = generate_growth_rate_features_polars(df, output_path=growth_rate_fn)
+        df = df.to_pandas()
+    else:
+        df = generate_growth_rate_features(df, output_path=growth_rate_fn)
     # Freeze your defaults once, then sweep:
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=None,

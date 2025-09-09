@@ -244,7 +244,90 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         return df
     except Exception as e:
         logger.error(f"Error loading data: {e}")
-        raise
+
+def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
+    """
+    Load and preprocess training data as a Polars LazyFrame (GPU-ready).
+    Columns expected/produced:
+      - date: Date
+      - store: UInt16
+      - item: UInt32
+      - unit_sales: Float32
+      - onpromotion: Int8 (0/1)
+      - weight: Float32 (optional; filled with 0 if missing)
+      - store_item: Utf8 (e.g., "1_1047679")
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data (lazy) from {data_fn}")
+
+    # 1) Scan CSV/Parquet lazily
+    if data_fn.suffix == ".parquet":
+        lf = pl.scan_parquet(str(data_fn))
+    else:
+        # Let Polars infer; we’ll cast explicitly below
+        lf = pl.scan_csv(
+            str(data_fn),
+            ignore_errors=True,  # tolerate occasional bad rows
+        )
+
+    # 2) Standardize column names if needed (keep your names if already OK)
+    #    (uncomment/adjust if your raw file uses other headers)
+    # rename_map = {"store_nbr": "store", "item_nbr": "item", "sales": "unit_sales"}
+    # lf = lf.rename(rename_map)
+
+    # 3) Ensure required columns exist (create if absent)
+    existing = lf.columns
+    if "weight" not in existing:
+        lf = lf.with_columns(pl.lit(None).alias("weight"))
+
+    if "store_item" not in existing:
+        lf = lf.with_columns(pl.lit(None).alias("store_item"))
+
+    if "onpromotion" not in existing:
+        lf = lf.with_columns(pl.lit(None).alias("onpromotion"))
+
+    # 4) Cast dtypes + parse date
+    lf = lf.with_columns([
+        # Parse dates; tolerate various formats
+        pl.col("date").str.strptime(pl.Date, strict=False).alias("date"),
+        pl.col("store").cast(pl.UInt16, strict=False),
+        pl.col("item").cast(pl.UInt32, strict=False),
+        pl.col("unit_sales").cast(pl.Float32, strict=False),
+        pl.col("weight").cast(pl.Float32, strict=False),
+        # Normalize onpromotion to 0/1 Int8 (True/False/NULL -> 1/0/0)
+        pl.when(pl.col("onpromotion").is_null())
+          .then(0)
+          .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
+          .then(1)
+          .otherwise(0)
+          .cast(pl.Int8)
+          .alias("onpromotion"),
+    ])
+
+    # 5) Build/clean store_item (Utf8). If missing/null, compose from store/item.
+    lf = lf.with_columns(
+        pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
+          .then(pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8))
+          .otherwise(pl.col("store_item").cast(pl.Utf8))
+          .alias("store_item")
+    )
+
+    # 6) Fill numeric nulls where appropriate (avoid global fill that clobbers strings)
+    lf = lf.with_columns([
+        pl.col("unit_sales").fill_null(0.0),
+        pl.col("weight").fill_null(0.0),
+    ])
+
+    # 7) Optional: sort lazily (Polars supports lazy sort; it materializes on collect)
+    lf = lf.sort(["store_item", "date"])
+
+    # Keep a clean column order similar to your pandas version
+    base_cols = ["date", "store_item", "store", "item", "unit_sales", "onpromotion", "weight"]
+    other_cols = [c for c in lf.columns if c not in set(base_cols)]
+    lf = lf.select(base_cols + other_cols)
+
+    logger.info("Lazy loader prepared (no materialization yet).")
+    return lf
 
 
 def load_full_data(

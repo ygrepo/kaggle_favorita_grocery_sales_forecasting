@@ -15,9 +15,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data_utils import load_raw_data
+from src.data_utils import load_raw_data, load_raw_data_lazy
 from src.BTNMF_util import cluster_data_and_explain_blocks
 from src.utils import setup_logging, str2bool
+from src.model_utils import is_gpu_available
 
 
 def parse_range(range_str):
@@ -130,7 +131,7 @@ def parse_args():
         type=str,
         default="",
         help="Path to summary file (relative to project root)",
-    )    
+    )
     parser.add_argument(
         "--figure_fn",
         type=str,
@@ -194,7 +195,10 @@ def main():
         data_fn = Path(args.data_fn).resolve()
 
         # Load and preprocess data
-        df = load_raw_data(data_fn)
+        if is_gpu_available():
+            df = load_raw_data_lazy(data_fn).collect()
+        else:
+            df = load_raw_data(data_fn)
 
         output_fn = Path(args.output_fn).resolve()
         figure_fn = Path(args.figure_fn).resolve()

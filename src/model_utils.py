@@ -22,7 +22,7 @@ from enum import Enum
 from tqdm import tqdm
 from collections import defaultdict
 import re
-from typing import Optional
+from typing import Optional, Union
 
 from lightning.pytorch.loggers import CSVLogger
 from src.model import LightningWrapper, ModelType
@@ -70,6 +70,37 @@ def get_device():
     else:
         accelerator = "cpu"
     return accelerator
+
+
+def select_device(pref: str) -> torch.device:
+    pref = (pref or "auto").lower()
+    if pref.startswith("cuda"):
+        return torch.device(pref) if torch.cuda.is_available() else torch.device("cpu")
+    if pref == "mps":
+        return (
+            torch.device("mps")
+            if getattr(torch.backends, "mps", None)
+            and torch.backends.mps.is_available()
+            else torch.device("cpu")
+        )
+    if pref == "cpu":
+        return torch.device("cpu")
+    # auto
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _device_or_default(device: Optional[Union[str, torch.device]]) -> torch.device:
+    if device is None:
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device)
+
+
+def is_gpu_available():
+    return torch.cuda.is_available()
 
 
 class StoreItemDataset(Dataset):
