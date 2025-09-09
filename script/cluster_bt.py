@@ -114,6 +114,12 @@ def parse_args():
         help="Top k for BT-NMF",
     )
     parser.add_argument(
+        "--growth_rate_fn",
+        type=str,
+        default="",
+        help="Path to growth rate file (relative to project root)",
+    )
+    parser.add_argument(
         "--top_rank_fn",
         type=str,
         default="",
@@ -124,7 +130,7 @@ def parse_args():
         type=str,
         default="",
         help="Path to summary file (relative to project root)",
-    )
+    )    
     parser.add_argument(
         "--figure_fn",
         type=str,
@@ -178,6 +184,7 @@ def main():
         logger.info(f"  Min Silhouette: {args.min_sil}")
         logger.info(f"  Min keep: {args.min_keep}")
         logger.info(f"  Top k: {args.top_k}")
+        logger.info(f"  Growth rate fn: {args.growth_rate_fn}")
         logger.info(f"  Top rank fn: {args.top_rank_fn}")
         logger.info(f"  Summary fn: {args.summary_fn}")
         logger.info(f"  Figure fn: {args.figure_fn}")
@@ -193,6 +200,7 @@ def main():
         figure_fn = Path(args.figure_fn).resolve()
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
+        growth_rate_fn = Path(args.growth_rate_fn).resolve()
         cluster_data_and_explain_blocks(
             df,
             row_range=args.row_range,
@@ -207,6 +215,7 @@ def main():
             min_sil=args.min_sil,
             min_keep=args.min_keep,
             top_k=args.top_k,
+            growth_rate_fn=growth_rate_fn,
             top_rank_fn=top_rank_fn,
             summary_fn=summary_fn,
             output_fn=output_fn,

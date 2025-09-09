@@ -31,7 +31,7 @@ MIN_SIL="-0.05"
 MIN_KEEP="6"  
 TOP_K="10"  
 
-
+GROWTH_RATE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.csv"
 TOP_RANK_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_summary.csv"
 FIGURE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_figure.png"
@@ -59,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --min_sil) MIN_SIL="$2"; shift 2 ;;
     --min_keep) MIN_KEEP="$2"; shift 2 ;;
     --top_k) TOP_K="$2"; shift 2 ;;
+    --growth_rate_fn) GROWTH_RATE_FN="$2"; shift 2 ;;
     --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
     --figure_fn) FIGURE_FN="$2"; shift 2 ;;
@@ -91,6 +92,7 @@ echo "Max PVE drop: $MAX_PVE_DROP" | tee -a "$LOG_FILE"
 echo "Min Silhouette: $MIN_SIL" | tee -a "$LOG_FILE"
 echo "Min keep: $MIN_KEEP" | tee -a "$LOG_FILE"
 echo "Top k: $TOP_K" | tee -a "$LOG_FILE"
+echo "Growth rate fn: $GROWTH_RATE_FN" | tee -a "$LOG_FILE"
 echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
 echo "Figure fn: $FIGURE_FN" | tee -a "$LOG_FILE"
@@ -113,6 +115,7 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --min_sil "$MIN_SIL" \
   --min_keep "$MIN_KEEP" \
   --top_k "$TOP_K" \
+  --growth_rate_fn "$GROWTH_RATE_FN" \
   --top_rank_fn "$TOP_RANK_FN" \
   --summary_fn "$SUMMARY_FN" \
   --figure_fn "$FIGURE_FN" \
