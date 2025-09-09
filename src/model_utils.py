@@ -103,6 +103,10 @@ def is_gpu_available():
     return torch.cuda.is_available()
 
 
+def polar_engine():
+    return "gpu" if torch.cuda.is_available() else "rust"
+
+
 class StoreItemDataset(Dataset):
     def __init__(self, df, store_item_id, feature_cols, target_col, weight_col):
         self.store_df = df[df["store_item"] == store_item_id].reset_index(drop=True)

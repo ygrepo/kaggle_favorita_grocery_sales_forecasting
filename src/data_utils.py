@@ -3,16 +3,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator
+from typing import List, Optional, Iterator, Callable
 from tqdm import tqdm
 from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
 import math
-from src.utils import save_csv_or_parquet
+from src.utils import save_csv_or_parquet, polar_engine
 import polars as pl
-
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +168,30 @@ def sort_df(
     features = build_feature_and_label_cols(window_size)
     df = df[features[ALL_FEATURES]]
     return df
+
+
+def _ensure_polars(df) -> pl.DataFrame:
+    """
+    Normalize input to a clean Polars DataFrame:
+      - pd.DataFrame  -> convert (date to pandas ts first)
+      - pl.LazyFrame  -> collect
+      - pl.DataFrame  -> clone
+    """
+    if isinstance(df, pd.DataFrame):
+        pdf = df.copy()
+        # keep any tz info but normalize later in Polars
+        pdf["date"] = pd.to_datetime(pdf["date"])
+        return pl.from_pandas(pdf)
+
+    if isinstance(df, pl.LazyFrame):
+        return df.collect()
+
+    if isinstance(df, pl.DataFrame):
+        return df.clone()
+
+    raise TypeError(
+        "df must be a pandas.DataFrame, polars.DataFrame, or polars.LazyFrame"
+    )
 
 
 def load_raw_data(data_fn: Path) -> pd.DataFrame:
@@ -554,70 +577,152 @@ def compute_cluster_medians(
     return store_med, item_med
 
 
+def _dates_to_pandas(series_like: Iterable) -> pd.Series:
+    """Robustly convert any iterable of dates/strings/py-dates to a pandas datetime Series (naive, normalized to date)."""
+    s = pd.to_datetime(pd.Series(series_like), errors="coerce")
+    s = s.dropna()
+    # normalize to midnight to avoid time components messing with comparisons
+    return s.dt.normalize()
+
+
+def _extract_dates_as_pandas(df) -> pd.Series:
+    """
+    Return a pandas Series[datetime64[ns]] named 'date' from:
+      - pd.DataFrame (expects 'date' col)
+      - pl.DataFrame (expects 'date' col)
+      - pl.LazyFrame (expects 'date' col; will collect only that column)
+    """
+    if isinstance(df, pd.DataFrame):
+        if "date" not in df.columns:
+            raise ValueError("Missing 'date' column.")
+        return _dates_to_pandas(df["date"])
+
+    if isinstance(df, pl.LazyFrame):
+        df = df.select("date").collect(streaming=False)
+
+    if isinstance(df, pl.DataFrame):
+        if "date" not in df.columns:
+            raise ValueError("Missing 'date' column.")
+        s = df.get_column("date")
+        # Convert polars column to python list then to pandas
+        return _dates_to_pandas(s.to_list())
+
+    raise TypeError(
+        "df must be a pandas DataFrame, polars DataFrame, or polars LazyFrame."
+    )
+
+
 def generate_aligned_windows(
-    df: pd.DataFrame,
+    df: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
     window_size: int,
     *,
     calendar_aligned: bool = False,
-) -> list[list[pd.Timestamp]]:
+) -> List[List[pd.Timestamp]]:
     """
-    Build a series of non‑overlapping, length‑`window_size` date windows.
+    Build non-overlapping date windows of length `window_size`.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Must contain a ``"date"`` column convertible to ``pd.Timestamp``.
-    window_size : int
-        Number of days in each window.
-    calendar_aligned : bool, default False
-        • **False**  →  *Data‑aligned* (original behaviour):
-          Only the distinct dates that actually occur in *df* are used.
-          If the number of dates is not a multiple of `window_size`,
-          the **last window may be shorter** than `window_size`.
-        • **True**   →  *Calendar‑aligned* (back‑to‑front behaviour):
-          Anchors on the most recent calendar day in *df* and steps
-          backward in *exact* `window_size`‑day blocks, discarding any
-          leftover days that cannot form a full block.
-          Returned windows are always exactly `window_size` long and
-          include **all calendar days**, even ones missing from *df*.
-
-    Returns
-    -------
-    List[List[pd.Timestamp]]
-        A list of date‑lists (each list length == `window_size`
-        unless `calendar_aligned=False` and the final window is partial).
+    calendar_aligned=False  -> data-aligned (use only distinct dates present in df; last window may be shorter)
+    calendar_aligned=True   -> calendar-aligned (exact `window_size` days; gaps filled implicitly; leftovers dropped)
     """
     if window_size <= 0:
         raise ValueError("`window_size` must be a positive integer.")
 
-    df["date"] = pd.to_datetime(df["date"])
+    dates = _extract_dates_as_pandas(df)
+    if dates.empty:
+        return []
 
     if calendar_aligned:
-        # --- back‑to‑front, gap‑free windows ---
-        last_date = df["date"].max().normalize()  # ensure time == 00:00
-        first_date = df["date"].min().normalize()
+        # use full calendar days between min/max (inclusive), stepping from the back
+        first_date = dates.min()
+        last_date = dates.max()
 
         starts = []
-        current = last_date
-        while current >= first_date + pd.Timedelta(days=window_size - 1):
-            # logger.debug(f"Current date: {current}")
-            starts.append(current - pd.Timedelta(days=window_size - 1))
-            current -= pd.Timedelta(days=window_size)
+        current_end = last_date
+        full_span = pd.Timedelta(days=window_size - 1)
 
-        # Reverse so windows are chronological (oldest→newest)
-        return [
-            list(pd.date_range(start, periods=window_size, freq="D"))
-            for start in reversed(starts)
-        ]
+        while current_end - full_span >= first_date:
+            start = current_end - full_span
+            starts.append(start)
+            # next block ends window_size days earlier
+            current_end = current_end - pd.Timedelta(days=window_size)
+
+        # oldest → newest
+        starts.reverse()
+        return [list(pd.date_range(s, periods=window_size, freq="D")) for s in starts]
 
     else:
-        # --- forward, data‑aligned windows (may be shorter at the tail) ---
-        unique_dates = sorted(pd.to_datetime(df["date"].unique()))
-        # logger.debug(f"Unique dates: {unique_dates}")
+        # use only distinct dates present in df; chunk forward
+        unique_dates = sorted(pd.to_datetime(pd.unique(dates)))
         return [
             unique_dates[i : i + window_size]
             for i in range(0, len(unique_dates), window_size)
         ]
+
+
+# def generate_aligned_windows(
+#     df: pd.DataFrame,
+#     window_size: int,
+#     *,
+#     calendar_aligned: bool = False,
+# ) -> list[list[pd.Timestamp]]:
+#     """
+#     Build a series of non‑overlapping, length‑`window_size` date windows.
+
+#     Parameters
+#     ----------
+#     df : pd.DataFrame
+#         Must contain a ``"date"`` column convertible to ``pd.Timestamp``.
+#     window_size : int
+#         Number of days in each window.
+#     calendar_aligned : bool, default False
+#         • **False**  →  *Data‑aligned* (original behaviour):
+#           Only the distinct dates that actually occur in *df* are used.
+#           If the number of dates is not a multiple of `window_size`,
+#           the **last window may be shorter** than `window_size`.
+#         • **True**   →  *Calendar‑aligned* (back‑to‑front behaviour):
+#           Anchors on the most recent calendar day in *df* and steps
+#           backward in *exact* `window_size`‑day blocks, discarding any
+#           leftover days that cannot form a full block.
+#           Returned windows are always exactly `window_size` long and
+#           include **all calendar days**, even ones missing from *df*.
+
+#     Returns
+#     -------
+#     List[List[pd.Timestamp]]
+#         A list of date‑lists (each list length == `window_size`
+#         unless `calendar_aligned=False` and the final window is partial).
+#     """
+#     if window_size <= 0:
+#         raise ValueError("`window_size` must be a positive integer.")
+
+#     df["date"] = pd.to_datetime(df["date"])
+
+#     if calendar_aligned:
+#         # --- back‑to‑front, gap‑free windows ---
+#         last_date = df["date"].max().normalize()  # ensure time == 00:00
+#         first_date = df["date"].min().normalize()
+
+#         starts = []
+#         current = last_date
+#         while current >= first_date + pd.Timedelta(days=window_size - 1):
+#             # logger.debug(f"Current date: {current}")
+#             starts.append(current - pd.Timedelta(days=window_size - 1))
+#             current -= pd.Timedelta(days=window_size)
+
+#         # Reverse so windows are chronological (oldest→newest)
+#         return [
+#             list(pd.date_range(start, periods=window_size, freq="D"))
+#             for start in reversed(starts)
+#         ]
+
+#     else:
+#         # --- forward, data‑aligned windows (may be shorter at the tail) ---
+#         unique_dates = sorted(pd.to_datetime(df["date"].unique()))
+#         # logger.debug(f"Unique dates: {unique_dates}")
+#         return [
+#             unique_dates[i : i + window_size]
+#             for i in range(0, len(unique_dates), window_size)
+#         ]
 
 
 def generate_cyclical_features(
@@ -990,7 +1095,7 @@ def generate_growth_rate_features(
 
 
 def generate_growth_rate_features_polars(
-    df: pd.DataFrame,
+    df: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
     window_size: int = 1,
     *,
     calendar_aligned: bool = True,
@@ -998,149 +1103,167 @@ def generate_growth_rate_features_polars(
     output_path: Optional[Path] = None,
     weight_col: str = "weight",
     promo_col: str = "onpromotion",
-    generate_aligned_windows=None,  # pass your existing function
-    save_csv_or_parquet=None,  # pass your existing function
-    use_gpu: bool = False,  # <- flip this on to use Polars GPU engine
+    save_csv_or_parquet: Optional[Callable[[pd.DataFrame, Path], None]] = None,
 ) -> pd.DataFrame:
     """
-    Vectorized Polars implementation (CPU or GPU). Output columns/semantics match your pandas version.
+    Vectorized Polars implementation (CPU or GPU) that accepts pd.DataFrame, pl.DataFrame, or pl.LazyFrame.
+    - Builds non-overlapping windows with `generate_aligned_windows` (you provide).
+    - Pivots to wide by date (using date_str), computes sales_x, growth_rate_x, and promo flags.
+    - Returns a pandas DataFrame for downstream compatibility.
     """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    logger.info(f"Total rows: {len(df)}")
 
-    # Convert to Polars
-    pdf = df
-    pdf["date"] = pd.to_datetime(pdf["date"])
-    pl_df = pl.from_pandas(pdf)
+    # Normalize to Polars early (handles LazyFrame too)
+    # pl_df = _ensure_polars(df)
+    pl_df = df
+    logger.info(f"Total rows: {pl_df.height}")
 
-    engine = "gpu" if use_gpu else "python"  # python engine = multithreaded CPU
+    # Required columns check
+    required_cols = {"store", "item", "date", "unit_sales"}
+    missing = required_cols - set(pl_df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
 
-    # Helper: aggregate then pivot wide for a given value/agg
+    # Canonicalize dtypes
+    pl_df = pl_df.with_columns(
+        pl.col("store").cast(pl.Int64),
+        pl.col("item").cast(pl.Int64),
+        pl.col("date").cast(pl.Date),  # day granularity
+        pl.col("unit_sales").cast(pl.Float32),
+    )
+
+    # Optional columns -> defaults + cast
+    if weight_col not in pl_df.columns:
+        pl_df = pl_df.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
+    else:
+        pl_df = pl_df.with_columns(pl.col(weight_col).cast(pl.Float32))
+
+    if promo_col not in pl_df.columns:
+        pl_df = pl_df.with_columns(pl.lit(0).cast(pl.Int8).alias(promo_col))
+    else:
+        pl_df = pl_df.with_columns(pl.col(promo_col).cast(pl.Int8))
+
+    # Stable string key for pivot columns
+    pl_df = pl_df.with_columns(pl.col("date").cast(pl.Utf8).alias("date_str"))
+
+    engine = polar_engine()
+
+    # ---- pivot helper ----
     def pivot_agg(wdf: pl.DataFrame, value: str, agg: str) -> pl.DataFrame:
         lf = (
             wdf.lazy()
-            .group_by(["store", "item", "date"])
+            .group_by(["store", "item", "date_str"])
             .agg(pl.col(value).agg(agg))
             .pivot(
                 index=["store", "item"],
-                columns="date",
+                columns="date_str",
                 values=value,
                 aggregate_function="first",
             )
         )
         return lf.collect(engine=engine)
 
-    # Weight map: first non-null per (store,item)
-    if weight_col in pl_df.columns:
-        w_src = pl_df.select(["store", "item", weight_col]).drop_nulls(
-            subset=[weight_col]
+    # Weight map: first per (store,item)
+    w_src = pl_df.select(["store", "item", weight_col]).drop_nulls(subset=[weight_col])
+    if w_src.height > 0:
+        weight_map = (
+            w_src.lazy()
+            .group_by(["store", "item"])
+            .agg(pl.col(weight_col).first())
+            .collect(engine=engine)
         )
-        if w_src.height > 0:
-            weight_map = (
-                w_src.lazy()
-                .group_by(["store", "item"])
-                .agg(pl.col(weight_col).first())
-                .collect(engine=engine)
-            )
-        else:
-            weight_map = pl.DataFrame({"store": [], "item": [], weight_col: []})
     else:
         weight_map = pl.DataFrame({"store": [], "item": [], weight_col: []})
 
+    # if generate_aligned_windows is None:
+    #     raise ValueError(
+    #         "You must pass `generate_aligned_windows(df, window_size, calendar_aligned=...)`."
+    #     )
+
+    # Use a minimal pandas view ONLY to build windows
+    pdf_for_windows = pl_df.select(
+        "store", "item", "date", "unit_sales", weight_col, promo_col
+    ).to_pandas()
+
     windows: List[List[pd.Timestamp]] = generate_aligned_windows(
-        pdf, window_size, calendar_aligned=calendar_aligned
+        pdf_for_windows, window_size, calendar_aligned=calendar_aligned
     )
+    if not windows:
+        logger.warning("No windows generated; returning empty frame.")
+        return pd.DataFrame(
+            columns=["start_date", "store_item", "store", "item", weight_col]
+            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
+            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        )
 
     out_frames: List[pl.DataFrame] = []
 
     for window_dates in windows:
         window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
-        start_dt = window_idx[0]
-        logger.info(f"Processing window: {window_idx[0]} to {window_idx[-1]}")
+        desired_cols_str = [d.strftime("%Y-%m-%d") for d in window_idx]
+        start_dt = window_idx[0]  # pandas Timestamp
+        logger.info(f"Processing window: {window_idx[0]} → {window_idx[-1]}")
 
-        # Filter to this window
+        # Filter rows to this window using date_str
         w = (
             pl_df.lazy()
-            .filter(pl.col("date").is_in(pl.Series(window_idx)))
+            .filter(pl.col("date_str").is_in(desired_cols_str))
             .collect(engine=engine)
         )
         if w.height == 0:
             continue
 
-        # SALES: sum duplicates -> pivot wide (dates as columns), fill nulls with 0
+        # SALES (sum dupes) / PROMO (max dupes) → wide
         sales_wide = pivot_agg(w, "unit_sales", "sum").fill_null(0.0)
+        promo_wide = pivot_agg(
+            w.select(["store", "item", "date_str", promo_col]), promo_col, "max"
+        ).fill_null(0)
 
-        # PROMO: max duplicates -> pivot wide, fill nulls with 0
-        promo_wide = None
-        if promo_col in w.columns:
-            promo_wide = pivot_agg(
-                w.select(["store", "item", "date", promo_col]), promo_col, "max"
-            ).fill_null(0)
-
-        # Ensure all window dates exist as columns and in order
-        desired_cols = [
-            pl.datetime(start_dt.tz_localize(None).tz_localize(None)).dt.truncate("1d")
-        ]  # dummy; not used
-        desired_cols = list(window_idx)  # pandas timestamps
-
-        # Add missing date cols as zeros and reorder
+        # Ensure all date columns exist & ordered
         def _ensure_cols(frame: pl.DataFrame, zero_value):
-            if frame is None:
-                return None
-            for d in desired_cols:
-                if d not in frame.columns:
-                    frame = frame.with_columns(pl.lit(zero_value).alias(d))
-            # reorder: store,item + desired_cols
-            return frame.select(["store", "item"] + desired_cols)
+            f = frame
+            for d in desired_cols_str:
+                if d not in f.columns:
+                    f = f.with_columns(pl.lit(zero_value).alias(d))
+            return f.select(["store", "item"] + desired_cols_str)
 
         sales_wide = _ensure_cols(sales_wide, 0.0)
-        promo_wide = _ensure_cols(promo_wide, 0) if promo_wide is not None else None
+        promo_wide = _ensure_cols(promo_wide, 0)
 
-        # Base table: store,item + weight
-        base = sales_wide
-        if weight_map.height > 0:
-            base = base.join(weight_map, on=["store", "item"], how="left")
-        else:
-            base = base.with_columns(pl.lit(None, dtype=pl.Float64).alias(weight_col))
+        # Base table + weight
+        base = sales_wide.join(weight_map, on=["store", "item"], how="left")
+        if weight_col not in base.columns:
+            base = base.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
 
-        # Rename date columns -> sales_day_i
-        for i, d in enumerate(desired_cols, start=1):
+        # Date cols -> sales_day_i
+        for i, d in enumerate(desired_cols_str, start=1):
             base = base.with_columns(pl.col(d).cast(pl.Float32).alias(f"sales_day_{i}"))
-        base = base.drop(desired_cols)
+        base = base.drop(desired_cols_str)
 
-        # Promo flags
-        if promo_wide is not None:
-            p = promo_wide
-            for i, d in enumerate(desired_cols, start=1):
-                p = p.with_columns(
-                    pl.col(d).cast(pl.Int8).alias(f"{promo_col}_day_{i}")
-                )
-            p = p.select(
-                ["store", "item"]
-                + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-            )
-            base = base.join(p, on=["store", "item"], how="left")
-        else:
-            base = base.with_columns(
-                [
-                    pl.lit(0).alias(f"{promo_col}_day_{i}")
-                    for i in range(1, window_size + 1)
-                ]
-            )
+        # Promo -> promo_day_i
+        p = promo_wide
+        for i, d in enumerate(desired_cols_str, start=1):
+            p = p.with_columns(pl.col(d).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
+        p = p.select(
+            ["store", "item"]
+            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        )
+        base = base.join(p, on=["store", "item"], how="left")
 
-        # growth_rate_1 uses previous calendar day sum
-        prev_day = (start_dt - pd.DateOffset(days=1)).to_pydatetime()
+        # growth_rate_1 vs previous calendar day sum
+        prev_day_str = (start_dt - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         prev_sum = (
             pl_df.lazy()
-            .filter(pl.col("date") == prev_day)
+            .filter(pl.col("date_str") == prev_day_str)
             .group_by(["store", "item"])
             .agg(pl.col("unit_sales").sum().alias("prev"))
             .collect(engine=engine)
         )
         base = base.join(prev_sum, on=["store", "item"], how="left")
 
-        def safe_growth(curr: str, prev: str | None) -> pl.Expr:
-            p = pl.col(prev) if prev else pl.col(curr)  # placeholder
+        # safe growth helper
+        def _safe_growth(curr: str, prev: str) -> pl.Expr:
             return (
                 pl.when(
                     pl.col(prev).is_null()
@@ -1152,30 +1275,25 @@ def generate_growth_rate_features_polars(
                 .alias(curr.replace("sales_day_", "growth_rate_"))
             )
 
-        # growth_rate_1
-        base = base.with_columns(safe_growth("sales_day_1", "prev"))
-
-        # growth_rate_i>1 compares to previous in-window day
+        base = base.with_columns(_safe_growth("sales_day_1", "prev"))
         for i in range(2, window_size + 1):
-            curr = f"sales_day_{i}"
-            prev = f"sales_day_{i-1}"
+            curr, prevc = f"sales_day_{i}", f"sales_day_{i-1}"
             base = base.with_columns(
                 pl.when(
-                    pl.col(prev).is_null()
-                    | (pl.col(prev) == 0)
+                    pl.col(prevc).is_null()
+                    | (pl.col(prevc) == 0)
                     | pl.col(curr).is_null()
                 )
                 .then(pl.lit(None, dtype=pl.Float32))
-                .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
+                .otherwise(((pl.col(curr) - pl.col(prevc)) / pl.col(prevc)) * 100.0)
                 .alias(f"growth_rate_{i}")
             )
-
         base = base.drop("prev")
 
-        # start_date + store_item
+        # start_date + store_item id
         base = base.with_columns(
             [
-                pl.lit(start_dt.to_pydatetime()).alias("start_date"),
+                pl.lit(start_dt.to_pydatetime()).cast(pl.Datetime).alias("start_date"),
                 (
                     pl.col("store").cast(pl.Utf8)
                     + pl.lit("_")
@@ -1184,7 +1302,7 @@ def generate_growth_rate_features_polars(
             ]
         )
 
-        # Final column order
+        # Final order
         cols = (
             ["start_date", "store_item", "store", "item", weight_col]
             + [f"sales_day_{i}" for i in range(1, window_size + 1)]
@@ -1195,23 +1313,33 @@ def generate_growth_rate_features_polars(
         out_frames.append(base)
 
     if not out_frames:
-        out = pd.DataFrame(
+        out_pdf = pd.DataFrame(
             columns=["start_date", "store_item", "store", "item", weight_col]
             + [f"sales_day_{i}" for i in range(1, window_size + 1)]
             + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
             + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
         )
     else:
-        out = pl.concat(out_frames, how="vertical_relaxed").to_pandas()
+        out_pdf = pl.concat(out_frames, how="vertical_relaxed").to_pandas()
 
-    if output_path is not None and save_csv_or_parquet is not None:
+    # Optional save
+    if output_path is not None:
         logger.info(f"Saving growth rate features to {output_path}")
-        save_csv_or_parquet(out, output_path)
-        debug_fn = output_path.with_name("debug_subset.csv")
-        out.head(50).to_csv(debug_fn, index=False)
+        if save_csv_or_parquet is not None:
+            save_csv_or_parquet(out_pdf, output_path)
+        else:
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if output_path.suffix.lower() == ".csv":
+                out_pdf.to_csv(output_path, index=False)
+            else:
+                out_pdf.to_parquet(output_path, index=False)
+        # small debug sample
+        debug_fn = Path(output_path).with_name("debug_subset.csv")
+        out_pdf.head(50).to_csv(debug_fn, index=False)
         logger.info(f"Saved debug sample to {debug_fn}")
 
-    return out
+    return out_pdf
 
 
 def generate_sales_features(
