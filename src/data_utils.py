@@ -248,87 +248,91 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
 
 def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
     """
-    Load and preprocess training data as a Polars LazyFrame (GPU-ready).
-    Columns expected/produced:
-      - date: Date
-      - store: UInt16
-      - item: UInt32
-      - unit_sales: Float32
-      - onpromotion: Int8 (0/1)
-      - weight: Float32 (optional; filled with 0 if missing)
-      - store_item: Utf8 (e.g., "1_1047679")
+    Lazy, GPU-friendly loader for Favorita-like data.
+
+    Produces columns:
+      date: Date
+      store: UInt16
+      item: UInt32
+      unit_sales: Float32
+      onpromotion: Int8 (0/1)
+      weight: Float32 (optional; filled with 0.0 if missing)
+      store_item: Utf8  (e.g., "1_1047679")
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Loading data (lazy) from {data_fn}")
 
-    # 1) Scan CSV/Parquet lazily
-    if data_fn.suffix == ".parquet":
+    # 1) Scan lazily
+    suffix = data_fn.suffix.lower()
+    if suffix == ".parquet":
         lf = pl.scan_parquet(str(data_fn))
+        # Parquet often already stores datetimes; cast to Date safely
+        lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
     else:
-        # Let Polars infer; we’ll cast explicitly below
+        # CSV: let Polars try to parse datelike strings automatically
         lf = pl.scan_csv(
             str(data_fn),
-            ignore_errors=True,  # tolerate occasional bad rows
+            try_parse_dates=True,  # helps with common date formats
+            null_values=[""],  # treat empty strings as nulls
         )
+        # Ensure `date` is Date (if still Utf8, cast with permissive parsing)
+        lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
 
-    # 2) Standardize column names if needed (keep your names if already OK)
-    #    (uncomment/adjust if your raw file uses other headers)
-    # rename_map = {"store_nbr": "store", "item_nbr": "item", "sales": "unit_sales"}
-    # lf = lf.rename(rename_map)
+    # # 2) Ensure required/optional columns exist
+    # # (Create placeholders if absent to keep downstream stable.)
+    # want_missing = []
+    # for col in ("weight", "store_item", "onpromotion", "unit_sales", "store", "item"):
+    #     if col not in lf.collect_schema().names():
+    #         want_missing.append(col)
+    # for col in want_missing:
+    #     lf = lf.with_columns(pl.lit(None).alias(col))
 
-    # 3) Ensure required columns exist (create if absent)
-    existing = lf.columns
-    if "weight" not in existing:
-        lf = lf.with_columns(pl.lit(None).alias("weight"))
+    # # 3) Cast dtypes (permissive where appropriate)
+    # lf = lf.with_columns(
+    #     [
+    #         pl.col("store").cast(pl.UInt16, strict=False),
+    #         pl.col("item").cast(pl.UInt32, strict=False),
+    #         pl.col("unit_sales").cast(pl.Float32, strict=False),
+    #         pl.col("weight").cast(pl.Float32, strict=False),
+    #     ]
+    # )
 
-    if "store_item" not in existing:
-        lf = lf.with_columns(pl.lit(None).alias("store_item"))
+    # # Normalize onpromotion to 0/1 Int8:
+    # # - if boolean -> 1/0
+    # # - if "True"/"False"/"1"/"0" strings -> cast(Boolean) then to Int8
+    # # - null -> 0
+    # lf = lf.with_columns(
+    #     pl.when(pl.col("onpromotion").is_null())
+    #     .then(0)
+    #     .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
+    #     .then(1)
+    #     .otherwise(0)
+    #     .cast(pl.Int8)
+    #     .alias("onpromotion")
+    # )
 
-    if "onpromotion" not in existing:
-        lf = lf.with_columns(pl.lit(None).alias("onpromotion"))
+    # # 4) Build/clean store_item (Utf8). If missing/null/empty, compose from store/item.
+    # lf = lf.with_columns(
+    #     pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
+    #     .then(
+    #         pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)
+    #     )
+    #     .otherwise(pl.col("store_item").cast(pl.Utf8))
+    #     .alias("store_item")
+    # )
 
-    # 4) Cast dtypes + parse date
-    lf = lf.with_columns(
-        [
-            # Parse dates; tolerate various formats
-            pl.col("date").str.strptime(pl.Date, strict=False).alias("date"),
-            pl.col("store").cast(pl.UInt16, strict=False),
-            pl.col("item").cast(pl.UInt32, strict=False),
-            pl.col("unit_sales").cast(pl.Float32, strict=False),
-            pl.col("weight").cast(pl.Float32, strict=False),
-            # Normalize onpromotion to 0/1 Int8 (True/False/NULL -> 1/0/0)
-            pl.when(pl.col("onpromotion").is_null())
-            .then(0)
-            .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
-            .then(1)
-            .otherwise(0)
-            .cast(pl.Int8)
-            .alias("onpromotion"),
-        ]
-    )
+    # # 5) Fill numeric nulls only (avoid clobbering strings)
+    # lf = lf.with_columns(
+    #     [
+    #         pl.col("unit_sales").fill_null(0.0),
+    #         pl.col("weight").fill_null(0.0),
+    #     ]
+    # )
 
-    # 5) Build/clean store_item (Utf8). If missing/null, compose from store/item.
-    lf = lf.with_columns(
-        pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
-        .then(
-            pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)
-        )
-        .otherwise(pl.col("store_item").cast(pl.Utf8))
-        .alias("store_item")
-    )
-
-    # 6) Fill numeric nulls where appropriate (avoid global fill that clobbers strings)
-    lf = lf.with_columns(
-        [
-            pl.col("unit_sales").fill_null(0.0),
-            pl.col("weight").fill_null(0.0),
-        ]
-    )
-
-    # 7) Optional: sort lazily (Polars supports lazy sort; it materializes on collect)
+    # 6) Sort lazily (materializes on collect)
     lf = lf.sort(["store_item", "date"])
 
-    # Keep a clean column order similar to your pandas version
+    # 7) Stable column order without triggering the .columns warning
     base_cols = [
         "date",
         "store_item",
@@ -338,7 +342,8 @@ def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
         "onpromotion",
         "weight",
     ]
-    other_cols = [c for c in lf.columns if c not in set(base_cols)]
+    names = lf.collect_schema().names()  # cheap: schema only, no data
+    other_cols = [c for c in names if c not in set(base_cols)]
     lf = lf.select(base_cols + other_cols)
 
     logger.info("Lazy loader prepared (no materialization yet).")
