@@ -3,7 +3,7 @@ from typing import Dict, Any, Iterable, Optional, Callable
 import pandas as pd
 from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
-from src.data_utils import normalize_data
+from src.data_utils import normalize_data, generate_growth_rate_features
 from src.utils import save_csv_or_parquet
 from dataclasses import dataclass
 from src.plot_util import plot_block_annot_heatmap
@@ -983,6 +983,8 @@ def cluster_data_and_explain_blocks(
     log_level: str = "INFO",
 ) -> pd.DataFrame:
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    # First create growth rate features
+    df = generate_growth_rate_features(df)
     # Freeze your defaults once, then sweep:
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=None,
