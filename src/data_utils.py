@@ -3,15 +3,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator, Tuple
-import logging
+from typing import List, Optional, Iterator
 from tqdm import tqdm
 from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
-from typing import List, Optional, Iterator
 import math
+from src.utils import save_csv_or_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -877,10 +876,7 @@ def generate_growth_rate_features(
 
     if output_path is not None:
         logger.info(f"Saving growth rate features to {output_path}")
-        if output_path.suffix == ".parquet":
-            out.to_parquet(output_path)
-        else:
-            out.to_csv(output_path, index=False)
+        save_csv_or_parquet(out, output_path)
         debug_fn = output_path.with_name("debug_subset.csv")
         out.head(50).to_csv(debug_fn, index=False)
         logger.info(f"Saved debug sample to {debug_fn}")
