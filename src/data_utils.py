@@ -11,6 +11,8 @@ from statsmodels.tsa.arima.model import ARIMA
 import logging
 import math
 from src.utils import save_csv_or_parquet
+import polars as pl
+
 
 logger = logging.getLogger(__name__)
 
@@ -875,6 +877,191 @@ def generate_growth_rate_features(
         out = out[cols]
 
     if output_path is not None:
+        logger.info(f"Saving growth rate features to {output_path}")
+        save_csv_or_parquet(out, output_path)
+        debug_fn = output_path.with_name("debug_subset.csv")
+        out.head(50).to_csv(debug_fn, index=False)
+        logger.info(f"Saved debug sample to {debug_fn}")
+
+    return out
+
+
+
+def generate_growth_rate_features_polars(
+    df: pd.DataFrame,
+    window_size: int = 1,
+    *,
+    calendar_aligned: bool = True,
+    log_level: str = "INFO",
+    output_path: Optional[Path] = None,
+    weight_col: str = "weight",
+    promo_col: str = "onpromotion",
+    generate_aligned_windows=None,   # pass your existing function
+    save_csv_or_parquet=None,        # pass your existing function
+    use_gpu: bool = False,           # <- flip this on to use Polars GPU engine
+) -> pd.DataFrame:
+    """
+    Vectorized Polars implementation (CPU or GPU). Output columns/semantics match your pandas version.
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info(f"Total rows: {len(df)}")
+
+    # Convert to Polars
+    pdf = df.copy()
+    pdf["date"] = pd.to_datetime(pdf["date"])
+    pl_df = pl.from_pandas(pdf)
+
+    engine = "gpu" if use_gpu else "python"   # python engine = multithreaded CPU
+    # Helper: aggregate then pivot wide for a given value/agg
+    def pivot_agg(wdf: pl.DataFrame, value: str, agg: str) -> pl.DataFrame:
+        lf = (
+            wdf.lazy()
+            .group_by(["store", "item", "date"])
+            .agg(pl.col(value).agg(agg))
+            .pivot(index=["store", "item"], columns="date", values=value, aggregate_function="first")
+        )
+        return lf.collect(engine=engine)
+
+    # Weight map: first non-null per (store,item)
+    if weight_col in pl_df.columns:
+        w_src = pl_df.select(["store", "item", weight_col]).drop_nulls(subset=[weight_col])
+        if w_src.height > 0:
+            weight_map = (
+                w_src.lazy()
+                .group_by(["store", "item"])
+                .agg(pl.col(weight_col).first())
+                .collect(engine=engine)
+            )
+        else:
+            weight_map = pl.DataFrame({"store": [], "item": [], weight_col: []})
+    else:
+        weight_map = pl.DataFrame({"store": [], "item": [], weight_col: []})
+
+    windows: List[List[pd.Timestamp]] = generate_aligned_windows(
+        pdf, window_size, calendar_aligned=calendar_aligned
+    )
+
+    out_frames: List[pl.DataFrame] = []
+
+    for window_dates in windows:
+        window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
+        start_dt = window_idx[0]
+        logger.info(f"Processing window: {window_idx[0]} to {window_idx[-1]}")
+
+        # Filter to this window
+        w = pl_df.lazy().filter(pl.col("date").is_in(pl.Series(window_idx))).collect(engine=engine)
+        if w.height == 0:
+            continue
+
+        # SALES: sum duplicates -> pivot wide (dates as columns), fill nulls with 0
+        sales_wide = pivot_agg(w, "unit_sales", "sum").fill_null(0.0)
+
+        # PROMO: max duplicates -> pivot wide, fill nulls with 0
+        promo_wide = None
+        if promo_col in w.columns:
+            promo_wide = pivot_agg(w.select(["store", "item", "date", promo_col]), promo_col, "max").fill_null(0)
+
+        # Ensure all window dates exist as columns and in order
+        desired_cols = [pl.datetime(start_dt.tz_localize(None).tz_localize(None)).dt.truncate("1d")]  # dummy; not used
+        desired_cols = list(window_idx)  # pandas timestamps
+        # Add missing date cols as zeros and reorder
+        def _ensure_cols(frame: pl.DataFrame, zero_value):
+            if frame is None:
+                return None
+            for d in desired_cols:
+                if d not in frame.columns:
+                    frame = frame.with_columns(pl.lit(zero_value).alias(d))
+            # reorder: store,item + desired_cols
+            return frame.select(["store", "item"] + desired_cols)
+
+        sales_wide = _ensure_cols(sales_wide, 0.0)
+        promo_wide = _ensure_cols(promo_wide, 0) if promo_wide is not None else None
+
+        # Base table: store,item + weight
+        base = sales_wide
+        if weight_map.height > 0:
+            base = base.join(weight_map, on=["store", "item"], how="left")
+        else:
+            base = base.with_columns(pl.lit(None, dtype=pl.Float64).alias(weight_col))
+
+        # Rename date columns -> sales_day_i
+        for i, d in enumerate(desired_cols, start=1):
+            base = base.with_columns(pl.col(d).cast(pl.Float32).alias(f"sales_day_{i}"))
+        base = base.drop(desired_cols)
+
+        # Promo flags
+        if promo_wide is not None:
+            p = promo_wide
+            for i, d in enumerate(desired_cols, start=1):
+                p = p.with_columns(pl.col(d).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
+            p = p.select(["store", "item"] + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)])
+            base = base.join(p, on=["store", "item"], how="left")
+        else:
+            base = base.with_columns([pl.lit(0).alias(f"{promo_col}_day_{i}") for i in range(1, window_size + 1)])
+
+        # growth_rate_1 uses previous calendar day sum
+        prev_day = (start_dt - pd.DateOffset(days=1)).to_pydatetime()
+        prev_sum = (
+            pl_df.lazy()
+            .filter(pl.col("date") == prev_day)
+            .group_by(["store", "item"])
+            .agg(pl.col("unit_sales").sum().alias("prev"))
+            .collect(engine=engine)
+        )
+        base = base.join(prev_sum, on=["store", "item"], how="left")
+
+        def safe_growth(curr: str, prev: str | None) -> pl.Expr:
+            p = pl.col(prev) if prev else pl.col(curr)  # placeholder
+            return pl.when(pl.col(prev).is_null() | (pl.col(prev) == 0) | pl.col(curr).is_null())
+            .then(pl.lit(None, dtype=pl.Float32))
+            .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
+            .alias(curr.replace("sales_day_", "growth_rate_"))
+
+        # growth_rate_1
+        base = base.with_columns(
+            safe_growth("sales_day_1", "prev")
+        )
+
+        # growth_rate_i>1 compares to previous in-window day
+        for i in range(2, window_size + 1):
+            curr = f"sales_day_{i}"
+            prev = f"sales_day_{i-1}"
+            base = base.with_columns(
+                pl.when(pl.col(prev).is_null() | (pl.col(prev) == 0) | pl.col(curr).is_null())
+                .then(pl.lit(None, dtype=pl.Float32))
+                .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
+                .alias(f"growth_rate_{i}")
+            )
+
+        base = base.drop("prev")
+
+        # start_date + store_item
+        base = base.with_columns([
+            pl.lit(start_dt.to_pydatetime()).alias("start_date"),
+            (pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)).alias("store_item"),
+        ])
+
+        # Final column order
+        cols = (
+            ["start_date", "store_item", "store", "item", weight_col]
+            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
+            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        )
+        base = base.select(cols)
+        out_frames.append(base)
+
+    if not out_frames:
+        out = pd.DataFrame(
+            columns=["start_date", "store_item", "store", "item", weight_col]
+            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
+            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        )
+    else:
+        out = pl.concat(out_frames, how="vertical_relaxed").to_pandas()
+
+    if output_path is not None and save_csv_or_parquet is not None:
         logger.info(f"Saving growth rate features to {output_path}")
         save_csv_or_parquet(out, output_path)
         debug_fn = output_path.with_name("debug_subset.csv")
