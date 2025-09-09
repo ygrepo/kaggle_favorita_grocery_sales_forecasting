@@ -197,7 +197,6 @@ def main():
         # Load and preprocess data
         if is_gpu_available():
             df = load_raw_data_lazy(data_fn).collect()
-            df = df.collect()
         else:
             df = load_raw_data(data_fn)
 
