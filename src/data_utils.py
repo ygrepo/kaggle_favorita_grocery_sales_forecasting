@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator, Literal
+from typing import List, Optional, Iterator, Literal, Union, Callable
 from tqdm import tqdm
 from pathlib import Path
 import gc
@@ -1114,6 +1114,64 @@ def generate_growth_rate_features(
     return out
 
 
+AggName = Literal["sum", "max", "min", "mean", "first", "last", "median", "count"]
+
+
+def pivot_agg_lazy(
+    in_lf: pl.LazyFrame,
+    value: str,
+    agg: Union[AggName, Callable[[pl.Expr], pl.Expr]] = "sum",
+) -> pl.LazyFrame:
+    """
+    Group by (store, item, date_str), aggregate `value`, then pivot to wide with date_str columns.
+    `agg` can be a string like 'sum'/'max'/... or a callable that receives pl.col(value) and returns an Expr.
+    """
+    # Build the aggregation expression
+    if callable(agg):
+        expr = agg(pl.col(value)).alias(value)
+    else:
+        if agg == "sum":
+            expr = pl.col(value).sum().alias(value)
+        elif agg == "max":
+            expr = pl.col(value).max().alias(value)
+        elif agg == "min":
+            expr = pl.col(value).min().alias(value)
+        elif agg == "mean":
+            expr = pl.col(value).mean().alias(value)
+        elif agg == "first":
+            expr = pl.col(value).first().alias(value)
+        elif agg == "last":
+            expr = pl.col(value).last().alias(value)
+        elif agg == "median":
+            expr = pl.col(value).median().alias(value)
+        elif agg == "count":
+            expr = pl.len().alias(value)  # count rows per (store,item,date_str)
+        else:
+            raise ValueError(f"Unsupported agg: {agg}")
+
+    # Aggregate, then pivot (still lazy)
+    return (
+        in_lf.group_by(["store", "item", "date_str"])
+        .agg(expr)
+        .pivot(
+            index=["store", "item"],
+            columns="date_str",
+            values=value,
+            aggregate_function="first",  # safe because we already aggregated
+        )
+    )
+
+
+# Ensure all date columns exist & order them
+def ensure_cols_lazy(xlf: pl.LazyFrame, zero):
+    # Convert schema (no collect) to know what's present
+    have_cols = set(xlf.collect_schema().names())
+    exprs = [pl.col("store"), pl.col("item")]
+    for c in cols_str:
+        exprs.append((pl.lit(zero).alias(c)) if c not in have_cols else pl.col(c))
+    return xlf.select(exprs)
+
+
 def generate_growth_rate_features_polars(
     df: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
     window_size: int = 1,
@@ -1198,20 +1256,6 @@ def generate_growth_rate_features_polars(
         if return_format == "polars":
             return pl.DataFrame({c: [] for c in empty_cols})
         return pd.DataFrame(columns=empty_cols)
-
-    # Helper: pivot to wide lazily
-    def pivot_agg_lazy(in_lf: pl.LazyFrame, value: str, agg: str) -> pl.LazyFrame:
-        return (
-            in_lf.group_by(["store", "item", "date_str"])
-            .agg(pl.col(value).agg(agg))
-            .pivot(
-                index=["store", "item"],
-                columns="date_str",
-                values=value,
-                aggregate_function="first",
-            )
-        )
-
     # Build per-window lazy pieces, then concat (still lazy)
     parts: List[pl.LazyFrame] = []
     for window_dates in windows:
@@ -1225,17 +1269,6 @@ def generate_growth_rate_features_polars(
         promo_wide_lf = pivot_agg_lazy(
             wlf.select(["store", "item", "date_str", promo_col]), promo_col, "max"
         )
-
-        # Ensure all date columns exist & order them
-        def ensure_cols_lazy(xlf: pl.LazyFrame, zero):
-            # Convert schema (no collect) to know what's present
-            have_cols = set(xlf.collect_schema().names())
-            exprs = [pl.col("store"), pl.col("item")]
-            for c in cols_str:
-                exprs.append(
-                    (pl.lit(zero).alias(c)) if c not in have_cols else pl.col(c)
-                )
-            return xlf.select(exprs)
 
         sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0)
         promo_wide_lf = ensure_cols_lazy(promo_wide_lf, 0)
