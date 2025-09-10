@@ -1121,45 +1121,52 @@ def pivot_agg_lazy(
     in_lf: pl.LazyFrame,
     value: str,
     agg: Union[AggName, Callable[[pl.Expr], pl.Expr]] = "sum",
+    *,
+    engine: str = "rust",  # "gpu" or "rust"
 ) -> pl.LazyFrame:
     """
-    Group by (store, item, date_str), aggregate `value`, then pivot to wide with date_str columns.
-    `agg` can be a string like 'sum'/'max'/... or a callable that receives pl.col(value) and returns an Expr.
+    Lazily aggregate (store,item,date_str) → value, then EAGER pivot, then return LazyFrame.
     """
-    # Build the aggregation expression
+    # 1) Build the aggregation expression (lazy-safe)
     if callable(agg):
         expr = agg(pl.col(value)).alias(value)
     else:
-        if agg == "sum":
-            expr = pl.col(value).sum().alias(value)
-        elif agg == "max":
-            expr = pl.col(value).max().alias(value)
-        elif agg == "min":
-            expr = pl.col(value).min().alias(value)
-        elif agg == "mean":
-            expr = pl.col(value).mean().alias(value)
-        elif agg == "first":
-            expr = pl.col(value).first().alias(value)
-        elif agg == "last":
-            expr = pl.col(value).last().alias(value)
-        elif agg == "median":
-            expr = pl.col(value).median().alias(value)
-        elif agg == "count":
-            expr = pl.len().alias(value)  # count rows per (store,item,date_str)
-        else:
-            raise ValueError(f"Unsupported agg: {agg}")
+        match agg:
+            case "sum":
+                expr = pl.col(value).sum().alias(value)
+            case "max":
+                expr = pl.col(value).max().alias(value)
+            case "min":
+                expr = pl.col(value).min().alias(value)
+            case "mean":
+                expr = pl.col(value).mean().alias(value)
+            case "first":
+                expr = pl.col(value).first().alias(value)
+            case "last":
+                expr = pl.col(value).last().alias(value)
+            case "median":
+                expr = pl.col(value).median().alias(value)
+            case "count":
+                expr = pl.len().alias(value)
+            case _:
+                raise ValueError(f"Unsupported agg: {agg}")
 
-    # Aggregate, then pivot (still lazy)
-    return (
-        in_lf.group_by(["store", "item", "date_str"])
-        .agg(expr)
-        .pivot(
-            index=["store", "item"],
-            columns="date_str",
-            values=value,
-            aggregate_function="first",  # safe because we already aggregated
-        )
+    # 2) Lazy group-by to get a TALL table: (store, item, date_str, value_agg)
+    tall_lf = in_lf.group_by(["store", "item", "date_str"]).agg(expr)
+
+    # 3) Collect JUST this small table; pivot is eager-only
+    tall_df = tall_lf.collect(engine=engine)
+
+    # 4) Eager pivot to WIDE: dates become columns
+    wide_df = tall_df.pivot(
+        index=["store", "item"],
+        columns="date_str",
+        values=value,
+        aggregate_function="first",  # safe: we've already aggregated
     )
+
+    # 5) Return back as LazyFrame for the rest of your lazy pipeline
+    return wide_df.lazy()
 
 
 # Ensure all date columns exist & order them
@@ -1264,10 +1271,12 @@ def generate_growth_rate_features_polars(
         start_dt = idx[0]
 
         wlf = lf.filter(pl.col("date_str").is_in(cols_str))
-
-        sales_wide_lf = pivot_agg_lazy(wlf, "unit_sales", "sum")
+        sales_wide_lf = pivot_agg_lazy(wlf, "unit_sales", "sum", engine=polar_engine())
         promo_wide_lf = pivot_agg_lazy(
-            wlf.select(["store", "item", "date_str", promo_col]), promo_col, "max"
+            wlf.select(["store", "item", "date_str", promo_col]),
+            promo_col,
+            "max",
+            engine=polar_engine(),
         )
 
         sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0)
