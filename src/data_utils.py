@@ -1141,9 +1141,6 @@ def generate_growth_rate_store_sku_feature(
     if output_path is not None:
         logger.info(f"Saving growth rate features to {output_path}")
         save_csv_or_parquet(out, output_path)
-        debug_fn = output_path.with_name("debug_subset.csv")
-        out.head(50).to_csv(debug_fn, index=False)
-        logger.info(f"Saved debug sample to {debug_fn}")
 
     return out
 
