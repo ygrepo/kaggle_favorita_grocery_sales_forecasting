@@ -17,8 +17,7 @@ sys.path.insert(0, str(project_root))
 
 from src.data_utils import (
     load_raw_data,
-    load_raw_data_lazy,
-    generate_growth_rate_features_polars,
+    generate_growth_rate_features,
 )
 from src.utils import setup_logging
 from src.model_utils import is_gpu_available
@@ -85,13 +84,18 @@ def main():
         data_fn = Path(args.data_fn).resolve()
 
         # Load and preprocess data
-        if is_gpu_available():
-            df = load_raw_data_lazy(data_fn)
-        else:
-            df = load_raw_data(data_fn)
+        # if is_gpu_available():
+        #     df = load_raw_data_lazy(data_fn)
+        # else:
+        df = load_raw_data(data_fn)
 
         output_fn = Path(args.output_fn).resolve()
-        generate_growth_rate_features_polars(df, output_path=output_fn)
+        generate_growth_rate_features(
+            df,
+            output_dir=output_fn.parent,
+            output_fn=output_fn,
+            log_level=args.log_level,
+        )
         logger.info("Data clustering completed successfully")
     except Exception as e:
         logger.error(f"Error clustering data: {e}")

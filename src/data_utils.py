@@ -175,45 +175,6 @@ def sort_df(
     return df
 
 
-def _ensure_polars(df) -> pl.DataFrame:
-    """
-    Normalize input to a clean Polars DataFrame:
-      - pd.DataFrame  -> convert (date to pandas ts first)
-      - pl.LazyFrame  -> collect
-      - pl.DataFrame  -> clone
-    """
-    if isinstance(df, pd.DataFrame):
-        pdf = df.copy()
-        # keep any tz info but normalize later in Polars
-        pdf["date"] = pd.to_datetime(pdf["date"])
-        return pl.from_pandas(pdf)
-
-    if isinstance(df, pl.LazyFrame):
-        return df.collect()
-
-    if isinstance(df, pl.DataFrame):
-        return df.clone()
-
-    raise TypeError(
-        "df must be a pandas.DataFrame, polars.DataFrame, or polars.LazyFrame"
-    )
-
-
-def _ensure_lazy(df) -> pl.LazyFrame:
-    """Normalize pandas / polars / lazyframe to a Polars LazyFrame."""
-    if isinstance(df, pd.DataFrame):
-        pdf = df.copy()
-        pdf["date"] = pd.to_datetime(pdf["date"])
-        return pl.from_pandas(pdf).lazy()
-    if isinstance(df, pl.DataFrame):
-        return df.lazy()
-    if isinstance(df, pl.LazyFrame):
-        return df
-    raise TypeError(
-        "df must be a pandas.DataFrame, polars.DataFrame, or polars.LazyFrame"
-    )
-
-
 def load_raw_data(data_fn: Path) -> pd.DataFrame:
     """Load and preprocess training data.
 
@@ -289,108 +250,108 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         logger.error(f"Error loading data: {e}")
 
 
-def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
-    """
-    Lazy, GPU-friendly loader for Favorita-like data.
+# def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
+#     """
+#     Lazy, GPU-friendly loader for Favorita-like data.
 
-    Produces columns:
-      date: Date
-      store: UInt16
-      item: UInt32
-      unit_sales: Float32
-      onpromotion: Int8 (0/1)
-      weight: Float32 (optional; filled with 0.0 if missing)
-      store_item: Utf8  (e.g., "1_1047679")
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Loading data (lazy) from {data_fn}")
+#     Produces columns:
+#       date: Date
+#       store: UInt16
+#       item: UInt32
+#       unit_sales: Float32
+#       onpromotion: Int8 (0/1)
+#       weight: Float32 (optional; filled with 0.0 if missing)
+#       store_item: Utf8  (e.g., "1_1047679")
+#     """
+#     logger = logging.getLogger(__name__)
+#     logger.info(f"Loading data (lazy) from {data_fn}")
 
-    # 1) Scan lazily
-    suffix = data_fn.suffix.lower()
-    if suffix == ".parquet":
-        lf = pl.scan_parquet(str(data_fn))
-        # Parquet often already stores datetimes; cast to Date safely
-        lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
-    else:
-        # CSV: let Polars try to parse datelike strings automatically
-        lf = pl.scan_csv(
-            str(data_fn),
-            try_parse_dates=True,  # helps with common date formats
-            null_values=[""],  # treat empty strings as nulls
-        )
-        # Ensure `date` is Date (if still Utf8, cast with permissive parsing)
-        lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
+#     # 1) Scan lazily
+#     suffix = data_fn.suffix.lower()
+#     if suffix == ".parquet":
+#         lf = pl.scan_parquet(str(data_fn))
+#         # Parquet often already stores datetimes; cast to Date safely
+#         lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
+#     else:
+#         # CSV: let Polars try to parse datelike strings automatically
+#         lf = pl.scan_csv(
+#             str(data_fn),
+#             try_parse_dates=True,  # helps with common date formats
+#             null_values=[""],  # treat empty strings as nulls
+#         )
+#         # Ensure `date` is Date (if still Utf8, cast with permissive parsing)
+#         lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
 
-    # # 2) Ensure required/optional columns exist
-    # # (Create placeholders if absent to keep downstream stable.)
-    # want_missing = []
-    # for col in ("weight", "store_item", "onpromotion", "unit_sales", "store", "item"):
-    #     if col not in lf.collect_schema().names():
-    #         want_missing.append(col)
-    # for col in want_missing:
-    #     lf = lf.with_columns(pl.lit(None).alias(col))
+#     # # 2) Ensure required/optional columns exist
+#     # # (Create placeholders if absent to keep downstream stable.)
+#     # want_missing = []
+#     # for col in ("weight", "store_item", "onpromotion", "unit_sales", "store", "item"):
+#     #     if col not in lf.collect_schema().names():
+#     #         want_missing.append(col)
+#     # for col in want_missing:
+#     #     lf = lf.with_columns(pl.lit(None).alias(col))
 
-    # # 3) Cast dtypes (permissive where appropriate)
-    # lf = lf.with_columns(
-    #     [
-    #         pl.col("store").cast(pl.UInt16, strict=False),
-    #         pl.col("item").cast(pl.UInt32, strict=False),
-    #         pl.col("unit_sales").cast(pl.Float32, strict=False),
-    #         pl.col("weight").cast(pl.Float32, strict=False),
-    #     ]
-    # )
+#     # # 3) Cast dtypes (permissive where appropriate)
+#     # lf = lf.with_columns(
+#     #     [
+#     #         pl.col("store").cast(pl.UInt16, strict=False),
+#     #         pl.col("item").cast(pl.UInt32, strict=False),
+#     #         pl.col("unit_sales").cast(pl.Float32, strict=False),
+#     #         pl.col("weight").cast(pl.Float32, strict=False),
+#     #     ]
+#     # )
 
-    # # Normalize onpromotion to 0/1 Int8:
-    # # - if boolean -> 1/0
-    # # - if "True"/"False"/"1"/"0" strings -> cast(Boolean) then to Int8
-    # # - null -> 0
-    # lf = lf.with_columns(
-    #     pl.when(pl.col("onpromotion").is_null())
-    #     .then(0)
-    #     .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
-    #     .then(1)
-    #     .otherwise(0)
-    #     .cast(pl.Int8)
-    #     .alias("onpromotion")
-    # )
+#     # # Normalize onpromotion to 0/1 Int8:
+#     # # - if boolean -> 1/0
+#     # # - if "True"/"False"/"1"/"0" strings -> cast(Boolean) then to Int8
+#     # # - null -> 0
+#     # lf = lf.with_columns(
+#     #     pl.when(pl.col("onpromotion").is_null())
+#     #     .then(0)
+#     #     .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
+#     #     .then(1)
+#     #     .otherwise(0)
+#     #     .cast(pl.Int8)
+#     #     .alias("onpromotion")
+#     # )
 
-    # # 4) Build/clean store_item (Utf8). If missing/null/empty, compose from store/item.
-    # lf = lf.with_columns(
-    #     pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
-    #     .then(
-    #         pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)
-    #     )
-    #     .otherwise(pl.col("store_item").cast(pl.Utf8))
-    #     .alias("store_item")
-    # )
+#     # # 4) Build/clean store_item (Utf8). If missing/null/empty, compose from store/item.
+#     # lf = lf.with_columns(
+#     #     pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
+#     #     .then(
+#     #         pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)
+#     #     )
+#     #     .otherwise(pl.col("store_item").cast(pl.Utf8))
+#     #     .alias("store_item")
+#     # )
 
-    # # 5) Fill numeric nulls only (avoid clobbering strings)
-    # lf = lf.with_columns(
-    #     [
-    #         pl.col("unit_sales").fill_null(0.0),
-    #         pl.col("weight").fill_null(0.0),
-    #     ]
-    # )
+#     # # 5) Fill numeric nulls only (avoid clobbering strings)
+#     # lf = lf.with_columns(
+#     #     [
+#     #         pl.col("unit_sales").fill_null(0.0),
+#     #         pl.col("weight").fill_null(0.0),
+#     #     ]
+#     # )
 
-    # 6) Sort lazily (materializes on collect)
-    lf = lf.sort(["store_item", "date"])
+#     # 6) Sort lazily (materializes on collect)
+#     lf = lf.sort(["store_item", "date"])
 
-    # 7) Stable column order without triggering the .columns warning
-    base_cols = [
-        "date",
-        "store_item",
-        "store",
-        "item",
-        "unit_sales",
-        "onpromotion",
-        "weight",
-    ]
-    names = lf.collect_schema().names()  # cheap: schema only, no data
-    other_cols = [c for c in names if c not in set(base_cols)]
-    lf = lf.select(base_cols + other_cols)
+#     # 7) Stable column order without triggering the .columns warning
+#     base_cols = [
+#         "date",
+#         "store_item",
+#         "store",
+#         "item",
+#         "unit_sales",
+#         "onpromotion",
+#         "weight",
+#     ]
+#     names = lf.collect_schema().names()  # cheap: schema only, no data
+#     other_cols = [c for c in names if c not in set(base_cols)]
+#     lf = lf.select(base_cols + other_cols)
 
-    logger.info("Lazy loader prepared (no materialization yet).")
-    return lf
+#     logger.info("Lazy loader prepared (no materialization yet).")
+#     return lf
 
 
 def load_full_data(
@@ -633,116 +594,69 @@ def _extract_dates_as_pandas(df) -> pd.Series:
 
 
 def generate_aligned_windows(
-    df: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
+    df: pd.DataFrame,
     window_size: int,
     *,
     calendar_aligned: bool = False,
-) -> List[List[pd.Timestamp]]:
+) -> list[list[pd.Timestamp]]:
     """
-    Build non-overlapping date windows of length `window_size`.
+    Build a series of non‑overlapping, length‑`window_size` date windows.
 
-    calendar_aligned=False  -> data-aligned (use only distinct dates present in df; last window may be shorter)
-    calendar_aligned=True   -> calendar-aligned (exact `window_size` days; gaps filled implicitly; leftovers dropped)
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain a ``"date"`` column convertible to ``pd.Timestamp``.
+    window_size : int
+        Number of days in each window.
+    calendar_aligned : bool, default False
+        • **False**  →  *Data‑aligned* (original behaviour):
+          Only the distinct dates that actually occur in *df* are used.
+          If the number of dates is not a multiple of `window_size`,
+          the **last window may be shorter** than `window_size`.
+        • **True**   →  *Calendar‑aligned* (back‑to‑front behaviour):
+          Anchors on the most recent calendar day in *df* and steps
+          backward in *exact* `window_size`‑day blocks, discarding any
+          leftover days that cannot form a full block.
+          Returned windows are always exactly `window_size` long and
+          include **all calendar days**, even ones missing from *df*.
+
+    Returns
+    -------
+    List[List[pd.Timestamp]]
+        A list of date‑lists (each list length == `window_size`
+        unless `calendar_aligned=False` and the final window is partial).
     """
     if window_size <= 0:
         raise ValueError("`window_size` must be a positive integer.")
 
-    dates = _extract_dates_as_pandas(df)
-    if dates.empty:
-        return []
+    df["date"] = pd.to_datetime(df["date"])
 
     if calendar_aligned:
-        # use full calendar days between min/max (inclusive), stepping from the back
-        first_date = dates.min()
-        last_date = dates.max()
+        # --- back‑to‑front, gap‑free windows ---
+        last_date = df["date"].max().normalize()  # ensure time == 00:00
+        first_date = df["date"].min().normalize()
 
         starts = []
-        current_end = last_date
-        full_span = pd.Timedelta(days=window_size - 1)
+        current = last_date
+        while current >= first_date + pd.Timedelta(days=window_size - 1):
+            # logger.debug(f"Current date: {current}")
+            starts.append(current - pd.Timedelta(days=window_size - 1))
+            current -= pd.Timedelta(days=window_size)
 
-        while current_end - full_span >= first_date:
-            start = current_end - full_span
-            starts.append(start)
-            # next block ends window_size days earlier
-            current_end = current_end - pd.Timedelta(days=window_size)
-
-        # oldest → newest
-        starts.reverse()
-        return [list(pd.date_range(s, periods=window_size, freq="D")) for s in starts]
+        # Reverse so windows are chronological (oldest→newest)
+        return [
+            list(pd.date_range(start, periods=window_size, freq="D"))
+            for start in reversed(starts)
+        ]
 
     else:
-        # use only distinct dates present in df; chunk forward
-        unique_dates = sorted(pd.to_datetime(pd.unique(dates)))
+        # --- forward, data‑aligned windows (may be shorter at the tail) ---
+        unique_dates = sorted(pd.to_datetime(df["date"].unique()))
+        # logger.debug(f"Unique dates: {unique_dates}")
         return [
             unique_dates[i : i + window_size]
             for i in range(0, len(unique_dates), window_size)
         ]
-
-
-# def generate_aligned_windows(
-#     df: pd.DataFrame,
-#     window_size: int,
-#     *,
-#     calendar_aligned: bool = False,
-# ) -> list[list[pd.Timestamp]]:
-#     """
-#     Build a series of non‑overlapping, length‑`window_size` date windows.
-
-#     Parameters
-#     ----------
-#     df : pd.DataFrame
-#         Must contain a ``"date"`` column convertible to ``pd.Timestamp``.
-#     window_size : int
-#         Number of days in each window.
-#     calendar_aligned : bool, default False
-#         • **False**  →  *Data‑aligned* (original behaviour):
-#           Only the distinct dates that actually occur in *df* are used.
-#           If the number of dates is not a multiple of `window_size`,
-#           the **last window may be shorter** than `window_size`.
-#         • **True**   →  *Calendar‑aligned* (back‑to‑front behaviour):
-#           Anchors on the most recent calendar day in *df* and steps
-#           backward in *exact* `window_size`‑day blocks, discarding any
-#           leftover days that cannot form a full block.
-#           Returned windows are always exactly `window_size` long and
-#           include **all calendar days**, even ones missing from *df*.
-
-#     Returns
-#     -------
-#     List[List[pd.Timestamp]]
-#         A list of date‑lists (each list length == `window_size`
-#         unless `calendar_aligned=False` and the final window is partial).
-#     """
-#     if window_size <= 0:
-#         raise ValueError("`window_size` must be a positive integer.")
-
-#     df["date"] = pd.to_datetime(df["date"])
-
-#     if calendar_aligned:
-#         # --- back‑to‑front, gap‑free windows ---
-#         last_date = df["date"].max().normalize()  # ensure time == 00:00
-#         first_date = df["date"].min().normalize()
-
-#         starts = []
-#         current = last_date
-#         while current >= first_date + pd.Timedelta(days=window_size - 1):
-#             # logger.debug(f"Current date: {current}")
-#             starts.append(current - pd.Timedelta(days=window_size - 1))
-#             current -= pd.Timedelta(days=window_size)
-
-#         # Reverse so windows are chronological (oldest→newest)
-#         return [
-#             list(pd.date_range(start, periods=window_size, freq="D"))
-#             for start in reversed(starts)
-#         ]
-
-#     else:
-#         # --- forward, data‑aligned windows (may be shorter at the tail) ---
-#         unique_dates = sorted(pd.to_datetime(df["date"].unique()))
-#         # logger.debug(f"Unique dates: {unique_dates}")
-#         return [
-#             unique_dates[i : i + window_size]
-#             for i in range(0, len(unique_dates), window_size)
-#         ]
 
 
 def generate_cyclical_features(
@@ -968,6 +882,126 @@ def generate_growth_rate_features(
     window_size: int = 1,
     *,
     calendar_aligned: bool = True,
+    output_dir: Optional[Path] = None,
+    output_fn: Optional[Path] = None,
+    weight_col: str = "weight",
+    promo_col: str = "onpromotion",
+    log_level: str = "INFO",
+) -> pd.DataFrame:
+    """
+    Generate growth rate features for all store-item combinations.
+
+    This function processes each store-item combination separately and either:
+    1. Saves individual parquet files if output_dir is provided
+    2. Returns a combined DataFrame with all growth rate features
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with columns: store, item, date, unit_sales
+    window_size : int, default=1
+        Size of rolling window for features
+    calendar_aligned : bool, default=True
+        Whether to align features to calendar dates
+    output_dir : Optional[Path], default=None
+        Directory to save individual parquet files. If None, returns combined DataFrame
+    weight_col : str, default="weight"
+        Name of weight column
+    promo_col : str, default="onpromotion"
+        Name of promotion column
+    log_level : str, default="INFO"
+        Logging level
+
+    Returns
+    -------
+    pd.DataFrame
+        Combined DataFrame with growth rate features for all store-item combinations
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    # Create output directory if specified
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get unique store-item combinations
+    grouped = df[["store", "item"]].drop_duplicates()
+    total_combinations = len(grouped)
+
+    # Prepare iterator with optional progress bar
+    iterator = grouped.iterrows()
+    if logger.level == logging.DEBUG:
+        iterator = tqdm(
+            iterator, desc="Generating growth rate features", total=total_combinations
+        )
+
+    # Collect results if not saving to files
+    results = []
+
+    # Work with a copy to avoid modifying the original
+    df_working = df.copy()
+
+    for idx, row in iterator:
+        store, sku = row["store"], row["item"]
+        logger.debug(f"Generating growth features for store: {store}, item: {sku}")
+
+        # Extract data for this store-item combination
+        mask = (df_working["store"] == store) & (df_working["item"] == sku)
+        store_sku_df = df_working[mask].copy()
+
+        if len(store_sku_df) == 0:
+            logger.warning(f"No data found for store {store}, item {sku}")
+            continue
+
+        features_df = generate_growth_rate_store_sku_feature(
+            store_sku_df,
+            window_size=window_size,
+            calendar_aligned=calendar_aligned,
+            output_path=output_dir / f"{store}_{sku}.parquet" if output_dir else None,
+            weight_col=weight_col,
+            promo_col=promo_col,
+            log_level=log_level,
+        )
+
+        # Collect results if not saving to files
+        if output_dir is None and features_df is not None:
+            results.append(features_df)
+
+        # Remove processed data to free memory
+        df_working = df_working[~mask]
+
+        # Optional: Force garbage collection periodically
+        if (idx + 1) % 100 == 0:  # Every 100 store-item pairs
+            import gc
+
+            gc.collect()
+            logger.debug(
+                f"Processed {idx + 1}/{total_combinations} combinations, freed memory"
+            )
+
+    logger.info(
+        f"Saved growth rate features to {len(results)} parquet files in {output_dir}"
+    )
+
+    # Return combined results or empty DataFrame
+    if results:
+        combined_df = pd.concat(results, ignore_index=True)
+        logger.info(
+            f"Generated growth rate features for {len(results)} store-item combinations"
+        )
+        if output_fn is not None:
+            logger.info(f"Saving combined growth rate features to {output_fn}")
+            save_csv_or_parquet(combined_df, output_fn)
+        return combined_df
+    else:
+        logger.warning("No growth rate features generated")
+        return pd.DataFrame()
+
+
+def generate_growth_rate_store_sku_feature(
+    df: pd.DataFrame,
+    window_size: int = 1,
+    *,
+    calendar_aligned: bool = True,
     log_level: str = "INFO",
     output_path: Optional[Path] = None,
     weight_col: str = "weight",  # <- keep this
@@ -1114,275 +1148,275 @@ def generate_growth_rate_features(
     return out
 
 
-AggName = Literal["sum", "max", "min", "mean", "first", "last", "median", "count"]
+# AggName = Literal["sum", "max", "min", "mean", "first", "last", "median", "count"]
 
 
-def pivot_agg_lazy(
-    in_lf: pl.LazyFrame,
-    value: str,
-    agg: Union[AggName, Callable[[pl.Expr], pl.Expr]] = "sum",
-    *,
-    engine: str = "rust",  # "gpu" or "rust"
-) -> pl.LazyFrame:
-    """
-    Lazily aggregate (store,item,date_str) → value, then EAGER pivot, then return LazyFrame.
-    """
-    # 1) Build the aggregation expression (lazy-safe)
-    if callable(agg):
-        expr = agg(pl.col(value)).alias(value)
-    else:
-        match agg:
-            case "sum":
-                expr = pl.col(value).sum().alias(value)
-            case "max":
-                expr = pl.col(value).max().alias(value)
-            case "min":
-                expr = pl.col(value).min().alias(value)
-            case "mean":
-                expr = pl.col(value).mean().alias(value)
-            case "first":
-                expr = pl.col(value).first().alias(value)
-            case "last":
-                expr = pl.col(value).last().alias(value)
-            case "median":
-                expr = pl.col(value).median().alias(value)
-            case "count":
-                expr = pl.len().alias(value)
-            case _:
-                raise ValueError(f"Unsupported agg: {agg}")
+# def pivot_agg_lazy(
+#     in_lf: pl.LazyFrame,
+#     value: str,
+#     agg: Union[AggName, Callable[[pl.Expr], pl.Expr]] = "sum",
+#     *,
+#     engine: str = "rust",  # "gpu" or "rust"
+# ) -> pl.LazyFrame:
+#     """
+#     Lazily aggregate (store,item,date_str) → value, then EAGER pivot, then return LazyFrame.
+#     """
+#     # 1) Build the aggregation expression (lazy-safe)
+#     if callable(agg):
+#         expr = agg(pl.col(value)).alias(value)
+#     else:
+#         match agg:
+#             case "sum":
+#                 expr = pl.col(value).sum().alias(value)
+#             case "max":
+#                 expr = pl.col(value).max().alias(value)
+#             case "min":
+#                 expr = pl.col(value).min().alias(value)
+#             case "mean":
+#                 expr = pl.col(value).mean().alias(value)
+#             case "first":
+#                 expr = pl.col(value).first().alias(value)
+#             case "last":
+#                 expr = pl.col(value).last().alias(value)
+#             case "median":
+#                 expr = pl.col(value).median().alias(value)
+#             case "count":
+#                 expr = pl.len().alias(value)
+#             case _:
+#                 raise ValueError(f"Unsupported agg: {agg}")
 
-    # 2) Lazy group-by to get a TALL table: (store, item, date_str, value_agg)
-    tall_lf = in_lf.group_by(["store", "item", "date_str"]).agg(expr)
+#     # 2) Lazy group-by to get a TALL table: (store, item, date_str, value_agg)
+#     tall_lf = in_lf.group_by(["store", "item", "date_str"]).agg(expr)
 
-    # 3) Collect JUST this small table; pivot is eager-only
-    tall_df = tall_lf.collect(engine=engine)
+#     # 3) Collect JUST this small table; pivot is eager-only
+#     tall_df = tall_lf.collect(engine=engine)
 
-    # 4) Eager pivot to WIDE: dates become columns
-    wide_df = tall_df.pivot(
-        index=["store", "item"],
-        columns="date_str",
-        values=value,
-        aggregate_function="first",  # safe: we've already aggregated
-    )
+#     # 4) Eager pivot to WIDE: dates become columns
+#     wide_df = tall_df.pivot(
+#         index=["store", "item"],
+#         columns="date_str",
+#         values=value,
+#         aggregate_function="first",  # safe: we've already aggregated
+#     )
 
-    # 5) Return back as LazyFrame for the rest of your lazy pipeline
-    return wide_df.lazy()
-
-
-# Ensure all date columns exist & order them
-def ensure_cols_lazy(xlf: pl.LazyFrame, zero: int | float, *cols_str):
-    # Convert schema (no collect) to know what's present
-    have_cols = set(xlf.collect_schema().names())
-    exprs = [pl.col("store"), pl.col("item")]
-    for c in cols_str:
-        exprs.append((pl.lit(zero).alias(c)) if c not in have_cols else pl.col(c))
-    return xlf.select(exprs)
+#     # 5) Return back as LazyFrame for the rest of your lazy pipeline
+#     return wide_df.lazy()
 
 
-def generate_growth_rate_features_polars(
-    df: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
-    window_size: int = 1,
-    *,
-    calendar_aligned: bool = True,
-    log_level: str = "INFO",
-    output_path: Optional[Path] = None,
-    weight_col: str = "weight",
-    promo_col: str = "onpromotion",
-    return_format: Literal["pandas", "polars", "lazy"] = "pandas",
-):
-    """
-    Build growth-rate features with Polars, keeping the plan LAZY until the end.
+# # Ensure all date columns exist & order them
+# def ensure_cols_lazy(xlf: pl.LazyFrame, zero: int | float, *cols_str):
+#     # Convert schema (no collect) to know what's present
+#     have_cols = set(xlf.collect_schema().names())
+#     exprs = [pl.col("store"), pl.col("item")]
+#     for c in cols_str:
+#         exprs.append((pl.lit(zero).alias(c)) if c not in have_cols else pl.col(c))
+#     return xlf.select(exprs)
 
-    return_format:
-        - "lazy"   -> returns pl.LazyFrame
-        - "polars" -> returns pl.DataFrame
-        - "pandas" -> returns pd.DataFrame  (default)
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    # Normalize to LazyFrame up-front (no materialization yet)
-    lf = _ensure_lazy(df)
+# def generate_growth_rate_features_polars(
+#     df: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
+#     window_size: int = 1,
+#     *,
+#     calendar_aligned: bool = True,
+#     log_level: str = "INFO",
+#     output_path: Optional[Path] = None,
+#     weight_col: str = "weight",
+#     promo_col: str = "onpromotion",
+#     return_format: Literal["pandas", "polars", "lazy"] = "pandas",
+# ):
+#     """
+#     Build growth-rate features with Polars, keeping the plan LAZY until the end.
 
-    # Schema-only ops are cheap on LazyFrame
-    names = set(lf.collect_schema().names())
-    required = {"store", "item", "date", "unit_sales"}
-    missing = sorted(required - names)
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
+#     return_format:
+#         - "lazy"   -> returns pl.LazyFrame
+#         - "polars" -> returns pl.DataFrame
+#         - "pandas" -> returns pd.DataFrame  (default)
+#     """
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    # Canonical dtypes (still lazy)
-    lf = lf.with_columns(
-        pl.col("store").cast(pl.Int64, strict=False),
-        pl.col("item").cast(pl.Int64, strict=False),
-        pl.col("date").cast(pl.Date, strict=False),
-        pl.col("unit_sales").cast(pl.Float32, strict=False),
-    )
+#     # Normalize to LazyFrame up-front (no materialization yet)
+#     lf = _ensure_lazy(df)
 
-    # Optional columns with defaults
-    if weight_col not in names:
-        lf = lf.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
-    else:
-        lf = lf.with_columns(pl.col(weight_col).cast(pl.Float32, strict=False))
+#     # Schema-only ops are cheap on LazyFrame
+#     names = set(lf.collect_schema().names())
+#     required = {"store", "item", "date", "unit_sales"}
+#     missing = sorted(required - names)
+#     if missing:
+#         raise ValueError(f"Missing required columns: {missing}")
 
-    if promo_col not in names:
-        lf = lf.with_columns(pl.lit(0).cast(pl.Int8).alias(promo_col))
-    else:
-        lf = lf.with_columns(pl.col(promo_col).cast(pl.Int8, strict=False))
+#     # Canonical dtypes (still lazy)
+#     lf = lf.with_columns(
+#         pl.col("store").cast(pl.Int64, strict=False),
+#         pl.col("item").cast(pl.Int64, strict=False),
+#         pl.col("date").cast(pl.Date, strict=False),
+#         pl.col("unit_sales").cast(pl.Float32, strict=False),
+#     )
 
-    # Stable string key for pivot/filters
-    lf = lf.with_columns(pl.col("date").cast(pl.Utf8).alias("date_str"))
+#     # Optional columns with defaults
+#     if weight_col not in names:
+#         lf = lf.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
+#     else:
+#         lf = lf.with_columns(pl.col(weight_col).cast(pl.Float32, strict=False))
 
-    # Weight map (lazy)
-    weight_map_lf = lf.group_by(["store", "item"]).agg(
-        pl.col(weight_col).first().alias(weight_col)
-    )
+#     if promo_col not in names:
+#         lf = lf.with_columns(pl.lit(0).cast(pl.Int8).alias(promo_col))
+#     else:
+#         lf = lf.with_columns(pl.col(promo_col).cast(pl.Int8, strict=False))
 
-    # Windows: we need the unique dates; collect minimally just for planning
-    if generate_aligned_windows is None:
-        raise ValueError("You must pass `generate_aligned_windows`.")
+#     # Stable string key for pivot/filters
+#     lf = lf.with_columns(pl.col("date").cast(pl.Utf8).alias("date_str"))
 
-    # Only tiny projection to pandas to build windows
-    win_pdf = (
-        lf.select("store", "item", "date", "unit_sales", weight_col, promo_col)
-        .collect(streaming=False)  # small subset; safe to collect
-        .to_pandas()
-    )
-    windows: List[List[pd.Timestamp]] = generate_aligned_windows(
-        win_pdf, window_size, calendar_aligned=calendar_aligned
-    )
-    if not windows:
-        # return appropriately empty according to return_format
-        empty_cols = (
-            ["start_date", "store_item", "store", "item", weight_col]
-            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
-            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-        )
-        if return_format == "lazy":
-            return pl.DataFrame(schema=[(c, pl.Null) for c in empty_cols]).lazy()
-        if return_format == "polars":
-            return pl.DataFrame({c: [] for c in empty_cols})
-        return pd.DataFrame(columns=empty_cols)
-    # Build per-window lazy pieces, then concat (still lazy)
-    parts: List[pl.LazyFrame] = []
-    for window_dates in windows:
-        idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
-        cols_str = [d.strftime("%Y-%m-%d") for d in idx]
-        start_dt = idx[0]
+#     # Weight map (lazy)
+#     weight_map_lf = lf.group_by(["store", "item"]).agg(
+#         pl.col(weight_col).first().alias(weight_col)
+#     )
 
-        wlf = lf.filter(pl.col("date_str").is_in(cols_str))
-        sales_wide_lf = pivot_agg_lazy(wlf, "unit_sales", "sum", engine=polar_engine())
-        promo_wide_lf = pivot_agg_lazy(
-            wlf.select(["store", "item", "date_str", promo_col]),
-            promo_col,
-            "max",
-            engine=polar_engine(),
-        )
+#     # Windows: we need the unique dates; collect minimally just for planning
+#     if generate_aligned_windows is None:
+#         raise ValueError("You must pass `generate_aligned_windows`.")
 
-        sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0, *cols_str)
-        promo_wide_lf = ensure_cols_lazy(promo_wide_lf, 0, *cols_str)
+#     # Only tiny projection to pandas to build windows
+#     win_pdf = (
+#         lf.select("store", "item", "date", "unit_sales", weight_col, promo_col)
+#         .collect(streaming=False)  # small subset; safe to collect
+#         .to_pandas()
+#     )
+#     windows: List[List[pd.Timestamp]] = generate_aligned_windows(
+#         win_pdf, window_size, calendar_aligned=calendar_aligned
+#     )
+#     if not windows:
+#         # return appropriately empty according to return_format
+#         empty_cols = (
+#             ["start_date", "store_item", "store", "item", weight_col]
+#             + [f"sales_day_{i}" for i in range(1, window_size + 1)]
+#             + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+#             + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+#         )
+#         if return_format == "lazy":
+#             return pl.DataFrame(schema=[(c, pl.Null) for c in empty_cols]).lazy()
+#         if return_format == "polars":
+#             return pl.DataFrame({c: [] for c in empty_cols})
+#         return pd.DataFrame(columns=empty_cols)
+#     # Build per-window lazy pieces, then concat (still lazy)
+#     parts: List[pl.LazyFrame] = []
+#     for window_dates in windows:
+#         idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
+#         cols_str = [d.strftime("%Y-%m-%d") for d in idx]
+#         start_dt = idx[0]
 
-        base_lf = sales_wide_lf.join(weight_map_lf, on=["store", "item"], how="left")
+#         wlf = lf.filter(pl.col("date_str").is_in(cols_str))
+#         sales_wide_lf = pivot_agg_lazy(wlf, "unit_sales", "sum", engine=polar_engine())
+#         promo_wide_lf = pivot_agg_lazy(
+#             wlf.select(["store", "item", "date_str", promo_col]),
+#             promo_col,
+#             "max",
+#             engine=polar_engine(),
+#         )
 
-        # Rename date cols to sales_day_i and drop originals
-        renames = []
-        drops = []
-        for i, c in enumerate(cols_str, start=1):
-            renames.append(pl.col(c).cast(pl.Float32).alias(f"sales_day_{i}"))
-            drops.append(c)
-        base_lf = base_lf.with_columns(renames).drop(drops)
+#         sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0, *cols_str)
+#         promo_wide_lf = ensure_cols_lazy(promo_wide_lf, 0, *cols_str)
 
-        # Promo flags
-        p = promo_wide_lf
-        prenames = []
-        pdrops = []
-        for i, c in enumerate(cols_str, start=1):
-            prenames.append(pl.col(c).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
-            pdrops.append(c)
-        p = p.with_columns(prenames).drop(pdrops)
-        p = p.select(
-            ["store", "item"]
-            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-        )
-        base_lf = base_lf.join(p, on=["store", "item"], how="left")
+#         base_lf = sales_wide_lf.join(weight_map_lf, on=["store", "item"], how="left")
 
-        # prev-day total (lazy)
-        prev_str = (start_dt - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        prev_sum_lf = (
-            lf.filter(pl.col("date_str") == prev_str)
-            .group_by(["store", "item"])
-            .agg(pl.col("unit_sales").sum().alias("prev"))
-        )
-        base_lf = base_lf.join(prev_sum_lf, on=["store", "item"], how="left")
+#         # Rename date cols to sales_day_i and drop originals
+#         renames = []
+#         drops = []
+#         for i, c in enumerate(cols_str, start=1):
+#             renames.append(pl.col(c).cast(pl.Float32).alias(f"sales_day_{i}"))
+#             drops.append(c)
+#         base_lf = base_lf.with_columns(renames).drop(drops)
 
-        # growth rates
-        base_lf = base_lf.with_columns(
-            pl.when(
-                pl.col("prev").is_null()
-                | (pl.col("prev") == 0)
-                | pl.col("sales_day_1").is_null()
-            )
-            .then(pl.lit(None, dtype=pl.Float32))
-            .otherwise(
-                ((pl.col("sales_day_1") - pl.col("prev")) / pl.col("prev")) * 100.0
-            )
-            .alias("growth_rate_1")
-        ).drop("prev")
+#         # Promo flags
+#         p = promo_wide_lf
+#         prenames = []
+#         pdrops = []
+#         for i, c in enumerate(cols_str, start=1):
+#             prenames.append(pl.col(c).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
+#             pdrops.append(c)
+#         p = p.with_columns(prenames).drop(pdrops)
+#         p = p.select(
+#             ["store", "item"]
+#             + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+#         )
+#         base_lf = base_lf.join(p, on=["store", "item"], how="left")
 
-        for i in range(2, window_size + 1):
-            base_lf = base_lf.with_columns(
-                pl.when(
-                    pl.col(f"sales_day_{i-1}").is_null()
-                    | (pl.col(f"sales_day_{i-1}") == 0)
-                    | pl.col(f"sales_day_{i}").is_null()
-                )
-                .then(pl.lit(None, dtype=pl.Float32))
-                .otherwise(
-                    (
-                        (pl.col(f"sales_day_{i}") - pl.col(f"sales_day_{i-1}"))
-                        / pl.col(f"sales_day_{i-1}")
-                    )
-                    * 100.0
-                )
-                .alias(f"growth_rate_{i}")
-            )
+#         # prev-day total (lazy)
+#         prev_str = (start_dt - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+#         prev_sum_lf = (
+#             lf.filter(pl.col("date_str") == prev_str)
+#             .group_by(["store", "item"])
+#             .agg(pl.col("unit_sales").sum().alias("prev"))
+#         )
+#         base_lf = base_lf.join(prev_sum_lf, on=["store", "item"], how="left")
 
-        # start_date + store_item
-        base_lf = base_lf.with_columns(
-            pl.lit(start_dt.to_pydatetime()).cast(pl.Datetime).alias("start_date"),
-            (
-                pl.col("store").cast(pl.Utf8)
-                + pl.lit("_")
-                + pl.col("item").cast(pl.Utf8)
-            ).alias("store_item"),
-        )
+#         # growth rates
+#         base_lf = base_lf.with_columns(
+#             pl.when(
+#                 pl.col("prev").is_null()
+#                 | (pl.col("prev") == 0)
+#                 | pl.col("sales_day_1").is_null()
+#             )
+#             .then(pl.lit(None, dtype=pl.Float32))
+#             .otherwise(
+#                 ((pl.col("sales_day_1") - pl.col("prev")) / pl.col("prev")) * 100.0
+#             )
+#             .alias("growth_rate_1")
+#         ).drop("prev")
 
-        base_lf = base_lf.select(
-            ["start_date", "store_item", "store", "item", weight_col]
-            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
-            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-        )
+#         for i in range(2, window_size + 1):
+#             base_lf = base_lf.with_columns(
+#                 pl.when(
+#                     pl.col(f"sales_day_{i-1}").is_null()
+#                     | (pl.col(f"sales_day_{i-1}") == 0)
+#                     | pl.col(f"sales_day_{i}").is_null()
+#                 )
+#                 .then(pl.lit(None, dtype=pl.Float32))
+#                 .otherwise(
+#                     (
+#                         (pl.col(f"sales_day_{i}") - pl.col(f"sales_day_{i-1}"))
+#                         / pl.col(f"sales_day_{i-1}")
+#                     )
+#                     * 100.0
+#                 )
+#                 .alias(f"growth_rate_{i}")
+#             )
 
-        parts.append(base_lf)
+#         # start_date + store_item
+#         base_lf = base_lf.with_columns(
+#             pl.lit(start_dt.to_pydatetime()).cast(pl.Datetime).alias("start_date"),
+#             (
+#                 pl.col("store").cast(pl.Utf8)
+#                 + pl.lit("_")
+#                 + pl.col("item").cast(pl.Utf8)
+#             ).alias("store_item"),
+#         )
 
-    out_lf = pl.concat(parts, how="vertical_relaxed")  # still lazy
+#         base_lf = base_lf.select(
+#             ["start_date", "store_item", "store", "item", weight_col]
+#             + [f"sales_day_{i}" for i in range(1, window_size + 1)]
+#             + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+#             + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+#         )
 
-    # ----- Save & return according to return_format -----
-    if output_path is not None:
-        # If user provided a custom saver, collect to pandas and let them handle it
-        pdf = out_lf.collect(engine=polar_engine()).to_pandas()
-        save_csv_or_parquet(pdf, output_path)
-        # Optional debug slice
-        dbg = out_lf.limit(50).collect(engine=polar_engine()).to_pandas()
-        dbg.to_csv(Path(output_path).with_name("debug_subset.csv"), index=False)
+#         parts.append(base_lf)
 
-    if return_format == "lazy":
-        return out_lf
-    if return_format == "polars":
-        return out_lf.collect(engine=polar_engine())
-    # default: pandas
-    return out_lf.collect(engine=polar_engine()).to_pandas()
+#     out_lf = pl.concat(parts, how="vertical_relaxed")  # still lazy
+
+#     # ----- Save & return according to return_format -----
+#     if output_path is not None:
+#         # If user provided a custom saver, collect to pandas and let them handle it
+#         pdf = out_lf.collect(engine=polar_engine()).to_pandas()
+#         save_csv_or_parquet(pdf, output_path)
+#         # Optional debug slice
+#         dbg = out_lf.limit(50).collect(engine=polar_engine()).to_pandas()
+#         dbg.to_csv(Path(output_path).with_name("debug_subset.csv"), index=False)
+
+#     if return_format == "lazy":
+#         return out_lf
+#     if return_format == "polars":
+#         return out_lf.collect(engine=polar_engine())
+#     # default: pandas
+#     return out_lf.collect(engine=polar_engine()).to_pandas()
 
 
 def generate_sales_features(
