@@ -17,8 +17,7 @@ DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/${TIMESTAMP}_generate_growth_rate.log"
+LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
 LOG_LEVEL="DEBUG"
 
 # Parse command line arguments
