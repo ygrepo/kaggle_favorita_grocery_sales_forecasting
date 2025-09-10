@@ -10,6 +10,11 @@ import numpy as np
 import pandas as pd
 
 
+def polar_engine():
+    """Return appropriate Polars engine based on GPU availability."""
+    return "gpu" if torch.cuda.is_available() else "rust"
+
+
 def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
     """Set up logging configuration.
 

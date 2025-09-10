@@ -3,16 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator, Callable, Literal
+from typing import List, Optional, Iterator, Literal
 from tqdm import tqdm
 from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
 import math
-from src.utils import save_csv_or_parquet
-from src.model_utils import polar_engine
+from src.utils import save_csv_or_parquet, polar_engine
 import polars as pl
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,10 @@ Y_LOG_FEATURES = "Y_LOG_FEATURES"
 Y_TO_LOG_FEATURES = "Y_TO_LOG_FEATURES"
 ALL_FEATURES = "ALL_FEATURES"
 UNIT_SALE_IDX = "UNIT_SALE_IDX"
+
+
+def polar_engine():
+    return "gpu" if torch.cuda.is_available() else "rust"
 
 
 def build_feature_and_label_cols(
