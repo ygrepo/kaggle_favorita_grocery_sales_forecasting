@@ -3,14 +3,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator, Callable
+from typing import List, Optional, Iterator, Callable, Literal
 from tqdm import tqdm
 from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
 import math
-from src.utils import save_csv_or_parquet, polar_engine
+from src.utils import save_csv_or_parquet
+from src.model_utils import polar_engine
 import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,21 @@ def _ensure_polars(df) -> pl.DataFrame:
     if isinstance(df, pl.DataFrame):
         return df.clone()
 
+    raise TypeError(
+        "df must be a pandas.DataFrame, polars.DataFrame, or polars.LazyFrame"
+    )
+
+
+def _ensure_lazy(df) -> pl.LazyFrame:
+    """Normalize pandas / polars / lazyframe to a Polars LazyFrame."""
+    if isinstance(df, pd.DataFrame):
+        pdf = df.copy()
+        pdf["date"] = pd.to_datetime(pdf["date"])
+        return pl.from_pandas(pdf).lazy()
+    if isinstance(df, pl.DataFrame):
+        return df.lazy()
+    if isinstance(df, pl.LazyFrame):
+        return df
     raise TypeError(
         "df must be a pandas.DataFrame, polars.DataFrame, or polars.LazyFrame"
     )
@@ -1103,56 +1119,86 @@ def generate_growth_rate_features_polars(
     output_path: Optional[Path] = None,
     weight_col: str = "weight",
     promo_col: str = "onpromotion",
-    save_csv_or_parquet: Optional[Callable[[pd.DataFrame, Path], None]] = None,
-) -> pd.DataFrame:
+    return_format: Literal["pandas", "polars", "lazy"] = "pandas",
+):
     """
-    Vectorized Polars implementation (CPU or GPU) that accepts pd.DataFrame, pl.DataFrame, or pl.LazyFrame.
-    - Builds non-overlapping windows with `generate_aligned_windows` (you provide).
-    - Pivots to wide by date (using date_str), computes sales_x, growth_rate_x, and promo flags.
-    - Returns a pandas DataFrame for downstream compatibility.
+    Build growth-rate features with Polars, keeping the plan LAZY until the end.
+
+    return_format:
+        - "lazy"   -> returns pl.LazyFrame
+        - "polars" -> returns pl.DataFrame
+        - "pandas" -> returns pd.DataFrame  (default)
     """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-    # Normalize to Polars early (handles LazyFrame too)
-    # pl_df = _ensure_polars(df)
-    pl_df = df
-    logger.info(f"Total rows: {pl_df.height}")
+    # Normalize to LazyFrame up-front (no materialization yet)
+    lf = _ensure_lazy(df)
 
-    # Required columns check
-    required_cols = {"store", "item", "date", "unit_sales"}
-    missing = required_cols - set(pl_df.columns)
+    # Schema-only ops are cheap on LazyFrame
+    names = set(lf.collect_schema().names())
+    required = {"store", "item", "date", "unit_sales"}
+    missing = sorted(required - names)
     if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
+        raise ValueError(f"Missing required columns: {missing}")
 
-    # Canonicalize dtypes
-    pl_df = pl_df.with_columns(
-        pl.col("store").cast(pl.Int64),
-        pl.col("item").cast(pl.Int64),
-        pl.col("date").cast(pl.Date),  # day granularity
-        pl.col("unit_sales").cast(pl.Float32),
+    # Canonical dtypes (still lazy)
+    lf = lf.with_columns(
+        pl.col("store").cast(pl.Int64, strict=False),
+        pl.col("item").cast(pl.Int64, strict=False),
+        pl.col("date").cast(pl.Date, strict=False),
+        pl.col("unit_sales").cast(pl.Float32, strict=False),
     )
 
-    # Optional columns -> defaults + cast
-    if weight_col not in pl_df.columns:
-        pl_df = pl_df.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
+    # Optional columns with defaults
+    if weight_col not in names:
+        lf = lf.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
     else:
-        pl_df = pl_df.with_columns(pl.col(weight_col).cast(pl.Float32))
+        lf = lf.with_columns(pl.col(weight_col).cast(pl.Float32, strict=False))
 
-    if promo_col not in pl_df.columns:
-        pl_df = pl_df.with_columns(pl.lit(0).cast(pl.Int8).alias(promo_col))
+    if promo_col not in names:
+        lf = lf.with_columns(pl.lit(0).cast(pl.Int8).alias(promo_col))
     else:
-        pl_df = pl_df.with_columns(pl.col(promo_col).cast(pl.Int8))
+        lf = lf.with_columns(pl.col(promo_col).cast(pl.Int8, strict=False))
 
-    # Stable string key for pivot columns
-    pl_df = pl_df.with_columns(pl.col("date").cast(pl.Utf8).alias("date_str"))
+    # Stable string key for pivot/filters
+    lf = lf.with_columns(pl.col("date").cast(pl.Utf8).alias("date_str"))
 
-    engine = polar_engine()
+    # Weight map (lazy)
+    weight_map_lf = lf.group_by(["store", "item"]).agg(
+        pl.col(weight_col).first().alias(weight_col)
+    )
 
-    # ---- pivot helper ----
-    def pivot_agg(wdf: pl.DataFrame, value: str, agg: str) -> pl.DataFrame:
-        lf = (
-            wdf.lazy()
-            .group_by(["store", "item", "date_str"])
+    # Windows: we need the unique dates; collect minimally just for planning
+    if generate_aligned_windows is None:
+        raise ValueError("You must pass `generate_aligned_windows`.")
+
+    # Only tiny projection to pandas to build windows
+    win_pdf = (
+        lf.select("store", "item", "date", "unit_sales", weight_col, promo_col)
+        .collect(streaming=False)  # small subset; safe to collect
+        .to_pandas()
+    )
+    windows: List[List[pd.Timestamp]] = generate_aligned_windows(
+        win_pdf, window_size, calendar_aligned=calendar_aligned
+    )
+    if not windows:
+        # return appropriately empty according to return_format
+        empty_cols = (
+            ["start_date", "store_item", "store", "item", weight_col]
+            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
+            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        )
+        if return_format == "lazy":
+            return pl.DataFrame(schema=[(c, pl.Null) for c in empty_cols]).lazy()
+        if return_format == "polars":
+            return pl.DataFrame({c: [] for c in empty_cols})
+        return pd.DataFrame(columns=empty_cols)
+
+    # Helper: pivot to wide lazily
+    def pivot_agg_lazy(in_lf: pl.LazyFrame, value: str, agg: str) -> pl.LazyFrame:
+        return (
+            in_lf.group_by(["store", "item", "date_str"])
             .agg(pl.col(value).agg(agg))
             .pivot(
                 index=["store", "item"],
@@ -1161,185 +1207,136 @@ def generate_growth_rate_features_polars(
                 aggregate_function="first",
             )
         )
-        return lf.collect(engine=engine)
 
-    # Weight map: first per (store,item)
-    w_src = pl_df.select(["store", "item", weight_col]).drop_nulls(subset=[weight_col])
-    if w_src.height > 0:
-        weight_map = (
-            w_src.lazy()
-            .group_by(["store", "item"])
-            .agg(pl.col(weight_col).first())
-            .collect(engine=engine)
-        )
-    else:
-        weight_map = pl.DataFrame({"store": [], "item": [], weight_col: []})
-
-    # if generate_aligned_windows is None:
-    #     raise ValueError(
-    #         "You must pass `generate_aligned_windows(df, window_size, calendar_aligned=...)`."
-    #     )
-
-    # Use a minimal pandas view ONLY to build windows
-    pdf_for_windows = pl_df.select(
-        "store", "item", "date", "unit_sales", weight_col, promo_col
-    ).to_pandas()
-
-    windows: List[List[pd.Timestamp]] = generate_aligned_windows(
-        pdf_for_windows, window_size, calendar_aligned=calendar_aligned
-    )
-    if not windows:
-        logger.warning("No windows generated; returning empty frame.")
-        return pd.DataFrame(
-            columns=["start_date", "store_item", "store", "item", weight_col]
-            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
-            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-        )
-
-    out_frames: List[pl.DataFrame] = []
-
+    # Build per-window lazy pieces, then concat (still lazy)
+    parts: List[pl.LazyFrame] = []
     for window_dates in windows:
-        window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
-        desired_cols_str = [d.strftime("%Y-%m-%d") for d in window_idx]
-        start_dt = window_idx[0]  # pandas Timestamp
-        logger.info(f"Processing window: {window_idx[0]} → {window_idx[-1]}")
+        idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
+        cols_str = [d.strftime("%Y-%m-%d") for d in idx]
+        start_dt = idx[0]
 
-        # Filter rows to this window using date_str
-        w = (
-            pl_df.lazy()
-            .filter(pl.col("date_str").is_in(desired_cols_str))
-            .collect(engine=engine)
+        wlf = lf.filter(pl.col("date_str").is_in(cols_str))
+
+        sales_wide_lf = pivot_agg_lazy(wlf, "unit_sales", "sum")
+        promo_wide_lf = pivot_agg_lazy(
+            wlf.select(["store", "item", "date_str", promo_col]), promo_col, "max"
         )
-        if w.height == 0:
-            continue
 
-        # SALES (sum dupes) / PROMO (max dupes) → wide
-        sales_wide = pivot_agg(w, "unit_sales", "sum").fill_null(0.0)
-        promo_wide = pivot_agg(
-            w.select(["store", "item", "date_str", promo_col]), promo_col, "max"
-        ).fill_null(0)
+        # Ensure all date columns exist & order them
+        def ensure_cols_lazy(xlf: pl.LazyFrame, zero):
+            # Convert schema (no collect) to know what's present
+            have_cols = set(xlf.collect_schema().names())
+            exprs = [pl.col("store"), pl.col("item")]
+            for c in cols_str:
+                exprs.append(
+                    (pl.lit(zero).alias(c)) if c not in have_cols else pl.col(c)
+                )
+            return xlf.select(exprs)
 
-        # Ensure all date columns exist & ordered
-        def _ensure_cols(frame: pl.DataFrame, zero_value):
-            f = frame
-            for d in desired_cols_str:
-                if d not in f.columns:
-                    f = f.with_columns(pl.lit(zero_value).alias(d))
-            return f.select(["store", "item"] + desired_cols_str)
+        sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0)
+        promo_wide_lf = ensure_cols_lazy(promo_wide_lf, 0)
 
-        sales_wide = _ensure_cols(sales_wide, 0.0)
-        promo_wide = _ensure_cols(promo_wide, 0)
+        base_lf = sales_wide_lf.join(weight_map_lf, on=["store", "item"], how="left")
 
-        # Base table + weight
-        base = sales_wide.join(weight_map, on=["store", "item"], how="left")
-        if weight_col not in base.columns:
-            base = base.with_columns(pl.lit(1.0).cast(pl.Float32).alias(weight_col))
+        # Rename date cols to sales_day_i and drop originals
+        renames = []
+        drops = []
+        for i, c in enumerate(cols_str, start=1):
+            renames.append(pl.col(c).cast(pl.Float32).alias(f"sales_day_{i}"))
+            drops.append(c)
+        base_lf = base_lf.with_columns(renames).drop(drops)
 
-        # Date cols -> sales_day_i
-        for i, d in enumerate(desired_cols_str, start=1):
-            base = base.with_columns(pl.col(d).cast(pl.Float32).alias(f"sales_day_{i}"))
-        base = base.drop(desired_cols_str)
-
-        # Promo -> promo_day_i
-        p = promo_wide
-        for i, d in enumerate(desired_cols_str, start=1):
-            p = p.with_columns(pl.col(d).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
+        # Promo flags
+        p = promo_wide_lf
+        prenames = []
+        pdrops = []
+        for i, c in enumerate(cols_str, start=1):
+            prenames.append(pl.col(c).cast(pl.Int8).alias(f"{promo_col}_day_{i}"))
+            pdrops.append(c)
+        p = p.with_columns(prenames).drop(pdrops)
         p = p.select(
             ["store", "item"]
             + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
         )
-        base = base.join(p, on=["store", "item"], how="left")
+        base_lf = base_lf.join(p, on=["store", "item"], how="left")
 
-        # growth_rate_1 vs previous calendar day sum
-        prev_day_str = (start_dt - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        prev_sum = (
-            pl_df.lazy()
-            .filter(pl.col("date_str") == prev_day_str)
+        # prev-day total (lazy)
+        prev_str = (start_dt - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        prev_sum_lf = (
+            lf.filter(pl.col("date_str") == prev_str)
             .group_by(["store", "item"])
             .agg(pl.col("unit_sales").sum().alias("prev"))
-            .collect(engine=engine)
         )
-        base = base.join(prev_sum, on=["store", "item"], how="left")
+        base_lf = base_lf.join(prev_sum_lf, on=["store", "item"], how="left")
 
-        # safe growth helper
-        def _safe_growth(curr: str, prev: str) -> pl.Expr:
-            return (
-                pl.when(
-                    pl.col(prev).is_null()
-                    | (pl.col(prev) == 0)
-                    | pl.col(curr).is_null()
-                )
-                .then(pl.lit(None, dtype=pl.Float32))
-                .otherwise(((pl.col(curr) - pl.col(prev)) / pl.col(prev)) * 100.0)
-                .alias(curr.replace("sales_day_", "growth_rate_"))
+        # growth rates
+        base_lf = base_lf.with_columns(
+            pl.when(
+                pl.col("prev").is_null()
+                | (pl.col("prev") == 0)
+                | pl.col("sales_day_1").is_null()
             )
+            .then(pl.lit(None, dtype=pl.Float32))
+            .otherwise(
+                ((pl.col("sales_day_1") - pl.col("prev")) / pl.col("prev")) * 100.0
+            )
+            .alias("growth_rate_1")
+        ).drop("prev")
 
-        base = base.with_columns(_safe_growth("sales_day_1", "prev"))
         for i in range(2, window_size + 1):
-            curr, prevc = f"sales_day_{i}", f"sales_day_{i-1}"
-            base = base.with_columns(
+            base_lf = base_lf.with_columns(
                 pl.when(
-                    pl.col(prevc).is_null()
-                    | (pl.col(prevc) == 0)
-                    | pl.col(curr).is_null()
+                    pl.col(f"sales_day_{i-1}").is_null()
+                    | (pl.col(f"sales_day_{i-1}") == 0)
+                    | pl.col(f"sales_day_{i}").is_null()
                 )
                 .then(pl.lit(None, dtype=pl.Float32))
-                .otherwise(((pl.col(curr) - pl.col(prevc)) / pl.col(prevc)) * 100.0)
+                .otherwise(
+                    (
+                        (pl.col(f"sales_day_{i}") - pl.col(f"sales_day_{i-1}"))
+                        / pl.col(f"sales_day_{i-1}")
+                    )
+                    * 100.0
+                )
                 .alias(f"growth_rate_{i}")
             )
-        base = base.drop("prev")
 
-        # start_date + store_item id
-        base = base.with_columns(
-            [
-                pl.lit(start_dt.to_pydatetime()).cast(pl.Datetime).alias("start_date"),
-                (
-                    pl.col("store").cast(pl.Utf8)
-                    + pl.lit("_")
-                    + pl.col("item").cast(pl.Utf8)
-                ).alias("store_item"),
-            ]
+        # start_date + store_item
+        base_lf = base_lf.with_columns(
+            pl.lit(start_dt.to_pydatetime()).cast(pl.Datetime).alias("start_date"),
+            (
+                pl.col("store").cast(pl.Utf8)
+                + pl.lit("_")
+                + pl.col("item").cast(pl.Utf8)
+            ).alias("store_item"),
         )
 
-        # Final order
-        cols = (
+        base_lf = base_lf.select(
             ["start_date", "store_item", "store", "item", weight_col]
             + [f"sales_day_{i}" for i in range(1, window_size + 1)]
             + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
             + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
         )
-        base = base.select(cols)
-        out_frames.append(base)
 
-    if not out_frames:
-        out_pdf = pd.DataFrame(
-            columns=["start_date", "store_item", "store", "item", weight_col]
-            + [f"sales_day_{i}" for i in range(1, window_size + 1)]
-            + [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-            + [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-        )
-    else:
-        out_pdf = pl.concat(out_frames, how="vertical_relaxed").to_pandas()
+        parts.append(base_lf)
 
-    # Optional save
+    out_lf = pl.concat(parts, how="vertical_relaxed")  # still lazy
+
+    # ----- Save & return according to return_format -----
     if output_path is not None:
-        logger.info(f"Saving growth rate features to {output_path}")
-        if save_csv_or_parquet is not None:
-            save_csv_or_parquet(out_pdf, output_path)
-        else:
-            output_path = Path(output_path)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            if output_path.suffix.lower() == ".csv":
-                out_pdf.to_csv(output_path, index=False)
-            else:
-                out_pdf.to_parquet(output_path, index=False)
-        # small debug sample
-        debug_fn = Path(output_path).with_name("debug_subset.csv")
-        out_pdf.head(50).to_csv(debug_fn, index=False)
-        logger.info(f"Saved debug sample to {debug_fn}")
+        # If user provided a custom saver, collect to pandas and let them handle it
+        pdf = out_lf.collect(engine=polar_engine()).to_pandas()
+        save_csv_or_parquet(pdf, output_path)
+        # Optional debug slice
+        dbg = out_lf.limit(50).collect(engine=polar_engine()).to_pandas()
+        dbg.to_csv(Path(output_path).with_name("debug_subset.csv"), index=False)
 
-    return out_pdf
+    if return_format == "lazy":
+        return out_lf
+    if return_format == "polars":
+        return out_lf.collect(engine=polar_engine())
+    # default: pandas
+    return out_lf.collect(engine=polar_engine()).to_pandas()
 
 
 def generate_sales_features(

@@ -20,7 +20,6 @@ from src.data_utils import (
     load_raw_data_lazy,
     generate_growth_rate_features_polars,
 )
-from src.BTNMF_util import cluster_data_and_explain_blocks
 from src.utils import setup_logging
 from src.model_utils import is_gpu_available
 
@@ -87,7 +86,7 @@ def main():
 
         # Load and preprocess data
         if is_gpu_available():
-            df = load_raw_data_lazy(data_fn).collect()
+            df = load_raw_data_lazy(data_fn)
         else:
             df = load_raw_data(data_fn)
 
