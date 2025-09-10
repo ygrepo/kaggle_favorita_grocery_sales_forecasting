@@ -1170,7 +1170,7 @@ def pivot_agg_lazy(
 
 
 # Ensure all date columns exist & order them
-def ensure_cols_lazy(xlf: pl.LazyFrame, zero):
+def ensure_cols_lazy(xlf: pl.LazyFrame, zero: int | float, *cols_str):
     # Convert schema (no collect) to know what's present
     have_cols = set(xlf.collect_schema().names())
     exprs = [pl.col("store"), pl.col("item")]
@@ -1279,8 +1279,8 @@ def generate_growth_rate_features_polars(
             engine=polar_engine(),
         )
 
-        sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0)
-        promo_wide_lf = ensure_cols_lazy(promo_wide_lf, 0)
+        sales_wide_lf = ensure_cols_lazy(sales_wide_lf, 0.0, *cols_str)
+        promo_wide_lf = ensure_cols_lazy(promo_wide_lf, 0, *cols_str)
 
         base_lf = sales_wide_lf.join(weight_map_lf, on=["store", "item"], how="left")
 
