@@ -880,7 +880,7 @@ def _generate_growth_rate_features_sequential(
             store_sku_df,
             window_size=window_size,
             calendar_aligned=calendar_aligned,
-            output_path=None,  # Do not save to files
+            # output_path=None,  # Do not save to files
             output_path=(
                 output_dir / f"growth_rate_{store}_{sku}.parquet"
                 if output_dir
