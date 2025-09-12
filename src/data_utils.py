@@ -749,6 +749,8 @@ def generate_growth_rate_features(
     weight_col: str = "weight",
     promo_col: str = "onpromotion",
     log_level: str = "INFO",
+    n_jobs: int = -1,  # NEW: Number of parallel processes
+    batch_size: int = 100,  # NEW: Batch size for multiprocessing
 ) -> pd.DataFrame:
     """
     Generate growth rate features for all store-item combinations.
@@ -773,6 +775,10 @@ def generate_growth_rate_features(
         Name of promotion column
     log_level : str, default="INFO"
         Logging level
+    n_jobs : int, default=1
+        Number of parallel processes. Use -1 for all CPU cores, 1 for single-threaded
+    batch_size : int, default=100
+        Number of store-item combinations per batch for multiprocessing
 
     Returns
     -------
@@ -790,6 +796,61 @@ def generate_growth_rate_features(
     total_combinations = len(grouped)
     logger.info(f"Total store-item combinations: {total_combinations}")
 
+    # Determine number of processes
+    if n_jobs == -1:
+        import multiprocessing
+
+        n_jobs = multiprocessing.cpu_count()
+    elif n_jobs < 1:
+        n_jobs = 1
+
+    logger.info(f"Using {n_jobs} processes for parallel processing")
+
+    # Single-threaded processing (original logic)
+    if n_jobs == 1:
+        return _generate_growth_rate_features_sequential(
+            df,
+            grouped,
+            total_combinations,
+            window_size,
+            calendar_aligned,
+            output_dir,
+            weight_col,
+            promo_col,
+            log_level,
+        )
+
+    # Multi-threaded processing
+    else:
+        return _generate_growth_rate_features_parallel(
+            df,
+            grouped,
+            total_combinations,
+            window_size,
+            calendar_aligned,
+            output_dir,
+            output_fn,
+            weight_col,
+            promo_col,
+            log_level,
+            n_jobs,
+            batch_size,
+        )
+
+
+def _generate_growth_rate_features_sequential(
+    df: pd.DataFrame,
+    grouped: pd.DataFrame,
+    total_combinations: int,
+    window_size: int,
+    calendar_aligned: bool,
+    output_dir: Optional[Path],
+    weight_col: str,
+    promo_col: str,
+    log_level: str,
+) -> pd.DataFrame:
+    """Sequential processing (original logic)."""
+
     # Prepare iterator with optional progress bar
     iterator = grouped.iterrows()
     if logger.level == logging.DEBUG:
@@ -801,7 +862,7 @@ def generate_growth_rate_features(
     results = []
 
     # Work with a copy to avoid modifying the original
-    df_working = df
+    df_working = df.copy()
 
     for idx, row in iterator:
         store, sku = row["store"], row["item"]
@@ -838,15 +899,12 @@ def generate_growth_rate_features(
 
         # Optional: Force garbage collection periodically
         if (idx + 1) % 100 == 0:  # Every 100 store-item pairs
-
             gc.collect()
             logger.debug(
                 f"Processed {idx + 1}/{total_combinations} combinations, freed memory"
             )
 
-    logger.info(
-        f"Saved growth rate features to {len(results)} parquet files in {output_dir}"
-    )
+    logger.info(f"Processed {total_combinations} store-item combinations")
 
     # Return combined results or empty DataFrame
     if results:
@@ -854,9 +912,139 @@ def generate_growth_rate_features(
         logger.info(
             f"Generated growth rate features for {len(results)} store-item combinations"
         )
+        return combined_df
+    else:
+        logger.warning("No growth rate features generated")
+        return pd.DataFrame()
+
+
+def _process_store_item_batch(args):
+    """Process a batch of store-item combinations in parallel."""
+    (
+        df_subset,
+        store_item_pairs,
+        window_size,
+        calendar_aligned,
+        output_dir,
+        weight_col,
+        promo_col,
+        log_level,
+    ) = args
+
+    results = []
+
+    for store, item in store_item_pairs:
+        # Extract data for this store-item combination
+        mask = (df_subset["store"] == store) & (df_subset["item"] == item)
+        store_sku_df = df_subset[mask].copy()
+
+        if len(store_sku_df) == 0:
+            continue
+
+        features_df = generate_growth_rate_store_sku_feature(
+            store_sku_df,
+            window_size=window_size,
+            calendar_aligned=calendar_aligned,
+            output_path=(
+                output_dir / f"growth_rate_{store}_{item}.parquet"
+                if output_dir
+                else None
+            ),
+            weight_col=weight_col,
+            promo_col=promo_col,
+            log_level=log_level,  # Reduce logging in parallel processes
+        )
+
+        # Collect results if not saving to files
+        if output_dir is None and features_df is not None:
+            results.append(features_df)
+
+    return results
+
+
+def _generate_growth_rate_features_parallel(
+    df: pd.DataFrame,
+    grouped: pd.DataFrame,
+    total_combinations: int,
+    window_size: int,
+    calendar_aligned: bool,
+    output_dir: Optional[Path],
+    output_fn: Optional[Path],
+    weight_col: str,
+    promo_col: str,
+    log_level: str,
+    n_jobs: int,
+    batch_size: int,
+) -> pd.DataFrame:
+    """Parallel processing using multiprocessing."""
+    from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing
+
+    logger.info(f"Starting parallel processing with {n_jobs} processes")
+
+    # Create batches of store-item combinations
+    store_item_pairs = [(row["store"], row["item"]) for _, row in grouped.iterrows()]
+    batches = [
+        store_item_pairs[i : i + batch_size]
+        for i in range(0, len(store_item_pairs), batch_size)
+    ]
+
+    logger.info(
+        f"Created {len(batches)} batches of ~{batch_size} store-item pairs each"
+    )
+
+    # Prepare arguments for each batch
+    batch_args = [
+        (
+            df,  # Each process gets the full dataset
+            batch,
+            window_size,
+            calendar_aligned,
+            output_dir,
+            weight_col,
+            promo_col,
+            log_level,
+        )
+        for batch in batches
+    ]
+
+    # Process batches in parallel
+    all_results = []
+
+    with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+        # Use tqdm for progress tracking
+        if logger.level <= logging.INFO:
+            from tqdm import tqdm
+
+            batch_results = list(
+                tqdm(
+                    executor.map(_process_store_item_batch, batch_args),
+                    total=len(batches),
+                    desc="Processing batches",
+                )
+            )
+        else:
+            batch_results = list(executor.map(_process_store_item_batch, batch_args))
+
+    # Flatten results from all batches
+    for batch_result in batch_results:
+        all_results.extend(batch_result)
+
+    logger.info(
+        f"Parallel processing completed. Processed {total_combinations} combinations"
+    )
+
+    # Return combined results or empty DataFrame
+    if all_results:
+        combined_df = pd.concat(all_results, ignore_index=True)
+        logger.info(
+            f"Generated growth rate features for {len(all_results)} store-item combinations"
+        )
+
         if output_fn is not None:
             logger.info(f"Saving combined growth rate features to {output_fn}")
             save_csv_or_parquet(combined_df, output_fn)
+
         return combined_df
     else:
         logger.warning("No growth rate features generated")
@@ -1011,15 +1199,6 @@ def generate_growth_rate_store_sku_feature2(
     return out
 
 
-# def generate_growth_rate_ultra_optimized(
-#     df: pd.DataFrame,
-#     window_size: int = 1,
-#     *,
-#     calendar_aligned: bool = True,
-#     weight_col: str = "weight",
-#     promo_col: str = "onpromotion",
-#     batch_size: int = 100,
-# ) -> pd.DataFrame:
 def generate_growth_rate_store_sku_feature(
     df: pd.DataFrame,
     window_size: int = 1,
