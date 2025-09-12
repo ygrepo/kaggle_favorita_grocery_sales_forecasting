@@ -891,9 +891,13 @@ def _generate_growth_rate_features_sequential(
             log_level=log_level,
         )
 
-        # Collect results if not saving to files
-        if output_dir is None and features_df is not None:
+        # Collect results for return (regardless of whether we're also saving to files)
+        if features_df is not None and not features_df.empty:
             results.append(features_df)
+        elif features_df is None:
+            logger.warning(f"No features generated for store {store}, item {sku}")
+        elif features_df.empty:
+            logger.warning(f"Empty features DataFrame for store {store}, item {sku}")
 
         # Remove processed data to free memory
         df_working = df_working[~mask]
@@ -958,8 +962,8 @@ def _process_store_item_batch(args):
             log_level=log_level,  # Reduce logging in parallel processes
         )
 
-        # Collect results if not saving to files
-        if output_dir is None and features_df is not None:
+        # Collect results for return (regardless of whether we're also saving to files)
+        if features_df is not None and not features_df.empty:
             results.append(features_df)
 
     return results
