@@ -880,11 +880,12 @@ def _generate_growth_rate_features_sequential(
             store_sku_df,
             window_size=window_size,
             calendar_aligned=calendar_aligned,
-            output_path=(
-                output_dir / f"growth_rate_{store}_{sku}.parquet"
-                if output_dir
-                else None
-            ),
+            output_path=None,  # Do not save to files
+            # output_path=(
+            #     output_dir / f"growth_rate_{store}_{sku}.parquet"
+            #     if output_dir
+            #     else None
+            # ),
             weight_col=weight_col,
             promo_col=promo_col,
             log_level=log_level,
@@ -1070,7 +1071,7 @@ def generate_growth_rate_store_sku_feature(
       onpromotion_day_1..window_size (0/1, aligned to the window dates).
     """
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    logger.info(f"Total rows: {len(df)}")
+    logger.debug(f"Total rows: {len(df)}")
 
     # MEMORY OPT 1: Use efficient data types from the start
     df_optimized = df
