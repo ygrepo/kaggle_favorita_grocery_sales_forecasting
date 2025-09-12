@@ -20,9 +20,12 @@ OUTPUT_FN="${OUTPUT_GROWTH_RATE_DIR}/train_2014_January_top_53_store_2000_item_g
 mkdir -p "$OUTPUT_GROWTH_RATE_DIR"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
+N_JOBS=-1
+BATCH_SIZE=100
+
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
-LOG_LEVEL="DEBUG"
+LOG_LEVEL="INFO"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -31,6 +34,8 @@ while [[ $# -gt 0 ]]; do
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
+    --n_jobs) N_JOBS="$2"; shift 2 ;;
+    --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_file) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -54,6 +59,8 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/growth_rate.py" \
   --data_fn "$DATA_FN" \
   --output_fn "$OUTPUT_FN" \
+  --n_jobs "$N_JOBS" \
+  --batch_size "$BATCH_SIZE" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"

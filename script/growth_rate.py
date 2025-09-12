@@ -51,6 +51,18 @@ def parse_args():
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
+        "--n_jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel processes to use",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=100,
+        help="Batch size for multiprocessing",
+    )
+    parser.add_argument(
         "--log_dir",
         type=str,
         default="../output/logs",
@@ -83,10 +95,6 @@ def main():
 
         data_fn = Path(args.data_fn).resolve()
 
-        # Load and preprocess data
-        # if is_gpu_available():
-        #     df = load_raw_data_lazy(data_fn)
-        # else:
         df = load_raw_data(data_fn)
 
         output_fn = Path(args.output_fn).resolve()
@@ -95,6 +103,8 @@ def main():
             output_dir=output_fn.parent,
             output_fn=output_fn,
             log_level=args.log_level,
+            n_jobs=args.n_jobs,
+            batch_size=args.batch_size,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:

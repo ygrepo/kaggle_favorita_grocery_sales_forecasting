@@ -3,17 +3,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator, Literal, Union, Callable
+from typing import List, Optional, Iterator
 from tqdm import tqdm
 from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
-import math
-from src.utils import save_csv_or_parquet, polar_engine
-import polars as pl
+import multiprocessing
+from src.utils import save_csv_or_parquet, read_csv_or_parquet
+from concurrent.futures import ProcessPoolExecutor
+
 import torch
-import gc
 
 logger = logging.getLogger(__name__)
 
@@ -798,8 +798,6 @@ def generate_growth_rate_features(
 
     # Determine number of processes
     if n_jobs == -1:
-        import multiprocessing
-
         n_jobs = multiprocessing.cpu_count()
     elif n_jobs < 1:
         n_jobs = 1
@@ -850,6 +848,7 @@ def _generate_growth_rate_features_sequential(
     log_level: str,
 ) -> pd.DataFrame:
     """Sequential processing (original logic)."""
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Prepare iterator with optional progress bar
     iterator = grouped.iterrows()
@@ -862,7 +861,8 @@ def _generate_growth_rate_features_sequential(
     results = []
 
     # Work with a copy to avoid modifying the original
-    df_working = df.copy()
+    # df_working = df.copy()
+    df_working = df
 
     for idx, row in iterator:
         store, sku = row["store"], row["item"]
@@ -930,6 +930,7 @@ def _process_store_item_batch(args):
         promo_col,
         log_level,
     ) = args
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     results = []
 
@@ -977,8 +978,7 @@ def _generate_growth_rate_features_parallel(
     batch_size: int,
 ) -> pd.DataFrame:
     """Parallel processing using multiprocessing."""
-    from concurrent.futures import ProcessPoolExecutor
-    import multiprocessing
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     logger.info(f"Starting parallel processing with {n_jobs} processes")
 
@@ -1049,154 +1049,6 @@ def _generate_growth_rate_features_parallel(
     else:
         logger.warning("No growth rate features generated")
         return pd.DataFrame()
-
-
-def generate_growth_rate_store_sku_feature2(
-    df: pd.DataFrame,
-    window_size: int = 1,
-    *,
-    calendar_aligned: bool = True,
-    log_level: str = "INFO",
-    output_path: Optional[Path] = None,
-    weight_col: str = "weight",  # <- keep this
-    promo_col: str = "onpromotion",  # <- daily flags kept as *_day_i
-) -> pd.DataFrame:
-    """
-    For each rolling window, build one row per (store,item) with:
-      sales_day_1..window_size,
-      growth_rate_1..window_size  where growth_rate_i = (sales_i - sales_{i-1})/sales_{i-1},
-      weight (assumed constant per store-item),
-      onpromotion_day_1..window_size (0/1, aligned to the window dates).
-    """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    logger.info(f"Total rows: {len(df)}")
-
-    # --- Precompute a single weight per (store,item); user says no variability
-    if weight_col in df.columns:
-        w_src = df[["store", "item", weight_col]].dropna(subset=[weight_col])
-        if not w_src.empty:
-            # pick the first value per pair (constant by assumption)
-            weight_map = w_src.groupby(["store", "item"], sort=False)[
-                weight_col
-            ].first()
-        else:
-            weight_map = pd.Series(dtype=float)
-    else:
-        weight_map = pd.Series(dtype=float)
-
-    windows = generate_aligned_windows(
-        df, window_size, calendar_aligned=calendar_aligned
-    )
-    records: List[dict] = []
-
-    for window_dates in windows:
-        window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
-        logger.info(f"Processing window: {window_idx[0]} to {window_idx[-1]}")
-
-        w_df = df[df["date"].isin(window_idx)].copy()
-
-        # Sales (sum across potential duplicate rows)
-        sales_wide = w_df.pivot_table(
-            index=["store", "item"],
-            columns="date",
-            values="unit_sales",
-            aggfunc="sum",
-            fill_value=0.0,
-        )
-
-        # On-promo flags (max handles duplicates; treat missing as 0)
-        promo_wide = None
-        if promo_col in w_df.columns:
-            promo_wide = w_df.pivot_table(
-                index=["store", "item"],
-                columns="date",
-                values=promo_col,
-                aggfunc="max",
-                fill_value=0,
-            )
-
-        if sales_wide.empty:
-            continue
-
-        for (store, item), s_sales in sales_wide.iterrows():
-            s_sales = s_sales.reindex(window_idx, fill_value=0.0)
-
-            # align promo row if present
-            if promo_wide is not None and (store, item) in promo_wide.index:
-                s_promo = promo_wide.loc[(store, item)].reindex(
-                    window_idx, fill_value=0
-                )
-            else:
-                s_promo = pd.Series(0, index=window_idx)
-
-            row = {
-                "start_date": window_idx[0],
-                "store_item": f"{store}_{item}",
-                "store": store,
-                "item": item,
-            }
-
-            # weight (constant per pair)
-            row[weight_col] = (
-                weight_map.get((store, item))
-                if isinstance(weight_map.index, pd.MultiIndex)
-                else np.nan
-            )
-
-            # per-day sales, promo flags, and growth
-            for i, d in enumerate(window_idx[:window_size], start=1):
-                curr = float(s_sales.loc[d]) if pd.notna(s_sales.loc[d]) else np.nan
-                row[f"sales_day_{i}"] = curr
-                row[f"{promo_col}_day_{i}"] = (
-                    int(s_promo.loc[d]) if pd.notna(s_promo.loc[d]) else 0
-                )
-
-                # previous: calendar day for i==1; otherwise previous in-window
-                if i == 1:
-                    prev_day = pd.to_datetime(d) - pd.DateOffset(days=1)
-                    prev_vals = df.loc[
-                        (df["store"] == store)
-                        & (df["item"] == item)
-                        & (df["date"] == prev_day),
-                        "unit_sales",
-                    ]
-                    prev = float(prev_vals.sum()) if not prev_vals.empty else np.nan
-                else:
-                    prev = row[f"sales_day_{i-1}"]
-
-                # your rule: prev==0 or missing -> NaN
-                row[f"growth_rate_{i}"] = (
-                    np.nan
-                    if (not np.isfinite(prev)) or prev == 0 or math.isnan(curr)
-                    else (curr - prev) / prev * 100.0
-                )
-
-            records.append(row)
-
-        del sales_wide, promo_wide
-
-    # --- Column order
-    base_cols = ["start_date", "store_item", "store", "item", weight_col]
-    sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
-    growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-    promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-    cols = base_cols + sales_cols + growth_cols + promo_cols
-
-    out = pd.DataFrame.from_records(records)
-    if out.empty:
-        out = pd.DataFrame(columns=cols)
-    else:
-        # ensure all expected columns exist and are ordered
-        for c in cols:
-            if c not in out:
-                out[c] = np.nan
-        out = out[cols]
-
-    if output_path is not None:
-        logger.info(f"Saving growth rate features to {output_path}")
-        save_csv_or_parquet(out, output_path)
-
-    return out
 
 
 def generate_growth_rate_store_sku_feature(
