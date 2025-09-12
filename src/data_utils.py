@@ -881,11 +881,11 @@ def _generate_growth_rate_features_sequential(
             window_size=window_size,
             calendar_aligned=calendar_aligned,
             output_path=None,  # Do not save to files
-            # output_path=(
-            #     output_dir / f"growth_rate_{store}_{sku}.parquet"
-            #     if output_dir
-            #     else None
-            # ),
+            output_path=(
+                output_dir / f"growth_rate_{store}_{sku}.parquet"
+                if output_dir
+                else None
+            ),
             weight_col=weight_col,
             promo_col=promo_col,
             log_level=log_level,
@@ -947,11 +947,12 @@ def _process_store_item_batch(args):
             store_sku_df,
             window_size=window_size,
             calendar_aligned=calendar_aligned,
-            output_path=(
-                output_dir / f"growth_rate_{store}_{item}.parquet"
-                if output_dir
-                else None
-            ),
+            output_path=None,  # Do not save to files
+            # output_path=(
+            #     output_dir / f"growth_rate_{store}_{item}.parquet"
+            #     if output_dir
+            #     else None
+            # ),
             weight_col=weight_col,
             promo_col=promo_col,
             log_level=log_level,  # Reduce logging in parallel processes
