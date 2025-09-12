@@ -13,6 +13,7 @@ import math
 from src.utils import save_csv_or_parquet, polar_engine
 import polars as pl
 import torch
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -250,110 +251,6 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         logger.error(f"Error loading data: {e}")
 
 
-# def load_raw_data_lazy(data_fn: Path) -> pl.LazyFrame:
-#     """
-#     Lazy, GPU-friendly loader for Favorita-like data.
-
-#     Produces columns:
-#       date: Date
-#       store: UInt16
-#       item: UInt32
-#       unit_sales: Float32
-#       onpromotion: Int8 (0/1)
-#       weight: Float32 (optional; filled with 0.0 if missing)
-#       store_item: Utf8  (e.g., "1_1047679")
-#     """
-#     logger = logging.getLogger(__name__)
-#     logger.info(f"Loading data (lazy) from {data_fn}")
-
-#     # 1) Scan lazily
-#     suffix = data_fn.suffix.lower()
-#     if suffix == ".parquet":
-#         lf = pl.scan_parquet(str(data_fn))
-#         # Parquet often already stores datetimes; cast to Date safely
-#         lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
-#     else:
-#         # CSV: let Polars try to parse datelike strings automatically
-#         lf = pl.scan_csv(
-#             str(data_fn),
-#             try_parse_dates=True,  # helps with common date formats
-#             null_values=[""],  # treat empty strings as nulls
-#         )
-#         # Ensure `date` is Date (if still Utf8, cast with permissive parsing)
-#         lf = lf.with_columns(pl.col("date").cast(pl.Date, strict=False))
-
-#     # # 2) Ensure required/optional columns exist
-#     # # (Create placeholders if absent to keep downstream stable.)
-#     # want_missing = []
-#     # for col in ("weight", "store_item", "onpromotion", "unit_sales", "store", "item"):
-#     #     if col not in lf.collect_schema().names():
-#     #         want_missing.append(col)
-#     # for col in want_missing:
-#     #     lf = lf.with_columns(pl.lit(None).alias(col))
-
-#     # # 3) Cast dtypes (permissive where appropriate)
-#     # lf = lf.with_columns(
-#     #     [
-#     #         pl.col("store").cast(pl.UInt16, strict=False),
-#     #         pl.col("item").cast(pl.UInt32, strict=False),
-#     #         pl.col("unit_sales").cast(pl.Float32, strict=False),
-#     #         pl.col("weight").cast(pl.Float32, strict=False),
-#     #     ]
-#     # )
-
-#     # # Normalize onpromotion to 0/1 Int8:
-#     # # - if boolean -> 1/0
-#     # # - if "True"/"False"/"1"/"0" strings -> cast(Boolean) then to Int8
-#     # # - null -> 0
-#     # lf = lf.with_columns(
-#     #     pl.when(pl.col("onpromotion").is_null())
-#     #     .then(0)
-#     #     .when(pl.col("onpromotion").cast(pl.Boolean, strict=False))
-#     #     .then(1)
-#     #     .otherwise(0)
-#     #     .cast(pl.Int8)
-#     #     .alias("onpromotion")
-#     # )
-
-#     # # 4) Build/clean store_item (Utf8). If missing/null/empty, compose from store/item.
-#     # lf = lf.with_columns(
-#     #     pl.when(pl.col("store_item").is_null() | (pl.col("store_item") == ""))
-#     #     .then(
-#     #         pl.col("store").cast(pl.Utf8) + pl.lit("_") + pl.col("item").cast(pl.Utf8)
-#     #     )
-#     #     .otherwise(pl.col("store_item").cast(pl.Utf8))
-#     #     .alias("store_item")
-#     # )
-
-#     # # 5) Fill numeric nulls only (avoid clobbering strings)
-#     # lf = lf.with_columns(
-#     #     [
-#     #         pl.col("unit_sales").fill_null(0.0),
-#     #         pl.col("weight").fill_null(0.0),
-#     #     ]
-#     # )
-
-#     # 6) Sort lazily (materializes on collect)
-#     lf = lf.sort(["store_item", "date"])
-
-#     # 7) Stable column order without triggering the .columns warning
-#     base_cols = [
-#         "date",
-#         "store_item",
-#         "store",
-#         "item",
-#         "unit_sales",
-#         "onpromotion",
-#         "weight",
-#     ]
-#     names = lf.collect_schema().names()  # cheap: schema only, no data
-#     other_cols = [c for c in names if c not in set(base_cols)]
-#     lf = lf.select(base_cols + other_cols)
-
-#     logger.info("Lazy loader prepared (no materialization yet).")
-#     return lf
-
-
 def load_full_data(
     data_fn: Path,
     window_size: int,
@@ -556,41 +453,6 @@ def compute_cluster_medians(
         item_med.to_parquet(item_fn)
 
     return store_med, item_med
-
-
-def _dates_to_pandas(series_like: Iterable) -> pd.Series:
-    """Robustly convert any iterable of dates/strings/py-dates to a pandas datetime Series (naive, normalized to date)."""
-    s = pd.to_datetime(pd.Series(series_like), errors="coerce")
-    s = s.dropna()
-    # normalize to midnight to avoid time components messing with comparisons
-    return s.dt.normalize()
-
-
-def _extract_dates_as_pandas(df) -> pd.Series:
-    """
-    Return a pandas Series[datetime64[ns]] named 'date' from:
-      - pd.DataFrame (expects 'date' col)
-      - pl.DataFrame (expects 'date' col)
-      - pl.LazyFrame (expects 'date' col; will collect only that column)
-    """
-    if isinstance(df, pd.DataFrame):
-        if "date" not in df.columns:
-            raise ValueError("Missing 'date' column.")
-        return _dates_to_pandas(df["date"])
-
-    if isinstance(df, pl.LazyFrame):
-        df = df.select("date").collect(streaming=False)
-
-    if isinstance(df, pl.DataFrame):
-        if "date" not in df.columns:
-            raise ValueError("Missing 'date' column.")
-        s = df.get_column("date")
-        # Convert polars column to python list then to pandas
-        return _dates_to_pandas(s.to_list())
-
-    raise TypeError(
-        "df must be a pandas DataFrame, polars DataFrame, or polars LazyFrame."
-    )
 
 
 def generate_aligned_windows(
@@ -926,6 +788,7 @@ def generate_growth_rate_features(
     # Get unique store-item combinations
     grouped = df[["store", "item"]].drop_duplicates()
     total_combinations = len(grouped)
+    logger.info(f"Total store-item combinations: {total_combinations}")
 
     # Prepare iterator with optional progress bar
     iterator = grouped.iterrows()
@@ -938,7 +801,7 @@ def generate_growth_rate_features(
     results = []
 
     # Work with a copy to avoid modifying the original
-    df_working = df.copy()
+    df_working = df
 
     for idx, row in iterator:
         store, sku = row["store"], row["item"]
@@ -975,7 +838,6 @@ def generate_growth_rate_features(
 
         # Optional: Force garbage collection periodically
         if (idx + 1) % 100 == 0:  # Every 100 store-item pairs
-            import gc
 
             gc.collect()
             logger.debug(
@@ -1001,7 +863,7 @@ def generate_growth_rate_features(
         return pd.DataFrame()
 
 
-def generate_growth_rate_store_sku_feature(
+def generate_growth_rate_store_sku_feature2(
     df: pd.DataFrame,
     window_size: int = 1,
     *,
@@ -1147,6 +1009,224 @@ def generate_growth_rate_store_sku_feature(
         save_csv_or_parquet(out, output_path)
 
     return out
+
+
+# def generate_growth_rate_ultra_optimized(
+#     df: pd.DataFrame,
+#     window_size: int = 1,
+#     *,
+#     calendar_aligned: bool = True,
+#     weight_col: str = "weight",
+#     promo_col: str = "onpromotion",
+#     batch_size: int = 100,
+# ) -> pd.DataFrame:
+def generate_growth_rate_store_sku_feature(
+    df: pd.DataFrame,
+    window_size: int = 1,
+    *,
+    calendar_aligned: bool = True,
+    log_level: str = "INFO",
+    output_path: Optional[Path] = None,
+    weight_col: str = "weight",  # <- keep this
+    promo_col: str = "onpromotion",  # <- daily flags kept as *_day_i
+    batch_size: int = 100,
+) -> pd.DataFrame:
+    """
+    For each rolling window, build one row per (store,item) with:
+      sales_day_1..window_size,
+      growth_rate_1..window_size  where growth_rate_i = (sales_i - sales_{i-1})/sales_{i-1},
+      weight (assumed constant per store-item),
+      onpromotion_day_1..window_size (0/1, aligned to the window dates).
+    """
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.info(f"Total rows: {len(df)}")
+
+    # MEMORY OPT 1: Use efficient data types from the start
+    df_optimized = df
+
+    # Convert to smaller data types where possible
+    dtype_conversions = {
+        "store": "int32",
+        "item": "int32",
+        "unit_sales": "float32",
+        promo_col: "int8",
+    }
+
+    for col, dtype in dtype_conversions.items():
+        if col in df_optimized.columns:
+            df_optimized[col] = df_optimized[col].astype(dtype)
+
+    # Pre-compute weights with efficient data types
+    if weight_col in df_optimized.columns:
+        w_src = df_optimized[["store", "item", weight_col]].dropna(subset=[weight_col])
+        if not w_src.empty:
+            weight_map = (
+                w_src.groupby(["store", "item"], sort=False)[weight_col]
+                .first()
+                .astype("float32")
+            )
+        else:
+            weight_map = pd.Series(dtype="float32")
+    else:
+        weight_map = pd.Series(dtype="float32")
+
+    windows = generate_aligned_windows(
+        df_optimized, window_size, calendar_aligned=calendar_aligned
+    )
+
+    # MEMORY OPT 2: Stream processing with batches
+    all_records = []
+
+    for batch_start in range(0, len(windows), batch_size):
+        batch_end = min(batch_start + batch_size, len(windows))
+        window_batch = windows[batch_start:batch_end]
+
+        batch_records = []
+
+        for window_dates in window_batch:
+            window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
+            w_df = df_optimized[df_optimized["date"].isin(window_idx)].copy()
+
+            # Create pivot tables with efficient data types
+            sales_wide = w_df.pivot_table(
+                index=["store", "item"],
+                columns="date",
+                values="unit_sales",
+                aggfunc="sum",
+                fill_value=0.0,
+            ).astype(
+                "float32"
+            )  # MEMORY OPT: Use float32
+
+            promo_wide = None
+            if promo_col in w_df.columns:
+                promo_wide = w_df.pivot_table(
+                    index=["store", "item"],
+                    columns="date",
+                    values=promo_col,
+                    aggfunc="max",
+                    fill_value=0,
+                ).astype(
+                    "int8"
+                )  # MEMORY OPT: Use int8 for binary data
+
+            if sales_wide.empty:
+                continue
+
+            # SPEED OPT 1: Convert to numpy arrays for fast access
+            sales_values = sales_wide.reindex(
+                columns=window_idx, fill_value=0.0
+            ).values.astype("float32")
+
+            if promo_wide is not None:
+                promo_values = promo_wide.reindex(
+                    columns=window_idx, fill_value=0
+                ).values.astype("int8")
+            else:
+                promo_values = np.zeros(sales_values.shape, dtype="int8")
+
+            store_items = sales_wide.index.tolist()
+
+            # SPEED OPT 2: Pre-compute previous day data (vectorized lookup)
+            prev_day = window_idx[0] - pd.DateOffset(days=1)
+            prev_day_data = df_optimized[df_optimized["date"] == prev_day].set_index(
+                ["store", "item"]
+            )["unit_sales"]
+
+            # SPEED OPT 3: Vectorized processing of all store-items
+            for idx, (store, item) in enumerate(store_items):
+                # Fast array slicing instead of pandas indexing
+                sales_array = sales_values[idx, :window_size]
+                promo_array = promo_values[idx, :window_size]
+
+                # MEMORY OPT 3: Use efficient data types in record
+                record = {
+                    "start_date": window_idx[0],
+                    "store_item": f"{store}_{item}",
+                    "store": int(store),  # Ensure int32
+                    "item": int(item),  # Ensure int32
+                    weight_col: (
+                        float(weight_map.get((store, item), np.nan))
+                        if isinstance(weight_map.index, pd.MultiIndex)
+                        else np.nan
+                    ),
+                }
+
+                # SPEED OPT 4: Vectorized daily feature creation
+                for i in range(window_size):
+                    day_num = i + 1
+                    curr_sales = float(sales_array[i])
+
+                    record[f"sales_day_{day_num}"] = curr_sales
+                    record[f"{promo_col}_day_{day_num}"] = int(promo_array[i])
+
+                    # SPEED OPT 5: Optimized growth rate calculation
+                    if i == 0:
+                        # Fast previous day lookup using pre-computed data
+                        prev_sales = prev_day_data.get((store, item), np.nan)
+                        prev_sales = (
+                            float(prev_sales) if not pd.isna(prev_sales) else np.nan
+                        )
+                    else:
+                        prev_sales = float(sales_array[i - 1])
+
+                    # Vectorized growth rate calculation
+                    if pd.isna(curr_sales) or pd.isna(prev_sales) or prev_sales == 0:
+                        growth_rate = np.nan
+                    else:
+                        growth_rate = (curr_sales - prev_sales) / prev_sales * 100.0
+
+                    record[f"growth_rate_{day_num}"] = growth_rate
+
+                batch_records.append(record)
+
+            # MEMORY OPT 4: Explicit cleanup after each window
+            del sales_wide, promo_wide, sales_values, promo_values, w_df
+
+        # Add batch to results
+        all_records.extend(batch_records)
+
+        # MEMORY OPT 5: Periodic garbage collection
+        if batch_start % (batch_size * 5) == 0:  # Every 5 batches
+            import gc
+
+            gc.collect()
+
+    # MEMORY OPT 6: Efficient final DataFrame construction
+    if not all_records:
+        base_cols = ["start_date", "store_item", "store", "item", weight_col]
+        sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
+        growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+        promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        return pd.DataFrame(columns=base_cols + sales_cols + growth_cols + promo_cols)
+
+    # SPEED OPT 6: Fast DataFrame construction from records
+    result_df = pd.DataFrame(all_records)
+
+    # MEMORY OPT 7: Optimize final DataFrame data types
+    dtype_map = {}
+    for col in result_df.columns:
+        if col in ["store", "item"]:
+            dtype_map[col] = "int32"
+        elif (
+            col.startswith("sales_day_")
+            or col.startswith("growth_rate_")
+            or col == weight_col
+        ):
+            dtype_map[col] = "float32"
+        elif col.startswith(f"{promo_col}_day_"):
+            dtype_map[col] = "int8"
+
+    # Apply data type optimizations in batch
+    for col, dtype in dtype_map.items():
+        if col in result_df.columns:
+            result_df[col] = result_df[col].astype(dtype)
+
+    if output_path is not None:
+        logger.info(f"Saving growth rate features to {output_path}")
+        save_csv_or_parquet(result_df, output_path)
+
+    return result_df
 
 
 def generate_sales_features(
