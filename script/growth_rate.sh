@@ -15,7 +15,7 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 DATA_FN="${OUTPUT_DATA_DIR}/train_2014_January_top_53_store_2000_item.parquet"
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_January_top_53_store_2000_item_growth_rate.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2000/train_2014_January_top_53_store_2000_item_growth_rate.parquet"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
