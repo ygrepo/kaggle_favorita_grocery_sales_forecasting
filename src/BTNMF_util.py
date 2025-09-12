@@ -977,7 +977,6 @@ def cluster_data_and_explain_blocks(
     min_sil: float = -0.05,
     min_keep: int = 6,
     top_k: Optional[int] = None,
-    growth_rate_fn: Optional[Path] = None,
     top_rank_fn: Optional[Path] = None,
     summary_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
@@ -985,13 +984,6 @@ def cluster_data_and_explain_blocks(
     log_level: str = "INFO",
 ) -> pd.DataFrame:
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    # First create growth rate features
-    if is_gpu_available():
-        df = generate_growth_rate_features_polars(df, output_path=growth_rate_fn)
-        df = df.to_pandas()
-    else:
-        df = generate_growth_rate_features(df, output_path=growth_rate_fn)
-    # Freeze your defaults once, then sweep:
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=None,
         k_col=None,
