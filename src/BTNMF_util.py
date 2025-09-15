@@ -7,15 +7,10 @@ from src.data_utils import normalize_data
 from src.utils import save_csv_or_parquet
 from dataclasses import dataclass
 from src.plot_util import plot_block_annot_heatmap
+from src.utils import get_logger
 from pathlib import Path
 
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_normalized_assignments(
@@ -724,7 +719,6 @@ def sweep_btf_grid(
     seeds: Optional[Iterable[int]] = None,
     min_keep: int = 6,
     fit_kwargs: Optional[Dict[str, Any]] = None,
-    log_level: str = "INFO",
 ) -> pd.DataFrame:
     """
     Returns a DataFrame with one row per (n_row, n_col) containing:
@@ -739,7 +733,6 @@ def sweep_btf_grid(
     C_list : Iterable[int] or range
         Column cluster counts to try. Can be a list [2, 3, 5] or range(2, 6)
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Convert ranges to lists if needed
     if isinstance(R_list, range):
@@ -980,9 +973,7 @@ def cluster_data_and_explain_blocks(
     summary_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
     figure_fn: Optional[Path] = None,
-    log_level: str = "INFO",
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=None,
         k_col=None,

@@ -16,7 +16,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.BTNMF_util import cluster_data_and_explain_blocks
-from src.utils import setup_logging, read_csv_or_parquet
+from src.utils import setup_logging, read_csv_or_parquet, get_logger
+
+logger = get_logger(__name__)
 
 
 def parse_range(range_str):
@@ -159,7 +161,7 @@ def main():
     log_dir = Path(args.log_dir).resolve()
 
     # Set up logging
-    logger = setup_logging(log_dir, args.log_level)
+    setup_logging(log_dir, args.log_level)
     try:
         # Log configuration
         logger.info("Starting data clustering with configuration:")
@@ -210,7 +212,6 @@ def main():
             summary_fn=summary_fn,
             output_fn=output_fn,
             figure_fn=figure_fn,
-            log_level=args.log_level,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:

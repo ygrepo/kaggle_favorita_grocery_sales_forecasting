@@ -104,6 +104,8 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 
+# Run the script
+set +e
 python "${SCRIPT_DIR}/cluster_bt.py" \
   --data_fn "$DATA_FN" \
   --row_range "$ROW_RANGE" \
@@ -123,17 +125,13 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --figure_fn "$FIGURE_FN" \
   --output_fn "$OUTPUT_FN" \
   --log_dir "$LOG_DIR" \
-  --log_level "$LOG_LEVEL" \
-   2>&1 | tee -a "$LOG_FILE"
+  --log_level "$LOG_LEVEL" 
+exit_code=$?
+set -e
 
-# Check the exit status of the Python script
-EXIT_CODE=${PIPESTATUS[0]}
-
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "Script completed successfully at $(date)" | tee -a "$LOG_FILE"
-    exit 0
+if [[ ${exit_code} -eq 0 ]]; then
+    echo "OK: finished at $(date)" | tee -a "${LOG_FILE}"
 else
-    echo "Error: Script failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
-    echo "Check the log file for details: $LOG_FILE"
-    exit $EXIT_CODE
+    echo "Python script failed with exit code $exit_code" >&2
+    exit ${exit_code}
 fi
