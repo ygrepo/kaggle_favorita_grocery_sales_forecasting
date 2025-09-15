@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --n_jobs) N_JOBS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
-    --log_file) LOG_FILE="$2"; shift 2 ;;
+    --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -61,25 +61,20 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 # Run the script
-set +e  # Disable exit on error to handle the error message
+set +e
 python "${SCRIPT_DIR}/growth_rate.py" \
   --data_fn "$DATA_FN" \
   --output_fn "$OUTPUT_FN" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --log_level "$LOG_LEVEL" \
-  --log_file "$LOG_FILE" 
+  --log_fn "$LOG_FILE"
+exit_code=$?
+set -e
 
-  exit_code=$?
-  set -e
-
-# Check the exit status of the Python script
-EXIT_CODE=${PIPESTATUS[0]}
-
- if [[ ${exit_code} -eq 0 ]]; then
-      echo "OK: finished at $(date)" | tee -a "${log_file}"
-    else
-      echo "ERROR: failed with exit code ${exit_code} at $(date)" | tee -a "${log_file}"
-      # Uncomment to stop on first failure:
-      exit ${exit_code}
+if [[ ${exit_code} -eq 0 ]]; then
+    echo "OK: finished at $(date)" | tee -a "${log_file}"
+else
+    echo "Python script failed with exit code $exit_code" >&2
+    exit ${exit_code}
 fi
