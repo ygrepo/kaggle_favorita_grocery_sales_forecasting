@@ -3,9 +3,8 @@ from typing import Dict, Any, Iterable, Optional, Callable
 import pandas as pd
 from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
-from src.data_utils import normalize_data, generate_growth_rate_features, generate_growth_rate_features_polars
+from src.data_utils import normalize_data
 from src.utils import save_csv_or_parquet
-from src.model_utils import is_gpu_available
 from dataclasses import dataclass
 from src.plot_util import plot_block_annot_heatmap
 from pathlib import Path
