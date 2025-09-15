@@ -1354,11 +1354,30 @@ def plot_block_annot_heatmap(
     norm = BoundaryNorm(np.arange(-0.5, n + 0.5, 1.0), n)
 
     A = val.to_numpy(dtype=float)
+
+    # Sanitize data to prevent TIFF encoding issues
+    # Replace inf/-inf with NaN, and clip extreme values
+    A = np.where(np.isinf(A), np.nan, A)
+    finite_mask = np.isfinite(A)
+    if finite_mask.any():
+        # Clip extreme values to prevent encoding issues
+        finite_values = A[finite_mask]
+        p1, p99 = np.percentile(finite_values, [1, 99])
+        # Allow reasonable range but prevent extreme outliers
+        max_safe_value = max(abs(p1), abs(p99)) * 10
+        A = np.clip(A, -max_safe_value, max_safe_value)
+
     annot = np.empty_like(A, dtype=object)
     annot[:] = ""
     m = ~np.isnan(A)
     if m.any():
-        annot[m] = np.vectorize(lambda x: fmt.format(x))(A[m])
+        try:
+            annot[m] = np.vectorize(lambda x: fmt.format(x))(A[m])
+        except (ValueError, OverflowError):
+            # Fallback for extreme values that can't be formatted
+            annot[m] = np.vectorize(
+                lambda x: f"{x:.2e}" if abs(x) > 1e6 else f"{x:.2f}"
+            )(A[m])
 
     # Figure size: from args if given, else from cell_h/w and grid size
     H = max(4, cell_h * blk.shape[0])
@@ -1421,6 +1440,22 @@ def plot_block_annot_heatmap(
     plt.tight_layout()
     if fn:
         logger.info(f"Saving plot to {fn}")
-        plt.savefig(fn, dpi=300, bbox_inches="tight")
+        # Convert TIFF to PNG if needed to avoid encoding issues
+        fn_str = str(fn)
+        if fn_str.lower().endswith(".tiff") or fn_str.lower().endswith(".tif"):
+            fn_str = fn_str.rsplit(".", 1)[0] + ".png"
+            logger.info(f"Converting TIFF to PNG format: {fn_str}")
+
+        try:
+            plt.savefig(fn_str, dpi=300, bbox_inches="tight", format="png")
+        except Exception as e:
+            logger.error(f"Failed to save plot: {e}")
+            # Try with lower DPI as fallback
+            try:
+                plt.savefig(fn_str, dpi=150, bbox_inches="tight", format="png")
+                logger.info(f"Saved with reduced DPI (150) due to encoding issues")
+            except Exception as e2:
+                logger.error(f"Failed to save even with reduced DPI: {e2}")
+                raise
     if show_plot:
         plt.show()

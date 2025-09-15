@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from src.plot_util import plot_block_annot_heatmap
 from src.utils import get_logger
 from pathlib import Path
+import warnings
 
 logger = get_logger(__name__)
 
@@ -794,123 +795,131 @@ def _process_single_rc_pair(
 ):
     """Process a single (R,C) pair and return the metrics row."""
 
-    logger.info(f"Fitting BTF with R={R}, C={C}")
-    fitres = _fit_with_restarts(
-        est_maker,
-        X,
-        n_row=R,
-        n_col=C,
-        restarts=restarts,
-        seeds=seeds,
-        fit_kwargs=fit_kwargs,
-    )
-    est = fitres.est
-    loss_name = getattr(est, "loss", "gaussian")
+    # Suppress numpy warnings for the entire computation to avoid noise
+    # These warnings are expected when dealing with sparse data and large (R,C) values
+    with np.errstate(invalid="ignore", divide="ignore"), warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=RuntimeWarning, message=".*Mean of empty slice.*"
+        )
+        warnings.filterwarnings(
+            "ignore",
+            category=RuntimeWarning,
+            message=".*invalid value encountered in divide.*",
+        )
 
-    # --- PVE ---
-    Xhat = est.reconstruct()
-    if min_keep > 0:
-        logger.info(f"Computing cell mask for R={R}, C={C}")
-        # Suppress numpy warnings for empty slice operations during mask computation
-        with np.errstate(invalid="ignore", divide="ignore"):
+        logger.info(f"Fitting BTF with R={R}, C={C}")
+        fitres = _fit_with_restarts(
+            est_maker,
+            X,
+            n_row=R,
+            n_col=C,
+            restarts=restarts,
+            seeds=seeds,
+            fit_kwargs=fit_kwargs,
+        )
+        est = fitres.est
+        loss_name = getattr(est, "loss", "gaussian")
+
+        # --- PVE ---
+        Xhat = est.reconstruct()
+        if min_keep > 0:
+            logger.info(f"Computing cell mask for R={R}, C={C}")
             mask = make_gap_cellmask(min_keep=min_keep)(est)
-    else:
-        mask = None
-    pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
+        else:
+            mask = None
+        pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
 
-    N_all = X.size
-    N_obs = _obs_count(mask, X)
-    mask_coverage = N_obs / N_all if N_all > 0 else np.nan
+        N_all = X.size
+        N_obs = _obs_count(mask, X)
+        mask_coverage = N_obs / N_all if N_all > 0 else np.nan
 
-    # --- Assignments (for WCV/BCV and coverage) ---
-    assign = est.assign_unique_blocks(
-        X=X,
-        method=("gaussian_delta" if est.loss == "gaussian" else "poisson_delta"),
-        allowed_mask=(
-            np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
-        ),  # drop weakest 20% blocks
-    )
+        # --- Assignments (for WCV/BCV and coverage) ---
+        assign = est.assign_unique_blocks(
+            X=X,
+            method=("gaussian_delta" if est.loss == "gaussian" else "poisson_delta"),
+            allowed_mask=(
+                np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
+            ),  # drop weakest 20% blocks
+        )
 
-    # --- Silhouette-like (WCV/BCV) ---
-    # Suppress numpy warnings for empty slice operations during silhouette computation
-    with np.errstate(invalid="ignore", divide="ignore"):
+        # --- Silhouette-like (WCV/BCV) ---
         wcvdf = compute_block_wcv_bcv_silhouette(X, assign, *est.B_.shape, mask=mask)
-    col = wcvdf["silhouette_like"]
-    if not wcvdf.empty and col.notna().any():
-        sil_mean = float(np.nanmean(col))
-    else:
-        sil_mean = np.nan
+        col = wcvdf["silhouette_like"]
+        if not wcvdf.empty and col.notna().any():
+            sil_mean = float(np.nanmean(col))
+        else:
+            sil_mean = np.nan
 
-    # --- Ablations ---
-    # Compute ΔLoss for every block (r,c) in the factorization
-    # ΔLoss_rc = Loss_without_block - Loss_full
-    # Positive values mean the block is "helpful"
-    ablation_mat = compute_all_block_delta_losses(est, X, mask=mask)
+        # --- Ablations ---
+        # Compute ΔLoss for every block (r,c) in the factorization
+        # ΔLoss_rc = Loss_without_block - Loss_full
+        # Positive values mean the block is "helpful"
+        ablation_mat = compute_all_block_delta_losses(est, X, mask=mask)
 
-    # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
-    ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
-    abl_pos = np.clip(ablation_flat, 0.0, None)
+        # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
+        ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
+        abl_pos = np.clip(ablation_flat, 0.0, None)
 
-    # Total contribution of all blocks (sum of ΔLoss values)
-    # Measures how much the model benefits overall from all blocks
-    total_block_contribution = float(np.sum(abl_pos))
+        # Total contribution of all blocks (sum of ΔLoss values)
+        # Measures how much the model benefits overall from all blocks
+        total_block_contribution = float(np.sum(abl_pos))
 
-    # 20th percentile of block ΔLoss values (a "weak block" threshold)
-    # If many blocks have ΔLoss below this, they are considered "weak"
-    thresh = np.percentile(abl_pos, 20) if abl_pos.size else np.nan
+        # 20th percentile of block ΔLoss values (a "weak block" threshold)
+        # If many blocks have ΔLoss below this, they are considered "weak"
+        thresh = np.percentile(abl_pos, 20) if abl_pos.size else np.nan
 
-    # Fraction of blocks whose ΔLoss is below the 20th percentile
-    # i.e., what proportion of blocks are "weak" compared to the rest
-    # frac_weak: proportion of blocks considered weak.
-    frac_weak = float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
+        # Fraction of blocks whose ΔLoss is below the 20th percentile
+        # i.e., what proportion of blocks are "weak" compared to the rest
+        # frac_weak: proportion of blocks considered weak.
+        frac_weak = float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
 
-    gini = (
-        gini_concentration(np.maximum(ablation_flat, 0.0))
-        if ablation_flat.size
-        else np.nan
-    )
+        gini = (
+            gini_concentration(np.maximum(ablation_flat, 0.0))
+            if ablation_flat.size
+            else np.nan
+        )
 
-    # N = _obs_count(mask, X)
-    # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
-    per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
+        # N = _obs_count(mask, X)
+        # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
+        per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
 
-    base = _baseline_array(X, loss_name, mask)
-    baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
-    rel_block_contribution = (
-        (total_block_contribution / baseline_loss) if baseline_loss > 0 else np.nan
-    )
+        base = _baseline_array(X, loss_name, mask)
+        baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
+        rel_block_contribution = (
+            (total_block_contribution / baseline_loss) if baseline_loss > 0 else np.nan
+        )
 
-    # --- Extras ---
-    b_sparsity = sparsity_of_B(est, tol=1e-4)
-    coverage = coverage_from_assign(assign)
+        # --- Extras ---
+        b_sparsity = sparsity_of_B(est, tol=1e-4)
+        coverage = coverage_from_assign(assign)
 
-    # --- AIC/BIC-like penalized scores ---
-    Xhat = est.reconstruct()
-    AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=mask)
+        # --- AIC/BIC-like penalized scores ---
+        Xhat = est.reconstruct()
+        AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=mask)
 
-    return {
-        "n_row": R,
-        "n_col": C,
-        "Mask_Nobs": N_obs,
-        "Mask_Coverage": mask_coverage,
-        "seed": fitres.seed,
-        "Loss": fitres.loss,
-        "Percent_Loss": fitres.percent_loss,
-        "RMSE": fitres.rmse,
-        "Percent_RMSE": fitres.percent_rmse,
-        "PVE": pve,
-        "Mean Silhouette": sil_mean,
-        "BlockContribution_Total": total_block_contribution,
-        # "DeltaLoss_PerCell": delta_per_cell,
-        "BlockContribution_PerCell": per_cell_block_contribution,
-        "BlockContribution_RelBaseline": rel_block_contribution,
-        "BlockContribution_FracWeak20": frac_weak,
-        "BlockContribution_Gini": gini,
-        "B_Sparsity": b_sparsity,
-        "Coverage": coverage,
-        "AIC": AIC,
-        "BIC": BIC,
-    }
+        return {
+            "n_row": R,
+            "n_col": C,
+            "Mask_Nobs": N_obs,
+            "Mask_Coverage": mask_coverage,
+            "seed": fitres.seed,
+            "Loss": fitres.loss,
+            "Percent_Loss": fitres.percent_loss,
+            "RMSE": fitres.rmse,
+            "Percent_RMSE": fitres.percent_rmse,
+            "PVE": pve,
+            "Mean Silhouette": sil_mean,
+            "BlockContribution_Total": total_block_contribution,
+            # "DeltaLoss_PerCell": delta_per_cell,
+            "BlockContribution_PerCell": per_cell_block_contribution,
+            "BlockContribution_RelBaseline": rel_block_contribution,
+            "BlockContribution_FracWeak20": frac_weak,
+            "BlockContribution_Gini": gini,
+            "B_Sparsity": b_sparsity,
+            "Coverage": coverage,
+            "AIC": AIC,
+            "BIC": BIC,
+        }
 
 
 def _sweep_btf_grid_sequential(
