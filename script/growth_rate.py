@@ -106,9 +106,9 @@ def main():
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
         )
-        logger.info("Data clustering completed successfully")
+        logger.info("Growth rate data generation completed successfully")
     except Exception as e:
-        logger.error(f"Error clustering data: {e}")
+        logger.error(f"Error Generating growth rate data: {e}")
         raise
 
 
