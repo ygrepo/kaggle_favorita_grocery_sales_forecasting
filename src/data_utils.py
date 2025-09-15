@@ -1215,7 +1215,7 @@ def generate_growth_rate_store_sku_feature(
 
     # SPEED OPT 6: Fast DataFrame construction from records
     result_df = pd.DataFrame(all_records)
-    logger.info(f"Result DataFrame: {result_df.head()}")
+    logger.debug(f"Result DataFrame: {result_df.head()}")
 
     # MEMORY OPT 7: Optimize final DataFrame data types
     dtype_map = {}
