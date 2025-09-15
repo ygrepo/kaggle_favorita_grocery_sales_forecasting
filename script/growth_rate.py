@@ -64,9 +64,9 @@ def parse_args():
         help="Batch size for multiprocessing",
     )
     parser.add_argument(
-        "--log_dir",
+        "--log_fn",
         type=str,
-        default="../output/logs",
+        default="",
         help="Directory to save script outputs (relative to project root)",
     )
     parser.add_argument(
@@ -101,7 +101,6 @@ def main():
             df,
             output_dir=output_fn.parent,
             output_fn=output_fn,
-            log_level=args.log_level,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
         )
