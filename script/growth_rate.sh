@@ -73,7 +73,7 @@ exit_code=$?
 set -e
 
 if [[ ${exit_code} -eq 0 ]]; then
-    echo "OK: finished at $(date)" | tee -a "${log_file}"
+    echo "OK: finished at $(date)" | tee -a "${LOG_FILE}"
 else
     echo "Python script failed with exit code $exit_code" >&2
     exit ${exit_code}

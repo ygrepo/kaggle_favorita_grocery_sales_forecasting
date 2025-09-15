@@ -898,6 +898,7 @@ def _generate_growth_rate_features_sequential(
         logger.info(
             f"Generated growth rate features for {len(results)} store-item combinations"
         )
+        logger.info(f"Combined DataFrame shape: {combined_df.shape}")
         return combined_df
     else:
         logger.warning("No growth rate features generated")
@@ -1021,7 +1022,7 @@ def _generate_growth_rate_features_parallel(
         logger.info(
             f"Generated growth rate features for {len(all_results)} store-item combinations"
         )
-
+        logger.info(f"Combined DataFrame shape: {combined_df.shape}")
         if output_fn is not None:
             logger.info(f"Saving combined growth rate features to {output_fn}")
             save_csv_or_parquet(combined_df, output_fn)
