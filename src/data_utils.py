@@ -10,18 +10,12 @@ import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
 import multiprocessing
-from src.utils import save_csv_or_parquet, read_csv_or_parquet
+from src.utils import save_csv_or_parquet, get_logger
 from concurrent.futures import ProcessPoolExecutor
 
 import torch
 
-logger = logging.getLogger(__name__)
-
-logging.basicConfig(
-    level=logging.INFO,  # or DEBUG
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 SALE_FEATURES = [
     "store_med_day",
@@ -185,7 +179,6 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
     Returns:
         Preprocessed DataFrame
     """
-    logger = logging.getLogger(__name__)
     logger.info(f"Loading data from {data_fn}")
 
     try:
@@ -266,7 +259,6 @@ def load_full_data(
     Returns:
         Preprocessed DataFrame
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info(f"Loading data from {data_fn}")
     try:
         if data_fn.suffix == ".parquet":
@@ -354,7 +346,6 @@ def load_X_y_data(
     Returns:
         Preprocessed DataFrame
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info(f"Loading data from {data_fn}")
     try:
         if data_fn.suffix == ".parquet":
@@ -430,7 +421,6 @@ def compute_cluster_medians(
     value_col: str = "unit_sales",
     log_level: str = "INFO",
 ):
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     store_med = (
         df.groupby(["store_cluster", "date"], observed=True)[value_col]
         .median()
@@ -529,7 +519,6 @@ def generate_cyclical_features(
     log_level: str = "INFO",
     output_path: Optional[Path] = None,
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     if df.empty:
         return pd.DataFrame()
 
@@ -668,7 +657,6 @@ def add_rolling_sales_summaries(
     """
     Add rolling stats and fast leakage-safe ARIMA(0,0,1) forecasts using recursive update.
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     need = {"store_item", "date", "unit_sales"}
     missing = need - set(df.columns)
@@ -748,7 +736,6 @@ def generate_growth_rate_features(
     output_fn: Optional[Path] = None,
     weight_col: str = "weight",
     promo_col: str = "onpromotion",
-    log_level: str = "INFO",
     n_jobs: int = -1,  # NEW: Number of parallel processes
     batch_size: int = 100,  # NEW: Batch size for multiprocessing
 ) -> pd.DataFrame:
@@ -785,7 +772,6 @@ def generate_growth_rate_features(
     pd.DataFrame
         Combined DataFrame with growth rate features for all store-item combinations
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Create output directory if specified
     if output_dir is not None:
@@ -815,7 +801,6 @@ def generate_growth_rate_features(
             output_dir,
             weight_col,
             promo_col,
-            log_level,
         )
 
     # Multi-threaded processing
@@ -830,7 +815,6 @@ def generate_growth_rate_features(
             output_fn,
             weight_col,
             promo_col,
-            log_level,
             n_jobs,
             batch_size,
         )
@@ -845,10 +829,8 @@ def _generate_growth_rate_features_sequential(
     output_dir: Optional[Path],
     weight_col: str,
     promo_col: str,
-    log_level: str,
 ) -> pd.DataFrame:
     """Sequential processing (original logic)."""
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Prepare iterator with optional progress bar
     iterator = grouped.iterrows()
@@ -888,7 +870,6 @@ def _generate_growth_rate_features_sequential(
             ),
             weight_col=weight_col,
             promo_col=promo_col,
-            log_level=log_level,
         )
 
         # Collect results for return (regardless of whether we're also saving to files)
@@ -933,9 +914,7 @@ def _process_store_item_batch(args):
         output_dir,
         weight_col,
         promo_col,
-        log_level,
     ) = args
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     results = []
 
@@ -959,7 +938,6 @@ def _process_store_item_batch(args):
             # ),
             weight_col=weight_col,
             promo_col=promo_col,
-            log_level=log_level,  # Reduce logging in parallel processes
         )
 
         # Collect results for return (regardless of whether we're also saving to files)
@@ -979,12 +957,10 @@ def _generate_growth_rate_features_parallel(
     output_fn: Optional[Path],
     weight_col: str,
     promo_col: str,
-    log_level: str,
     n_jobs: int,
     batch_size: int,
 ) -> pd.DataFrame:
     """Parallel processing using multiprocessing."""
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     logger.info(f"Starting parallel processing with {n_jobs} processes")
 
@@ -1009,7 +985,6 @@ def _generate_growth_rate_features_parallel(
             output_dir,
             weight_col,
             promo_col,
-            log_level,
         )
         for batch in batches
     ]
@@ -1075,7 +1050,6 @@ def generate_growth_rate_store_sku_feature(
       weight (assumed constant per store-item),
       onpromotion_day_1..window_size (0/1, aligned to the window dates).
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.debug(f"Total rows: {len(df)}")
 
     # MEMORY OPT 1: Use efficient data types from the start
@@ -1275,7 +1249,6 @@ def generate_sales_features(
     output_path: Optional[Path] = None,
     epsilon: float = 1e-3,
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     df["date"] = pd.to_datetime(df["date"])
     assert "store_cluster" in df.columns, "Missing 'store_cluster' column"
@@ -1542,7 +1515,6 @@ def create_y_targets_from_shift(
         ]
 
     # Set up logging
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info(f"Window size: {window_size}")
     logger.info(f"Input shape: {df.shape}")
 
@@ -1569,7 +1541,6 @@ def create_sale_features(
     fn: Optional[Path] = None,
     log_level: str = "INFO",
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
@@ -1610,7 +1581,6 @@ def create_cyc_features(
     fn: Optional[Path] = None,
     log_level: str = "INFO",
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
@@ -1651,7 +1621,6 @@ def create_features(
     log_level: str = "INFO",
     output_fn: Optional[Path] = None,
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.info("Loading sales features")
     if sales_fn.exists():
         logger.info(f"Loading sales features from {sales_fn}")
@@ -1738,7 +1707,6 @@ def prepare_training_data_from_raw_df(
     cyc_fn: Optional[Path] = None,
     log_level: str = "INFO",
 ) -> pd.DataFrame:
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     if "store_item" not in df.columns:
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
@@ -2056,7 +2024,6 @@ def save_parquets_by_cluster_pairs(
     output_dir : Path
         Directory where the Parquet files will be saved.
     """
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     grouped = df.groupby(["store_cluster", "item_cluster"])

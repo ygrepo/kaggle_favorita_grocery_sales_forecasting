@@ -15,51 +15,93 @@ def polar_engine():
     return "gpu" if torch.cuda.is_available() else "rust"
 
 
-def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
-    """Set up logging configuration.
+# def setup_logging(log_dir: Path, log_level: str = "INFO") -> logging.Logger:
+#     """Set up logging configuration.
 
-    Args:
-        log_dir: Directory to save log files
-        log_level: Logging level (e.g., 'INFO', 'DEBUG')
+#     Args:
+#         log_dir: Directory to save log files
+#         log_level: Logging level (e.g., 'INFO', 'DEBUG')
 
-    Returns:
-        Configured logger instance
-    """
-    # Create output directory if it doesn't exist
-    log_dir.mkdir(parents=True, exist_ok=True)
+#     Returns:
+#         Configured logger instance
+#     """
+#     # Create output directory if it doesn't exist
+#     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Set up log file path with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"create_features_{timestamp}.log"
+#     # Set up log file path with timestamp
+#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+#     log_file = log_dir / f"create_features_{timestamp}.log"
 
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
+#     # Configure logging
+#     logging.basicConfig(
+#         level=getattr(logging, log_level),
+#         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+#         handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
+#     )
+
+#     logger = logging.getLogger(__name__)
+#     logger.info(f"Logging to {log_file}")
+#     return logger
+
+
+# ---- One base for everything ----
+BASE_LOGGER = "retail"
+_BASE = logging.getLogger(BASE_LOGGER)  # the only logger we configure here
+
+
+def setup_logging(log_path: str | Path | None, level: str = "INFO") -> logging.Logger:
+    """Configure the base logger once (file + console)."""
+    if getattr(_BASE, "_configured", False):
+        return _BASE
+
+    _BASE.handlers.clear()
+    _BASE.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    fmt = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    logger = logging.getLogger(__name__)
-    logger.info(f"Logging to {log_file}")
-    return logger
+    # Optional file handler
+    if log_path:
+        fh = logging.FileHandler(str(log_path), encoding="utf-8")
+        fh.setFormatter(fmt)
+        _BASE.addHandler(fh)
+
+    # Console handler
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    _BASE.addHandler(sh)
+
+    # Do not bubble to the *root* logger
+    _BASE.propagate = False
+    _BASE._configured = True
+    return _BASE
 
 
-def get_logger(logger_name: str, log_level: str = "INFO") -> logging.Logger:
-    """Get a logger with the specified name and log level."""
-    logger = logging.getLogger(logger_name)
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+def get_logger(name: str | None = None) -> logging.Logger:
+    """Get a child logger that inherits the base handlers."""
+    return logging.getLogger(BASE_LOGGER if not name else f"{BASE_LOGGER}.{name}")
 
-    # Ensure at least one handler exists
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            fmt="%(asctime)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
 
-    return logger
+logger = get_logger(__name__)
+
+# def get_logger(logger_name: str, log_level: str = "INFO") -> logging.Logger:
+#     """Get a logger with the specified name and log level."""
+#     logger = logging.getLogger(logger_name)
+#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+#     # Ensure at least one handler exists
+#     if not logger.handlers:
+#         handler = logging.StreamHandler()
+#         formatter = logging.Formatter(
+#             fmt="%(asctime)s - %(levelname)s - %(message)s",
+#             datefmt="%Y-%m-%d %H:%M:%S",
+#         )
+#         handler.setFormatter(formatter)
+#         logger.addHandler(handler)
+
+#     return logger
 
 
 def str2bool(v):

@@ -14,13 +14,15 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_January_top_53_store_2000_item.parquet"
-DATA_FN="${OUTPUT_DATA_DIR}/train_2014_January_top_53_store_2000_item.parquet"
-#DATA_FN="${OUTPUT_DATA_DIR}/train_2014_January_12_store_20_item_cluster.parquet"
+#DATA_FN="${OUTPUT_DATA_DIR}/train_2014_January_top_53_store_2000_item.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/train_2014_January_12_store_20_item_cluster.parquet"
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
-OUTPUT_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2000_item"
+OUTPUT_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_12_store_20_item"
+#OUTPUT_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2000_item"
 #OUTPUT_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2000_item"
 #OUTPUT_FN="${OUTPUT_GROWTH_RATE_DIR}/train_2014_January_top_53_store_2000_item_growth_rate.parquet"
-OUTPUT_FN="${OUTPUT_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item.parquet"
+OUTPUT_FN="${OUTPUT_GROWTH_RATE_DIR}/growth_rate_2014_January_12_store_20_item.parquet"
+#OUTPUT_FN="${OUTPUT_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item.parquet"
 mkdir -p "$OUTPUT_GROWTH_RATE_DIR"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
@@ -60,6 +62,7 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 # Run the script
+set +e  # Disable exit on error to handle the error message
 python "${SCRIPT_DIR}/growth_rate.py" \
   --data_fn "$DATA_FN" \
   --output_fn "$OUTPUT_FN" \
@@ -67,16 +70,16 @@ python "${SCRIPT_DIR}/growth_rate.py" \
   --batch_size "$BATCH_SIZE" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
-   2>&1 | tee -a "$LOG_FILE"
+  exit_code=$?
+  set -e
 
 # Check the exit status of the Python script
 EXIT_CODE=${PIPESTATUS[0]}
 
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "Script completed successfully at $(date)" | tee -a "$LOG_FILE"
-    exit 0
-else
-    echo "Error: Script failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
-    echo "Check the log file for details: $LOG_FILE"
-    exit $EXIT_CODE
+ if [[ ${exit_code} -eq 0 ]]; then
+      echo "OK: ${combo} finished at $(date)" | tee -a "${log_file}"
+    else
+      echo "ERROR: ${combo} failed with exit code ${exit_code} at $(date)" | tee -a "${log_file}"
+      # Uncomment to stop on first failure:
+      exit ${exit_code}
 fi

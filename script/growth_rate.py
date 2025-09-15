@@ -19,8 +19,9 @@ from src.data_utils import (
     load_raw_data,
     generate_growth_rate_features,
 )
-from src.utils import setup_logging
-from src.model_utils import is_gpu_available
+from src.utils import setup_logging, get_logger
+
+logger = get_logger(__name__)
 
 
 def parse_range(range_str):
@@ -82,10 +83,8 @@ def main():
     """Main training function."""
     # Parse command line arguments
     args = parse_args()
-    log_dir = Path(args.log_dir).resolve()
+    setup_logging(Path(args.log_fn), args.log_level)
 
-    # Set up logging
-    logger = setup_logging(log_dir, args.log_level)
     try:
         # Log configuration
         logger.info("Starting data clustering with configuration:")
