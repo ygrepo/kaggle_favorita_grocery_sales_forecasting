@@ -467,7 +467,10 @@ def compute_block_wcv_bcv_silhouette(
             block_ns[r, c] = n
             if n > 0:
                 vals = X[sel].astype(float)
-                block_means[r, c] = float(vals.mean())
+                if vals.size > 0:  # Additional safety check
+                    block_means[r, c] = float(vals.mean())
+                else:
+                    block_means[r, c] = np.nan
 
     # Second pass: compute WCV, nearest-BCV, and silhouette-like per block
     for r in range(R):
@@ -486,7 +489,10 @@ def compute_block_wcv_bcv_silhouette(
             mu = block_means[r, c]
 
             # WCV = mean squared deviation from the block mean
-            wcv = float(np.mean((vals - mu) ** 2))
+            if vals.size > 0:
+                wcv = float(np.mean((vals - mu) ** 2))
+            else:
+                wcv = np.nan
 
             # BCV_nearest = min squared distance to any other defined block mean
             diffs = []
@@ -805,7 +811,9 @@ def _process_single_rc_pair(
     Xhat = est.reconstruct()
     if min_keep > 0:
         logger.info(f"Computing cell mask for R={R}, C={C}")
-        mask = make_gap_cellmask(min_keep=min_keep)(est)
+        # Suppress numpy warnings for empty slice operations during mask computation
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mask = make_gap_cellmask(min_keep=min_keep)(est)
     else:
         mask = None
     pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
@@ -824,7 +832,9 @@ def _process_single_rc_pair(
     )
 
     # --- Silhouette-like (WCV/BCV) ---
-    wcvdf = compute_block_wcv_bcv_silhouette(X, assign, *est.B_.shape, mask=mask)
+    # Suppress numpy warnings for empty slice operations during silhouette computation
+    with np.errstate(invalid="ignore", divide="ignore"):
+        wcvdf = compute_block_wcv_bcv_silhouette(X, assign, *est.B_.shape, mask=mask)
     col = wcvdf["silhouette_like"]
     if not wcvdf.empty and col.notna().any():
         sil_mean = float(np.nanmean(col))
