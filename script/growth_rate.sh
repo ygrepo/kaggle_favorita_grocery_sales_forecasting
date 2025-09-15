@@ -69,7 +69,9 @@ python "${SCRIPT_DIR}/growth_rate.py" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --log_dir "$LOG_DIR" \
-  --log_level "$LOG_LEVEL"
+  --log_level "$LOG_LEVEL" \
+  --log_file "$LOG_FILE" 
+  
   exit_code=$?
   set -e
 
