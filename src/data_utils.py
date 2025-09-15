@@ -760,8 +760,6 @@ def generate_growth_rate_features(
         Name of weight column
     promo_col : str, default="onpromotion"
         Name of promotion column
-    log_level : str, default="INFO"
-        Logging level
     n_jobs : int, default=1
         Number of parallel processes. Use -1 for all CPU cores, 1 for single-threaded
     batch_size : int, default=100
@@ -1038,7 +1036,6 @@ def generate_growth_rate_store_sku_feature(
     window_size: int = 1,
     *,
     calendar_aligned: bool = True,
-    log_level: str = "INFO",
     output_path: Optional[Path] = None,
     weight_col: str = "weight",  # <- keep this
     promo_col: str = "onpromotion",  # <- daily flags kept as *_day_i
@@ -1053,7 +1050,7 @@ def generate_growth_rate_store_sku_feature(
     """
     logger.debug(f"Total rows: {len(df)}")
 
-    # MEMORY OPT 1: Use efficient data types from the start
+    # Use efficient data types from the start
     df_optimized = df
 
     # Convert to smaller data types where possible
@@ -1086,7 +1083,7 @@ def generate_growth_rate_store_sku_feature(
         df_optimized, window_size, calendar_aligned=calendar_aligned
     )
 
-    # MEMORY OPT 2: Stream processing with batches
+    # Stream processing with batches
     all_records = []
 
     for batch_start in range(0, len(windows), batch_size):
@@ -1108,7 +1105,7 @@ def generate_growth_rate_store_sku_feature(
                 fill_value=0.0,
             ).astype(
                 "float32"
-            )  # MEMORY OPT: Use float32
+            )  # Use float32 instead of float64
 
             promo_wide = None
             if promo_col in w_df.columns:
@@ -1120,13 +1117,13 @@ def generate_growth_rate_store_sku_feature(
                     fill_value=0,
                 ).astype(
                     "int8"
-                )  # MEMORY OPT: Use int8 for binary data
+                )  # Use int8 for binary data
 
             if sales_wide.empty:
                 logger.warning(f"Empty sales data for window {window_idx}")
                 continue
 
-            # SPEED OPT 1: Convert to numpy arrays for fast access
+            # Convert to numpy arrays (more memory efficient)
             sales_values = sales_wide.reindex(
                 columns=window_idx, fill_value=0.0
             ).values.astype("float32")
@@ -1140,19 +1137,19 @@ def generate_growth_rate_store_sku_feature(
 
             store_items = sales_wide.index.tolist()
 
-            # SPEED OPT 2: Pre-compute previous day data (vectorized lookup)
+            # Pre-compute previous day data
             prev_day = window_idx[0] - pd.DateOffset(days=1)
             prev_day_data = df_optimized[df_optimized["date"] == prev_day].set_index(
                 ["store", "item"]
             )["unit_sales"]
 
-            # SPEED OPT 3: Vectorized processing of all store-items
+            # Vectorized processing of all store-items
             for idx, (store, item) in enumerate(store_items):
                 # Fast array slicing instead of pandas indexing
                 sales_array = sales_values[idx, :window_size]
                 promo_array = promo_values[idx, :window_size]
 
-                # MEMORY OPT 3: Use efficient data types in record
+                # Use efficient data types in record
                 record = {
                     "start_date": window_idx[0],
                     "store_item": f"{store}_{item}",
@@ -1165,7 +1162,7 @@ def generate_growth_rate_store_sku_feature(
                     ),
                 }
 
-                # SPEED OPT 4: Vectorized daily feature creation
+                # Vectorized daily feature creation
                 for i in range(window_size):
                     day_num = i + 1
                     curr_sales = float(sales_array[i])
@@ -1173,7 +1170,7 @@ def generate_growth_rate_store_sku_feature(
                     record[f"sales_day_{day_num}"] = curr_sales
                     record[f"{promo_col}_day_{day_num}"] = int(promo_array[i])
 
-                    # SPEED OPT 5: Optimized growth rate calculation
+                    # Optimized growth rate calculation
                     if i == 0:
                         # Fast previous day lookup using pre-computed data
                         prev_sales = prev_day_data.get((store, item), np.nan)
@@ -1193,19 +1190,19 @@ def generate_growth_rate_store_sku_feature(
 
                 batch_records.append(record)
 
-            # MEMORY OPT 4: Explicit cleanup after each window
+            # Explicit cleanup after each window
             del sales_wide, promo_wide, sales_values, promo_values, w_df
 
         # Add batch to results
         all_records.extend(batch_records)
 
-        # MEMORY OPT 5: Periodic garbage collection
+        # Periodic garbage collection
         if batch_start % (batch_size * 5) == 0:  # Every 5 batches
             import gc
 
             gc.collect()
 
-    # MEMORY OPT 6: Efficient final DataFrame construction
+    # Efficient final DataFrame construction
     if not all_records:
         base_cols = ["start_date", "store_item", "store", "item", weight_col]
         sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
@@ -1213,11 +1210,11 @@ def generate_growth_rate_store_sku_feature(
         promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
         return pd.DataFrame(columns=base_cols + sales_cols + growth_cols + promo_cols)
 
-    # SPEED OPT 6: Fast DataFrame construction from records
+    # Fast DataFrame construction from records
     result_df = pd.DataFrame(all_records)
     logger.debug(f"Result DataFrame: {result_df.head()}")
 
-    # MEMORY OPT 7: Optimize final DataFrame data types
+    # Optimize final DataFrame data types
     dtype_map = {}
     for col in result_df.columns:
         if col in ["store", "item"]:
@@ -1794,26 +1791,126 @@ def preprocess_sales_matrix(
 
 
 def zscore_with_axis(
-    df: pd.DataFrame, axis: int = 0, nan_policy: str = "omit", epsilon: float = 1e-8
+    df: pd.DataFrame,
+    axis: int = 0,
+    nan_policy: str = "omit",
+    epsilon: float = 1e-8,
+    empty: str = "nan",  # what to do for all-NaN slices: "nan" | "zero" | "skip"
 ) -> pd.DataFrame:
     """
-    Compute z-score along rows (axis=1) or columns (axis=0), optionally ignoring NaNs.
-    Avoids division by zero by adding epsilon to zero std values.
-    """
-    values = df.values.astype(float)
+    Z-score along columns (axis=0) or rows (axis=1).
 
-    if nan_policy == "omit":
-        mean = np.nanmean(values, axis=axis, keepdims=True)
-        std = np.nanstd(values, axis=axis, ddof=0, keepdims=True)
-    elif nan_policy == "propagate":
-        mean = np.mean(values, axis=axis, keepdims=True)
-        std = np.std(values, axis=axis, ddof=0, keepdims=True)
-    else:
+    nan_policy:
+      - "omit": ignore NaNs within each slice (per-row/col); if a slice has no finite values,
+                 outputs NaNs for that slice (or zeros if empty="zero").
+      - "propagate": any NaN in a slice -> mean/std is NaN and the whole slice becomes NaN.
+
+    empty:
+      - "nan": for all-NaN slices, return NaNs in that slice
+      - "zero": for all-NaN slices, return zeros in that slice
+      - "skip": for all-NaN slices, leave them as-is (no scaling)
+    """
+    import numpy as np
+    import pandas as pd
+
+    if axis not in (0, 1):
+        raise ValueError("axis must be 0 (columns) or 1 (rows)")
+
+    x = df.to_numpy(dtype=float)
+
+    if nan_policy == "propagate":
+        # Use plain mean/std which will yield NaN if any NaN in the slice.
+        mean = np.mean(x, axis=axis, keepdims=True)
+        std = np.std(x, axis=axis, ddof=0, keepdims=True)
+        std_safe = np.where((std == 0) | ~np.isfinite(std), epsilon, std)
+        z = (x - mean) / std_safe
+        return pd.DataFrame(z, index=df.index, columns=df.columns)
+
+    if nan_policy != "omit":
         raise ValueError("nan_policy must be 'omit' or 'propagate'")
 
-    std_safe = np.where(std == 0, epsilon, std)
-    z = (values - mean) / std_safe
+    # --- Omit policy: do the math without ever calling nanmean/nanstd on empty slices ---
+    mask = np.isfinite(x)  # True for non-NaN, finite values
+    # Count of valid values per slice
+    cnt = np.sum(mask, axis=axis, keepdims=True)
+
+    # Sums for mean/var using only valid entries
+    x_sum = np.where(mask, x, 0.0).sum(axis=axis, keepdims=True)
+    x2_sum = np.where(mask, x * x, 0.0).sum(axis=axis, keepdims=True)
+
+    # Mean and variance with guards
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = x_sum / cnt
+        ex2 = x2_sum / cnt
+        var = ex2 - mean * mean  # numerically stable enough for z-scoring
+        var = np.where(var < 0, 0.0, var)  # clamp tiny negatives from roundoff
+        std = np.sqrt(var)
+
+    # Identify all-NaN slices (cnt == 0)
+    empty_slice = cnt == 0
+
+    # Decide behavior for empty slices
+    if empty == "nan":
+        mean = np.where(empty_slice, np.nan, mean)
+        std = np.where(empty_slice, np.nan, std)
+    elif empty == "zero":
+        mean = np.where(empty_slice, 0.0, mean)
+        std = np.where(
+            empty_slice, 1.0, std
+        )  # so (x - 0)/1 = x; then replaced by 0 below
+    elif empty == "skip":
+        # Leave slice unchanged: set std to 1 and mean to 0, then put back originals later
+        mean = np.where(empty_slice, 0.0, mean)
+        std = np.where(empty_slice, 1.0, std)
+    else:
+        raise ValueError("empty must be 'nan', 'zero', or 'skip'")
+
+    # Avoid div-by-zero or NaN std
+    std_safe = np.where((std == 0) | ~np.isfinite(std), epsilon, std)
+
+    z = (x - mean) / std_safe
+
+    # For "zero": an all-NaN slice should become zeros (not NaNs)
+    if empty == "zero":
+        # Put zeros where the slice was empty
+        if axis == 0:  # per column
+            z[:, empty_slice.ravel()] = 0.0
+        else:  # per row
+            z[empty_slice.ravel(), :] = 0.0
+
+    # For "skip": restore original values for empty slices (i.e., don't scale them)
+    if empty == "skip":
+        if axis == 0:
+            z[:, empty_slice.ravel()] = x[:, empty_slice.ravel()]
+        else:
+            z[empty_slice.ravel(), :] = x[empty_slice.ravel(), :]
+
     return pd.DataFrame(z, index=df.index, columns=df.columns)
+
+
+# def zscore_with_axis(
+#     df: pd.DataFrame, axis: int = 0, nan_policy: str = "omit", epsilon: float = 1e-8
+# ) -> pd.DataFrame:
+#     """
+#     Compute z-score along rows (axis=1) or columns (axis=0), optionally ignoring NaNs.
+#     Avoids division by zero by adding epsilon to zero std values.
+#     """
+#     values = df.values.astype(float)
+
+#     logger.info(f"values={values}")
+
+#     if nan_policy == "omit":
+#         mean = np.nanmean(values, axis=axis, keepdims=True)
+#         std = np.nanstd(values, axis=axis, ddof=0, keepdims=True)
+#     elif nan_policy == "propagate":
+#         mean = np.mean(values, axis=axis, keepdims=True)
+#         std = np.std(values, axis=axis, ddof=0, keepdims=True)
+#     else:
+#         raise ValueError("nan_policy must be 'omit' or 'propagate'")
+
+#     std_safe = np.where(std == 0, epsilon, std)
+#     z = (values - mean) / std_safe
+#     return pd.DataFrame(z, index=df.index, columns=df.columns)
 
 
 def median_mean_transform(

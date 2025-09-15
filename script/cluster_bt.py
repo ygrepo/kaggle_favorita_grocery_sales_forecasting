@@ -139,10 +139,22 @@ def parse_args():
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
-        "--log_dir",
+        "--n_jobs",
+        type=int,
+        default=1,
+        help="Number of parallel processes to use",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=4,
+        help="Batch size for multiprocessing",
+    )
+    parser.add_argument(
+        "--log_fn",
         type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
+        default="",
+        help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
         "--log_level",
@@ -158,10 +170,10 @@ def main():
     """Main training function."""
     # Parse command line arguments
     args = parse_args()
-    log_dir = Path(args.log_dir).resolve()
+    log_fn = Path(args.log_fn).resolve()
 
     # Set up logging
-    setup_logging(log_dir, args.log_level)
+    setup_logging(log_fn, args.log_level)
     try:
         # Log configuration
         logger.info("Starting data clustering with configuration:")
@@ -180,6 +192,8 @@ def main():
         logger.info(f"  Min keep: {args.min_keep}")
         logger.info(f"  Top k: {args.top_k}")
         logger.info(f"  Top rank fn: {args.top_rank_fn}")
+        logger.info(f"  N jobs: {args.n_jobs}")
+        logger.info(f"  Batch size: {args.batch_size}")
         logger.info(f"  Summary fn: {args.summary_fn}")
         logger.info(f"  Figure fn: {args.figure_fn}")
         logger.info(f"  Output fn: {args.output_fn}")
@@ -212,6 +226,8 @@ def main():
             summary_fn=summary_fn,
             output_fn=output_fn,
             figure_fn=figure_fn,
+            n_jobs=args.n_jobs,
+            batch_size=args.batch_size,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:

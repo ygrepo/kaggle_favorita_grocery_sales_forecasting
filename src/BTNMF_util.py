@@ -719,6 +719,8 @@ def sweep_btf_grid(
     seeds: Optional[Iterable[int]] = None,
     min_keep: int = 6,
     fit_kwargs: Optional[Dict[str, Any]] = None,
+    n_jobs: int = 1,  # NEW: Number of parallel processes
+    batch_size: int = 4,  # NEW: Number of (R,C) pairs per batch
 ) -> pd.DataFrame:
     """
     Returns a DataFrame with one row per (n_row, n_col) containing:
@@ -732,6 +734,10 @@ def sweep_btf_grid(
         Row cluster counts to try. Can be a list [2, 3, 5] or range(2, 6)
     C_list : Iterable[int] or range
         Column cluster counts to try. Can be a list [2, 3, 5] or range(2, 6)
+    n_jobs : int, default=1
+        Number of parallel processes. Use -1 for all CPU cores, 1 for single-threaded
+    batch_size : int, default=4
+        Number of (R,C) pairs per batch for multiprocessing
     """
 
     # Convert ranges to lists if needed
@@ -740,132 +746,302 @@ def sweep_btf_grid(
     if isinstance(C_list, range):
         C_list = list(C_list)
 
+    # Create all (R,C) combinations
+    rc_pairs = [(R, C) for R in R_list for C in C_list]
+    total_combinations = len(rc_pairs)
+
+    logger.info(f"Total (R,C) combinations to process: {total_combinations}")
+
+    # Determine number of processes
+    if n_jobs == -1:
+        import multiprocessing
+
+        n_jobs = multiprocessing.cpu_count()
+    elif n_jobs < 1:
+        n_jobs = 1
+
+    logger.info(f"Using {n_jobs} processes for BTF grid search")
+
+    # Use multiprocessing if n_jobs > 1
+    if n_jobs == 1:
+        # Single-threaded processing
+        return _sweep_btf_grid_sequential(
+            est_maker, X, rc_pairs, restarts, seeds, min_keep, fit_kwargs
+        )
+    else:
+        # Multi-threaded processing
+        return _sweep_btf_grid_parallel(
+            est_maker,
+            X,
+            rc_pairs,
+            restarts,
+            seeds,
+            min_keep,
+            fit_kwargs,
+            n_jobs,
+            batch_size,
+        )
+
+
+def _process_single_rc_pair(
+    R: int, C: int, est_maker, X, restarts, seeds, min_keep, fit_kwargs
+):
+    """Process a single (R,C) pair and return the metrics row."""
+
+    logger.info(f"Fitting BTF with R={R}, C={C}")
+    fitres = _fit_with_restarts(
+        est_maker,
+        X,
+        n_row=R,
+        n_col=C,
+        restarts=restarts,
+        seeds=seeds,
+        fit_kwargs=fit_kwargs,
+    )
+    est = fitres.est
+    loss_name = getattr(est, "loss", "gaussian")
+
+    # --- PVE ---
+    Xhat = est.reconstruct()
+    if min_keep > 0:
+        logger.info(f"Computing cell mask for R={R}, C={C}")
+        mask = make_gap_cellmask(min_keep=min_keep)(est)
+    else:
+        mask = None
+    pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
+
+    N_all = X.size
+    N_obs = _obs_count(mask, X)
+    mask_coverage = N_obs / N_all if N_all > 0 else np.nan
+
+    # --- Assignments (for WCV/BCV and coverage) ---
+    assign = est.assign_unique_blocks(
+        X=X,
+        method=("gaussian_delta" if est.loss == "gaussian" else "poisson_delta"),
+        allowed_mask=(
+            np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
+        ),  # drop weakest 20% blocks
+    )
+
+    # --- Silhouette-like (WCV/BCV) ---
+    wcvdf = compute_block_wcv_bcv_silhouette(X, assign, *est.B_.shape, mask=mask)
+    col = wcvdf["silhouette_like"]
+    if not wcvdf.empty and col.notna().any():
+        sil_mean = float(np.nanmean(col))
+    else:
+        sil_mean = np.nan
+
+    # --- Ablations ---
+    # Compute ΔLoss for every block (r,c) in the factorization
+    # ΔLoss_rc = Loss_without_block - Loss_full
+    # Positive values mean the block is "helpful"
+    ablation_mat = compute_all_block_delta_losses(est, X, mask=mask)
+
+    # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
+    ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
+    abl_pos = np.clip(ablation_flat, 0.0, None)
+
+    # Total contribution of all blocks (sum of ΔLoss values)
+    # Measures how much the model benefits overall from all blocks
+    total_block_contribution = float(np.sum(abl_pos))
+
+    # 20th percentile of block ΔLoss values (a "weak block" threshold)
+    # If many blocks have ΔLoss below this, they are considered "weak"
+    thresh = np.percentile(abl_pos, 20) if abl_pos.size else np.nan
+
+    # Fraction of blocks whose ΔLoss is below the 20th percentile
+    # i.e., what proportion of blocks are "weak" compared to the rest
+    # frac_weak: proportion of blocks considered weak.
+    frac_weak = float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
+
+    gini = (
+        gini_concentration(np.maximum(ablation_flat, 0.0))
+        if ablation_flat.size
+        else np.nan
+    )
+
+    # N = _obs_count(mask, X)
+    # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
+    per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
+
+    base = _baseline_array(X, loss_name, mask)
+    baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
+    rel_block_contribution = (
+        (total_block_contribution / baseline_loss) if baseline_loss > 0 else np.nan
+    )
+
+    # --- Extras ---
+    b_sparsity = sparsity_of_B(est, tol=1e-4)
+    coverage = coverage_from_assign(assign)
+
+    # --- AIC/BIC-like penalized scores ---
+    Xhat = est.reconstruct()
+    AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=mask)
+
+    return {
+        "n_row": R,
+        "n_col": C,
+        "Mask_Nobs": N_obs,
+        "Mask_Coverage": mask_coverage,
+        "seed": fitres.seed,
+        "Loss": fitres.loss,
+        "Percent_Loss": fitres.percent_loss,
+        "RMSE": fitres.rmse,
+        "Percent_RMSE": fitres.percent_rmse,
+        "PVE": pve,
+        "Mean Silhouette": sil_mean,
+        "BlockContribution_Total": total_block_contribution,
+        # "DeltaLoss_PerCell": delta_per_cell,
+        "BlockContribution_PerCell": per_cell_block_contribution,
+        "BlockContribution_RelBaseline": rel_block_contribution,
+        "BlockContribution_FracWeak20": frac_weak,
+        "BlockContribution_Gini": gini,
+        "B_Sparsity": b_sparsity,
+        "Coverage": coverage,
+        "AIC": AIC,
+        "BIC": BIC,
+    }
+
+
+def _sweep_btf_grid_sequential(
+    est_maker, X, rc_pairs, restarts, seeds, min_keep, fit_kwargs
+):
+    """Sequential processing of (R,C) pairs."""
     rows = []
-    for R in R_list:
-        for C in C_list:
-            logger.info(f"Fitting BTF with R={R}, C={C}")
-            fitres = _fit_with_restarts(
-                est_maker,
-                X,
-                n_row=R,
-                n_col=C,
-                restarts=restarts,
-                seeds=seeds,
-                fit_kwargs=fit_kwargs,
+    for R, C in rc_pairs:
+        row = _process_single_rc_pair(
+            R, C, est_maker, X, restarts, seeds, min_keep, fit_kwargs
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _process_rc_batch(args):
+    """Process a batch of (R,C) pairs in parallel."""
+    (
+        rc_batch,
+        est_maker,
+        X,
+        restarts,
+        seeds,
+        min_keep,
+        fit_kwargs,
+    ) = args
+
+    results = []
+    for R, C in rc_batch:
+        try:
+            row = _process_single_rc_pair(
+                R, C, est_maker, X, restarts, seeds, min_keep, fit_kwargs
             )
-            est = fitres.est
-            loss_name = getattr(est, "loss", "gaussian")
-
-            # --- PVE ---
-            Xhat = est.reconstruct()
-            if min_keep > 0:
-                logger.info(f"Computing cell mask for R={R}, C={C}")
-                mask = make_gap_cellmask(min_keep=min_keep)(est)
-            else:
-                mask = None
-            pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
-
-            N_all = X.size
-            N_obs = _obs_count(mask, X)
-            mask_coverage = N_obs / N_all if N_all > 0 else np.nan
-
-            # --- Assignments (for WCV/BCV and coverage) ---
-            assign = est.assign_unique_blocks(
-                X=X,
-                method=(
-                    "gaussian_delta" if est.loss == "gaussian" else "poisson_delta"
-                ),
-                allowed_mask=(
-                    np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
-                ),  # drop weakest 20% blocks
-            )
-
-            # --- Silhouette-like (WCV/BCV) ---
-            wcvdf = compute_block_wcv_bcv_silhouette(
-                X, assign, *est.B_.shape, mask=mask
-            )
-            sil_mean = (
-                float(np.nanmean(wcvdf["silhouette_like"]))
-                if not wcvdf.empty
-                else np.nan
-            )
-
-            # --- Ablations ---
-            # Compute ΔLoss for every block (r,c) in the factorization
-            # ΔLoss_rc = Loss_without_block - Loss_full
-            # Positive values mean the block is "helpful"
-            ablation_mat = compute_all_block_delta_losses(est, X, mask=mask)
-
-            # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
-            ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
-            abl_pos = np.clip(ablation_flat, 0.0, None)
-
-            # Total contribution of all blocks (sum of ΔLoss values)
-            # Measures how much the model benefits overall from all blocks
-            total_block_contribution = float(np.sum(abl_pos))
-
-            # 20th percentile of block ΔLoss values (a "weak block" threshold)
-            # If many blocks have ΔLoss below this, they are considered "weak"
-            thresh = np.percentile(abl_pos, 20) if abl_pos.size else np.nan
-
-            # Fraction of blocks whose ΔLoss is below the 20th percentile
-            # i.e., what proportion of blocks are "weak" compared to the rest
-            # frac_weak: proportion of blocks considered weak.
-            frac_weak = float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
-
-            gini = (
-                gini_concentration(np.maximum(ablation_flat, 0.0))
-                if ablation_flat.size
-                else np.nan
-            )
-
-            # N = _obs_count(mask, X)
-            # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
-            per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
-
-            base = _baseline_array(X, loss_name, mask)
-            baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
-            rel_block_contribution = (
-                (total_block_contribution / baseline_loss)
-                if baseline_loss > 0
-                else np.nan
-            )
-
-            # --- Extras ---
-            b_sparsity = sparsity_of_B(est, tol=1e-4)
-            coverage = coverage_from_assign(assign)
-
-            # --- AIC/BIC-like penalized scores ---
-            Xhat = est.reconstruct()
-            AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=mask)
-
-            rows.append(
+            results.append(row)
+        except Exception as e:
+            logger.error(f"Error processing R={R}, C={C}: {e}")
+            # Add a row with NaN values to maintain structure
+            results.append(
                 {
                     "n_row": R,
                     "n_col": C,
-                    "Mask_Nobs": N_obs,
-                    "Mask_Coverage": mask_coverage,
-                    "seed": fitres.seed,
-                    "Loss": fitres.loss,
-                    "Percent_Loss": fitres.percent_loss,
-                    "RMSE": fitres.rmse,
-                    "Percent_RMSE": fitres.percent_rmse,
-                    "PVE": pve,
-                    "Mean Silhouette": sil_mean,
-                    "BlockContribution_Total": total_block_contribution,
-                    # "DeltaLoss_PerCell": delta_per_cell,
-                    "BlockContribution_PerCell": per_cell_block_contribution,
-                    "BlockContribution_RelBaseline": rel_block_contribution,
-                    "BlockContribution_FracWeak20": frac_weak,
-                    "BlockContribution_Gini": gini,
-                    "B_Sparsity": b_sparsity,
-                    "Coverage": coverage,
-                    "AIC": AIC,
-                    "BIC": BIC,
+                    "Mask_Nobs": np.nan,
+                    "Mask_Coverage": np.nan,
+                    "seed": np.nan,
+                    "Loss": np.nan,
+                    "Percent_Loss": np.nan,
+                    "RMSE": np.nan,
+                    "Percent_RMSE": np.nan,
+                    "PVE": np.nan,
+                    "Mean Silhouette": np.nan,
+                    "BlockContribution_Total": np.nan,
+                    "BlockContribution_PerCell": np.nan,
+                    "BlockContribution_RelBaseline": np.nan,
+                    "BlockContribution_FracWeak20": np.nan,
+                    "BlockContribution_Gini": np.nan,
+                    "B_Sparsity": np.nan,
+                    "Coverage": np.nan,
+                    "AIC": np.nan,
+                    "BIC": np.nan,
                 }
             )
 
-    return pd.DataFrame(rows)
+    return results
+
+
+def _validate_est_maker_for_multiprocessing(est_maker):
+    """Validate that est_maker is picklable for multiprocessing."""
+    import pickle
+
+    try:
+        # Test if est_maker can be pickled
+        pickle.dumps(est_maker)
+    except Exception as e:
+        raise ValueError(
+            f"est_maker is not picklable for multiprocessing: {e}\n"
+            f"Hint: Use BinaryTriFactorizationEstimator.factory(**kwargs) instead of lambda functions.\n"
+            f"Example:\n"
+            f"  # Instead of: lambda **kw: BinaryTriFactorizationEstimator(loss='gaussian', **kw)\n"
+            f"  # Use: BinaryTriFactorizationEstimator.factory(loss='gaussian')"
+        ) from e
+
+
+def _sweep_btf_grid_parallel(
+    est_maker, X, rc_pairs, restarts, seeds, min_keep, fit_kwargs, n_jobs, batch_size
+):
+    """Parallel processing of (R,C) pairs using multiprocessing."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    # Validate that est_maker is picklable
+    _validate_est_maker_for_multiprocessing(est_maker)
+
+    logger.info(f"Starting parallel BTF grid search with {n_jobs} processes")
+
+    # Create batches of (R,C) pairs
+    batches = [
+        rc_pairs[i : i + batch_size] for i in range(0, len(rc_pairs), batch_size)
+    ]
+
+    logger.info(f"Created {len(batches)} batches of ~{batch_size} (R,C) pairs each")
+
+    # Prepare arguments for each batch
+    batch_args = [
+        (
+            batch,
+            est_maker,
+            X,
+            restarts,
+            seeds,
+            min_keep,
+            fit_kwargs,
+        )
+        for batch in batches
+    ]
+
+    # Process batches in parallel
+    all_results = []
+
+    with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+        # Use tqdm for progress tracking if available
+        try:
+            from tqdm import tqdm
+
+            batch_results = list(
+                tqdm(
+                    executor.map(_process_rc_batch, batch_args),
+                    total=len(batches),
+                    desc="Processing BTF batches",
+                )
+            )
+        except ImportError:
+            batch_results = list(executor.map(_process_rc_batch, batch_args))
+
+    # Flatten results from all batches
+    for batch_result in batch_results:
+        all_results.extend(batch_result)
+
+    logger.info(
+        f"Parallel BTF processing completed. Processed {len(rc_pairs)} (R,C) combinations"
+    )
+
+    return pd.DataFrame(all_results)
 
 
 # ----------------------------
@@ -959,6 +1135,7 @@ def cluster_data_and_explain_blocks(
     df: pd.DataFrame,
     row_range: range,
     col_range: range,
+    *,
     alpha: float = 1e-2,
     beta: float = 0.6,
     block_l1: float = 0.0,
@@ -973,6 +1150,8 @@ def cluster_data_and_explain_blocks(
     summary_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
     figure_fn: Optional[Path] = None,
+    n_jobs: int = 1,
+    batch_size: int = 4,
 ) -> pd.DataFrame:
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=None,
@@ -1009,6 +1188,8 @@ def cluster_data_and_explain_blocks(
         seeds=range(123, 999),  # optional
         min_keep=min_keep,
         fit_kwargs={"max_iter": max_iter, "tol": tol},
+        n_jobs=n_jobs,
+        batch_size=batch_size,
     )
 
     # Rank and pick the best

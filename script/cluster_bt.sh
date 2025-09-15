@@ -35,7 +35,7 @@ TOP_K="10"
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
-FIGURE_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_figure.png"
+FIGURE_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_figure.tiff"
 OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt.parquet"
 # TOP_RANK_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_top_rank.csv"
 # SUMMARY_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_summary.csv"
@@ -46,6 +46,10 @@ LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
 LOG_LEVEL="DEBUG"
+
+
+N_JOBS=-1
+BATCH_SIZE=100
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -65,12 +69,13 @@ while [[ $# -gt 0 ]]; do
     --min_keep) MIN_KEEP="$2"; shift 2 ;;
     --top_k) TOP_K="$2"; shift 2 ;;
     --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
+    --n_jobs) N_JOBS="$2"; shift 2 ;;
+    --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
     --figure_fn) FIGURE_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    --log_dir) LOG_DIR="$2"; shift 2 ;;
-    --log_file) LOG_FILE="$2"; shift 2 ;;
+    --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -97,6 +102,8 @@ echo "Min Silhouette: $MIN_SIL" | tee -a "$LOG_FILE"
 echo "Min keep: $MIN_KEEP" | tee -a "$LOG_FILE"
 echo "Top k: $TOP_K" | tee -a "$LOG_FILE"
 echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
+echo "N jobs: $N_JOBS" | tee -a "$LOG_FILE"
+echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
 echo "Figure fn: $FIGURE_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
@@ -121,10 +128,12 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --min_keep "$MIN_KEEP" \
   --top_k "$TOP_K" \
   --top_rank_fn "$TOP_RANK_FN" \
+  --n_jobs "$N_JOBS" \
+  --batch_size "$BATCH_SIZE" \
   --summary_fn "$SUMMARY_FN" \
   --figure_fn "$FIGURE_FN" \
   --output_fn "$OUTPUT_FN" \
-  --log_dir "$LOG_DIR" \
+  --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" 
 exit_code=$?
 set -e

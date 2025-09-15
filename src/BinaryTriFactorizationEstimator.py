@@ -1782,20 +1782,33 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             builder(n_row_clusters, n_col_clusters, *, random_state=None, **overrides) -> estimator
         `frozen_kwargs` are fixed defaults; `overrides` allow per-call tweaks.
         """
+        return BTFEstimatorBuilder(cls, frozen_kwargs)
 
-        def _builder(
-            n_row_clusters: int,
-            n_col_clusters: int,
-            *,
-            random_state: Optional[int] = None,
-            **overrides: Any,
-        ) -> "BinaryTriFactorizationEstimator":
-            kw: Dict[str, Any] = dict(frozen_kwargs)
-            kw.update(overrides)
-            kw["n_row_clusters"] = int(n_row_clusters)
-            kw["n_col_clusters"] = int(n_col_clusters)
-            if random_state is not None:
-                kw["random_state"] = int(random_state)
-            return cls(**kw)
 
-        return _builder
+class BTFEstimatorBuilder:
+    """
+    Picklable builder class for BinaryTriFactorizationEstimator.
+
+    This replaces the local function approach to make it compatible with multiprocessing.
+    """
+
+    def __init__(self, estimator_class, frozen_kwargs):
+        self.estimator_class = estimator_class
+        self.frozen_kwargs = dict(frozen_kwargs)
+
+    def __call__(
+        self,
+        n_row_clusters: int,
+        n_col_clusters: int,
+        *,
+        random_state: Optional[int] = None,
+        **overrides: Any,
+    ) -> "BinaryTriFactorizationEstimator":
+        """Build an estimator instance with the given parameters."""
+        kw: Dict[str, Any] = dict(self.frozen_kwargs)
+        kw.update(overrides)
+        kw["n_row_clusters"] = int(n_row_clusters)
+        kw["n_col_clusters"] = int(n_col_clusters)
+        if random_state is not None:
+            kw["random_state"] = int(random_state)
+        return self.estimator_class(**kw)
