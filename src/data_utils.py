@@ -1004,7 +1004,9 @@ def _generate_growth_rate_features_parallel(
                 )
             )
         else:
-            batch_results = list(executor.map(_process_growth_rate_store_item_batch, batch_args))
+            batch_results = list(
+                executor.map(_process_growth_rate_store_item_batch, batch_args)
+            )
 
     # Flatten results from all batches
     for batch_result in batch_results:
@@ -1995,6 +1997,29 @@ def normalize_data(
         df = zscore_with_axis(df, axis=0)
 
     return df
+
+
+def impute_by_column_mean(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Impute missing values by column mean.
+    """
+    mat = df.pivot_table(
+        values="growth_rate_1", index="store", columns="item", aggfunc="median"
+    )
+    cnt = df.pivot_table(
+        values="growth_rate_1", index="store", columns="item", aggfunc="count"
+    )
+    mat = mat.sort_index().sort_index(axis=1)
+    cnt = cnt.reindex(index=mat.index, columns=mat.columns)
+
+    col_means_obs = mat.where(cnt > 0).mean(axis=0)
+    mat_imp = mat.copy()
+    for c in mat.columns:
+        v = mat[c].to_numpy(copy=True)
+        miss = cnt[c].to_numpy() == 0
+        v[miss] = col_means_obs[c]
+        mat_imp[c] = v
+    return mat_imp
 
 
 def normalize_store_item_data(

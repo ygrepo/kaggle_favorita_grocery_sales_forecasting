@@ -672,7 +672,7 @@ def _fit_with_restarts(
 
     best = None
     for s in list(seeds)[:restarts]:
-        est = est_maker(n_row, n_col, random_state=s)
+        est = est_maker(n_row_clusters=n_row, n_col_clusters=n_col, random_state=s)
         est.fit(X)
         # training loss (use the same metric family as model_loss)
         Xhat = est.reconstruct()
@@ -788,6 +788,28 @@ def sweep_btf_grid(
             n_jobs,
             batch_size,
         )
+
+
+def suggest_min_keep_elbow(est) -> int:
+    if est.U_ is None or est.V_ is None or est.B_ is None:
+        raise ValueError("Fit the model first.")
+    U, V, B = est.U_, est.V_, est.B_
+    nr = U.sum(axis=0).astype(float)  # (R,)
+    nc = V.sum(axis=0).astype(float)  # (C,)
+    R, C = B.shape
+
+    # block "energy"
+    E = (B**2) * (nr[:, None] * nc[None, :])  # (R,C)
+    e = np.sort(E.ravel())[::-1]  # descending
+    m = e.size
+    if m == 0 or np.all(e == 0):
+        return 1
+
+    frac = np.cumsum(e) / (e.sum() + 1e-12)  # cumulative explained share
+    x = np.arange(1, m + 1) / m  # normalized k
+    # Knee as max vertical distance above the diagonal
+    k_star = int(np.argmax(frac - x)) + 1  # convert to 1-based count
+    return max(1, k_star)
 
 
 def _process_single_rc_pair(

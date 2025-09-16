@@ -5,14 +5,9 @@ from typing import Optional, Tuple, Dict, List, Any, Callable
 import pandas as pd
 from sklearn.base import BaseEstimator, ClusterMixin
 from sklearn.utils.validation import check_array
+from src.utils import get_logger
 
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
@@ -69,7 +64,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         max_iter=30,
         tol=1e-4,
         random_state=0,
-        verbose=True,
+        verbose=False,
         block_l1=0.0,
         b_inner=15,
     ):
@@ -152,83 +147,88 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             Z[empty, rng.integers(0, R, size=empty.sum())] = 1
         return Z
 
-    # -------- B updates --------
+    # # -------- B updates --------
     def _update_B_gaussian(self, X, U, V) -> np.ndarray:
-        r"""
-        Update B under a squared-error (Gaussian) objective.
-
-        We assume the **separable ridge** regularizer on UB and BVᵀ:
-            minimize_B  (1/2)||X - U B Vᵀ||_F^2
-                        + (α/2)||U B||_F^2 + (α/2)||B Vᵀ||_F^2         (★)
-
-        First-order condition for (★):
-            (UᵀU + αI) B (VᵀV + αI) = Uᵀ X V
-
-        Closed form (computed via two linear solves, not explicit inverses):
-            B = (UᵀU + αI)^{-1} Uᵀ X V (VᵀV + αI)^{-1}                (1)
-
-        If instead you use **ridge on B itself**:
-            minimize_B (1/2)||X - U B Vᵀ||_F^2 + (α/2)||B||_F^2       (†)
-
-        then the normal equation is a Sylvester-type system:
-            (UᵀU) B (VᵀV) + α B = Uᵀ X V                              (2)
-
-        (2) should be solved via a Sylvester/Kronecker method or eigentrick,
-        not with (1). The code below implements (1) (separable ridge).
         """
+        Gaussian B-update.
 
+        Case A (default): separable ridge on UB and BVᵀ  [fast closed form]
+            (UᵀU + αI) B (VᵀV + αI) = Uᵀ X V
+            solved via two Cholesky systems (no explicit inverses).
+
+        Case B (when block_l1 > 0): ridge-on-B + L1  [ISTA]
+            minimize 0.5||X - U B Vᵀ||_F^2 + (α/2)||B||_F^2 + λ||B||_1
+            with step size from a Lipschitz bound.
+        """
         R, C = self.n_row_clusters, self.n_col_clusters
 
-        # --- Case 1: no L1, pure separable ridge -> use the two-solve closed form (1)
-        if self.block_l1 <= 0.0:
-            # UtU = UᵀU + αI_k,  VtV = VᵀV + αI_ℓ
-            UtU = U.T @ U + self.alpha * np.eye(R)
-            VtV = V.T @ V + self.alpha * np.eye(C)
-            # M = Uᵀ X V
-            M = U.T @ X @ V
-            # Left = (UᵀU + αI)^{-1} M  (solve left system)
-            Left = np.linalg.solve(UtU, M)
-            # B = Left (VᵀV + αI)^{-1}  (solve right system via transposed solve)
-            B = np.linalg.solve(VtV.T, Left.T).T
+        # Ensure float64 for stable linear algebra
+        X = np.asarray(X, dtype=np.float64, order="C")
+        U = np.asarray(U, dtype=np.float64, order="C")
+        V = np.asarray(V, dtype=np.float64, order="C")
+
+        # ---- Case B: L1 on B -> proximal gradient (ISTA) ----
+        if self.block_l1 > 0.0:
+            # warm start
+            B = (
+                np.zeros((R, C), dtype=np.float64)
+                if (self.B_ is None)
+                else self.B_.copy().astype(np.float64)
+            )
+
+            UtU = U.T @ U
+            VtV = V.T @ V
+            # Lipschitz bound for ∇f(B) = Uᵀ(UBVᵀ - X)V + αB
+            L = float(np.linalg.norm(UtU, 2) * np.linalg.norm(VtV, 2) + self.alpha)
+            eta = 1.0 / max(L, 1e-12)
+
+            lam = float(self.block_l1)
+            a = float(self.alpha)
+
+            for _ in range(max(1, int(self.b_inner))):
+                # Gradient step
+                E = (U @ B) @ V.T - X  # residual in data space
+                G = U.T @ E @ V + a * B  # gradient in B-space
+                B = B - eta * G
+                # Soft-thresholding
+                thr = eta * lam
+                B = np.sign(B) * np.maximum(np.abs(B) - thr, 0.0)
+
             return B
 
-        # --- Case 2: add block-wise L1 on B -> solve
-        #     minimize_B (1/2)||X - U B Vᵀ||_F^2
-        #               + (α/2)||B||_F^2
-        #               + λ ||B||_1                                      (3)
-        #
-        # Smooth part f(B) = (1/2)||X - U B Vᵀ||_F^2 + (α/2)||B||_F^2
-        # Gradient:
-        #     ∇f(B) = Uᵀ( U B Vᵀ - X )V + α B                           (4)
-        # Lipschitz constant L for ∇f:
-        #     L ≤ ||UᵀU||_2 · ||VᵀV||_2 + α                            (5)
-        # Proximal gradient (ISTA) step with step size η = 1/L:
-        #     B ← B - η ∇f(B)                                           (6)
-        # Soft-thresholding (prox of λ||B||_1):
-        #     B ← S_{ηλ}(B)   where S_{τ}(z) = sign(z)·max(|z|-τ,0)     (7)
-
-        # warm start
-        if self.B_ is None:
-            B = np.zeros((R, C), dtype=np.float64)
-        else:
-            B = self.B_.copy().astype(np.float64)
-
+        # ---- Case A: separable ridge (default fast path) ----
         UtU = U.T @ U
         VtV = V.T @ V
 
-        # Lipschitz bound (5)
-        L = float(np.linalg.norm(UtU, 2) * np.linalg.norm(VtV, 2) + self.alpha)
-        eta = 1.0 / max(L, 1e-12)
+        # Add αI on the diagonals (SPD even if U/V are rank-deficient when α>0)
+        UtU.flat[:: R + 1] += self.alpha
+        VtV.flat[:: C + 1] += self.alpha
 
-        for _ in range(max(1, self.b_inner)):
-            # Gradient (4)
-            G = U.T @ (U @ B @ V.T - X) @ V + self.alpha * B
-            # Gradient step (6)
-            B = B - eta * G
-            # L1 prox (7)
-            thr = eta * self.block_l1
-            B = np.sign(B) * np.maximum(np.abs(B) - thr, 0.0)
+        # Right-hand side
+        M = U.T @ X @ V
 
+        # Solve (UᵀU+αI) Y = M  via Cholesky
+        def chol_solve(A, Bmat):
+            """Solve A X = Bmat with Cholesky; add tiny jitter if needed."""
+            jitter = 1e-12
+            for _ in range(3):
+                try:
+                    L = np.linalg.cholesky(A)
+                    Y = np.linalg.solve(L, Bmat)
+                    X = np.linalg.solve(L.T, Y)
+                    return X
+                except np.linalg.LinAlgError:
+                    # Add a touch more diagonal if near-singular
+                    A.flat[:: A.shape[0] + 1] += jitter
+                    jitter *= 10.0
+            # Final fallback (should be rare)
+            return np.linalg.solve(A, Bmat)
+
+        # Left solve: (UᵀU+αI)^{-1} M
+        Y = chol_solve(UtU, M)
+        # Right solve: B = Y (VᵀV+αI)^{-1}  via solving transposed system
+        BT = chol_solve(VtV, Y.T)  # solves (VᵀV+αI) BT = Yᵀ
+        B = BT.T
         return B
 
     def _update_B_poisson(self, X, U, V, B, n_inner: int = 15) -> np.ndarray:
@@ -313,6 +313,20 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         mu_col = np.maximum(mu_col, 1e-9)
         return (x_col * (np.log(mu_new) - np.log(mu_col)) - (mu_new - mu_col)).sum()
 
+    # helper to compute objective
+    def _objective(self, X, Xhat, U, V):
+        if self.loss == "gaussian":
+            resid = X - Xhat
+            penalty = self.beta * (U.sum() + V.sum())
+            # objective used for optimization:
+            return 0.5 * np.sum(resid * resid) + penalty
+        else:
+            MU = np.maximum(Xhat, 1e-9)
+            return float((MU - X * np.log(MU)).sum()) + self.beta * (U.sum() + V.sum())
+
+    def _rss(self, X, Xhat):
+        return float(np.sum((X - Xhat) ** 2))
+
     # -------- Fit --------
     def fit(self, X, y=None):
         """
@@ -330,31 +344,42 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         self : object
             Returns the instance itself.
         """
-        # Validate input
+        # --- validate & shapes ---
         X = check_array(X, dtype=np.float64, ensure_2d=True)
-        _ = y  # Mark as intentionally unused
+        _ = y
         I, J = X.shape
         R, C = self.n_row_clusters, self.n_col_clusters
         rng = self._rng()
 
-        # Initialize memberships
+        # --- init memberships ---
         U = self._init_binary((I, R), self.k_row, rng)
         V = self._init_binary((J, C), self.k_col, rng)
 
-        # Initialize B
+        # --- init B ---
         if self.loss == "gaussian":
             B = self._update_B_gaussian(X, U, V)
         elif self.loss == "poisson":
-            B = np.abs(rng.normal(0.5, 0.1, size=(R, C))) + 0.1  # positive start
+            B = np.abs(rng.normal(0.5, 0.1, size=(R, C))) + 0.1
             B = self._update_B_poisson(X, U, V, B, n_inner=20)
         else:
             raise ValueError("loss must be 'gaussian' or 'poisson'")
 
+        # --- history ---
         if self.history_flag:
             self.loss_history_ = []
-        prev = np.inf
 
+        # --- baseline (accepted) state before outer iters ---
+        Xhat = U @ (B @ V.T)
+        loss_prev = self._objective(X, Xhat, U, V)
+        prev = loss_prev  # for early-stop relative improvement
+
+        # -------- outer loop --------
         for it in range(self.max_iter):
+            # snapshot (for rollback)
+            U_prev, V_prev, B_prev = U.copy(), V.copy(), B.copy()
+            Xhat_prev = Xhat.copy()
+            loss_baseline = loss_prev
+
             # --- B-step ---
             if self.loss == "gaussian":
                 B = self._update_B_gaussian(X, U, V)
@@ -362,57 +387,51 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 B = self._update_B_poisson(X, U, V, B, n_inner=self.b_inner)
 
             # --- Precompute shared quantities ---
-            G = B @ V.T  # (R, J): effect of toggling a row-bit r on an entire row
-            H = U @ B  # (I, C): effect of toggling a col-bit c on an entire column
-            Xhat = U @ G  # (I, J) == H @ V^T
+            G = B @ V.T  # (R, J): row templates for U-step
+            H = U @ B  # (I, C): col templates for V-step
+            Xhat = U @ G  # == H @ V.T
 
-            # Norms for Gaussian toggle scoring
+            # norms for Gaussian scorer (only what we need now)
             if self.loss == "gaussian":
-                # G_norm2 is a vector of length R, each entry is the squared
-                # ℓ2-norm of a row (template) in G.
-                G_norm2 = np.einsum("rj,rj->r", G, G)  # shape (R,)
-                # H_norm2 is a vector of length C, each entry is the squared
-                # ℓ2-norm of a column (template) in H.
-                H_norm2 = np.einsum("ic,ic->c", H, H)  # shape (C,)
+                G_norm2 = np.einsum("rj,rj->r", G, G)  # (R,)
 
-            # --- U-step: per-row greedy construction ---
+            # --- U-step (row-wise greedy) ---
             for i in range(I):
                 if self.loss == "gaussian":
-                    # Clean residual for row i (remove current recon; add back own contributions)
-                    # Row i update (your Block1):
                     self._greedy_update_gaussian(
                         X=X,
                         Xhat=Xhat,
                         memberships=U,
                         idx=i,
-                        components=G,  # R×n
+                        components=G,
                         comp_norm2=G_norm2,
                         k_limit=self.k_row,
                         scorer_fn=self._toggle_scores_gaussian_row,
                         beta=self.beta,
                         axis=0,
                     )
-                else:  # Poisson
+                else:
                     self._greedy_update_poisson(
                         X=X,
                         Xhat=Xhat,
                         memberships=U,
                         idx=i,
-                        components=G,  # R×n
+                        components=G,
                         scorer_fn=self._poisson_delta_ll_row,
                         beta=self.beta,
                         k_limit=self.k_row,
                         axis=0,
                     )
 
-            # --- Refresh H and Xhat after U-step ---
+            # refresh after U-step
             H = U @ B
             Xhat = H @ V.T
 
-            # --- V-step: per-column greedy construction ---
+            # update H_norm2 now (depends on U)
             if self.loss == "gaussian":
-                H_norm2 = np.einsum("ic,ic->c", H, H)
+                H_norm2 = np.einsum("ic,ic->c", H, H)  # (C,)
 
+            # --- V-step (col-wise greedy) ---
             for j in range(J):
                 if self.loss == "gaussian":
                     self._greedy_update_gaussian(
@@ -420,54 +439,58 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                         Xhat=Xhat,
                         memberships=V,
                         idx=j,
-                        components=H,  # m×C
+                        components=H,
                         comp_norm2=H_norm2,
                         k_limit=self.k_col,
                         scorer_fn=self._toggle_scores_gaussian_col,
                         beta=self.beta,
                         axis=1,
                     )
-
-                else:  # Poisson
+                else:
                     self._greedy_update_poisson(
                         X=X,
                         Xhat=Xhat,
                         memberships=V,
                         idx=j,
-                        components=H,  # m×C
+                        components=H,
                         scorer_fn=self._poisson_delta_ll_col,
                         beta=self.beta,
                         k_limit=self.k_col,
                         axis=1,
                     )
 
-            # --- Finalize this outer iteration: recompute recon & objective ---
+            # --- finalize this outer iteration ---
             G = B @ V.T
             Xhat = U @ G
 
-            if self.loss == "gaussian":
-                resid = X - Xhat
-                penalty = self.beta * (U.sum() + V.sum())
-                loss = 0.5 * np.sum(resid * resid) + penalty
-            else:
-                MU = np.maximum(Xhat, 1e-9)
-                loss = float((MU - X * np.log(MU)).sum()) + self.beta * (
-                    U.sum() + V.sum()
-                )
+            # compute new loss (AFTER all updates)
+            loss_new = self._objective(X, Xhat, U, V)
 
+            # monotonic guard: rollback if worse than baseline (tolerate tiny FP noise)
+            if loss_new > loss_baseline + 1e-9:
+                U, V, B = U_prev, V_prev, B_prev
+                Xhat = Xhat_prev
+                loss = loss_baseline
+            else:
+                loss = loss_new
+
+            # history / logging
             if self.history_flag:
                 self.loss_history_.append(loss)
-            if self.verbose:
-                logger.info(f"[iter {it:02d}] loss={loss:.6e}")
+            if self.verbose and self.loss == "gaussian":
+                logger.info(
+                    f"[iter {it:02d}] loss={loss:.6e}  rss={self._rss(X, Xhat):.6e}"
+                )
 
-            # Early stopping on relative improvement
+            # early stop on relative improvement over last accepted loss
             if np.isfinite(prev):
                 rel = (prev - loss) / max(1.0, abs(prev))
                 if (prev >= loss) and (rel < self.tol):
                     break
             prev = loss
+            loss_prev = loss  # next iteration's baseline
 
-        # Save learned factors (cast U,V to 0/1 int8)
+        # --- save learned factors ---
         self.U_, self.V_, self.B_, self.Xhat_ = (
             U.astype(np.int8),
             V.astype(np.int8),
@@ -476,162 +499,270 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         )
         return self
 
+    # def fit(self, X, y=None):
+    #     X = check_array(X, dtype=np.float64, ensure_2d=True)
+    #     _ = y
+    #     I, J = X.shape
+    #     R, C = self.n_row_clusters, self.n_col_clusters
+    #     rng = self._rng()
+
+    #     # --- init memberships ---
+    #     U = self._init_binary((I, R), self.k_row, rng)
+    #     V = self._init_binary((J, C), self.k_col, rng)
+
+    #     # --- init B ---
+    #     if self.loss == "gaussian":
+    #         B = self._update_B_gaussian(X, U, V)
+    #     elif self.loss == "poisson":
+    #         B = np.abs(rng.normal(0.5, 0.1, size=(R, C))) + 0.1
+    #         B = self._update_B_poisson(X, U, V, B, n_inner=20)
+    #     else:
+    #         raise ValueError("loss must be 'gaussian' or 'poisson'")
+
+    #     if self.history_flag:
+    #         self.loss_history_ = []
+
+    #     # baseline (accepted) state before outer iters
+    #     Xhat = U @ (B @ V.T)
+    #     loss_prev = self._objective(X, Xhat, U, V)
+    #     prev = loss_prev  # for relative improvement check against last accepted loss
+
+    #     for it in range(self.max_iter):
+    #         # snapshot (for rollback)
+    #         U_prev, V_prev, B_prev = U.copy(), V.copy(), B.copy()
+    #         Xhat_prev = Xhat.copy()
+    #         loss_baseline = loss_prev
+
+    #         # --- B-step ---
+    #         if self.loss == "gaussian":
+    #             B = self._update_B_gaussian(X, U, V)
+    #         else:
+    #             B = self._update_B_poisson(X, U, V, B, n_inner=self.b_inner)
+
+    #         # --- Precompute shared quantities ---
+    #         G = B @ V.T  # (R, J)
+    #         H = U @ B  # (I, C)
+    #         Xhat = U @ G  # == H @ V.T
+
+    #         # norms for Gaussian scorer
+    #         if self.loss == "gaussian":
+    #             G_norm2 = np.einsum("rj,rj->r", G, G)  # (R,)
+    #             H_norm2 = np.einsum("ic,ic->c", H, H)  # (C,)
+
+    #         # --- U-step ---
+    #         for i in range(I):
+    #             if self.loss == "gaussian":
+    #                 self._greedy_update_gaussian(
+    #                     X=X,
+    #                     Xhat=Xhat,
+    #                     memberships=U,
+    #                     idx=i,
+    #                     components=G,
+    #                     comp_norm2=G_norm2,
+    #                     k_limit=self.k_row,
+    #                     scorer_fn=self._toggle_scores_gaussian_row,
+    #                     beta=self.beta,
+    #                     axis=0,
+    #                 )
+    #             else:
+    #                 self._greedy_update_poisson(
+    #                     X=X,
+    #                     Xhat=Xhat,
+    #                     memberships=U,
+    #                     idx=i,
+    #                     components=G,
+    #                     scorer_fn=self._poisson_delta_ll_row,
+    #                     beta=self.beta,
+    #                     k_limit=self.k_row,
+    #                     axis=0,
+    #                 )
+
+    #         # refresh after U-step
+    #         H = U @ B
+    #         Xhat = H @ V.T
+
+    #         # update H_norm2 if Gaussian (depends on U)
+    #         if self.loss == "gaussian":
+    #             H_norm2 = np.einsum("ic,ic->c", H, H)
+
+    #         # --- V-step ---
+    #         for j in range(J):
+    #             if self.loss == "gaussian":
+    #                 self._greedy_update_gaussian(
+    #                     X=X,
+    #                     Xhat=Xhat,
+    #                     memberships=V,
+    #                     idx=j,
+    #                     components=H,
+    #                     comp_norm2=H_norm2,
+    #                     k_limit=self.k_col,
+    #                     scorer_fn=self._toggle_scores_gaussian_col,
+    #                     beta=self.beta,
+    #                     axis=1,
+    #                 )
+    #             else:
+    #                 self._greedy_update_poisson(
+    #                     X=X,
+    #                     Xhat=Xhat,
+    #                     memberships=V,
+    #                     idx=j,
+    #                     components=H,
+    #                     scorer_fn=self._poisson_delta_ll_col,
+    #                     beta=self.beta,
+    #                     k_limit=self.k_col,
+    #                     axis=1,
+    #                 )
+
+    #         # --- finalize this outer iteration ---
+    #         G = B @ V.T
+    #         Xhat = U @ G
+
+    #         # compute new loss (AFTER all updates)
+    #         loss_new = self._objective(X, Xhat, U, V)
+
+    #         # monotonic guard: rollback if worse than baseline
+    #         if loss_new > loss_baseline + 1e-12:
+    #             U, V, B = U_prev, V_prev, B_prev
+    #             Xhat = Xhat_prev
+    #             loss = loss_baseline
+    #         else:
+    #             loss = loss_new
+
+    #         # history / logging
+    #         if self.history_flag:
+    #             self.loss_history_.append(loss)
+    #         if self.verbose and self.loss == "gaussian":
+    #             logger.info(
+    #                 f"[iter {it:02d}] loss={loss:.6e}  rss={self._rss(X,Xhat):.6e}"
+    #             )
+
+    #         # early stop on relative improvement over last accepted loss
+    #         if np.isfinite(prev):
+    #             rel = (prev - loss) / max(1.0, abs(prev))
+    #             if (prev >= loss) and (rel < self.tol):
+    #                 break
+    #         prev = loss
+    #         loss_prev = loss  # next iteration's baseline
+
+    #     # save learned factors
+    #     self.U_, self.V_, self.B_, self.Xhat_ = (
+    #         U.astype(np.int8),
+    #         V.astype(np.int8),
+    #         B,
+    #         Xhat,
+    #     )
+    #     return self
+
     # -------- Helpers / API --------
+
     def _greedy_update_gaussian(
         self,
         X: np.ndarray,
         Xhat: np.ndarray,
         memberships: np.ndarray,  # U (m×R) if axis=0, or V (n×C) if axis=1
-        idx: int,  # row index (axis=0) or column index (axis=1)
+        idx: int,
         components: np.ndarray,  # G (R×n) if axis=0, or H (m×C) if axis=1
-        comp_norm2: np.ndarray,  # G_norm2 or H_norm2 (squared ℓ2 norms per component)
-        k_limit: int | None,  # k_row or k_col (max active memberships)
-        scorer_fn,  # _toggle_scores_gaussian_row or _toggle_scores_gaussian_col
+        comp_norm2: np.ndarray,  # ||t_k||^2 per template
+        k_limit: int | None,
+        scorer_fn,  # unused in this fast impl; kept for API compat
         beta: float,
-        axis: int,  # 0 = update a row i; 1 = update a column j
+        axis: int,  # 0=row update, 1=col update
     ) -> None:
-        r"""
-        Goal: For one row (or one column) at a time, choose which clusters it belongs to (binary, possibly multiple)
-        so that the slice of the data is well explained by a small sum of fixed templates, while penalizing unnecessary picks by β.
-
-        How:
-        1. It computes a clean residual for that slice (remove current recon, add back its own effects).
-        2. It greedily picks components with the largest marginal gain in reducing squared error (minus a penalty),
-        only accepting those that yield positive gain.
-        3. It updates the residual after each pick.
-        4. It ensures at least one membership if nothing had positive gain.
-        5. It recomputes the slice of the reconstruction from the chosen memberships.
-
-        Why greedy? It’s a fast approximate solver for a sparse,
-        combinatorial selection problem arising from the Gaussian objective;
-        with the typical gain formula in (3), each step guarantees
-        a non-increasing reconstruction error (until no positive gain remains).
-
-        Purpose
-        -------
-        Greedy (one-slice) update of **binary, possibly-overlapping memberships**
-        for either a single **row i** (axis=0) or a single **column j** (axis=1) in a
-        Gaussian tri-factorization model. It chooses a small set of components
-        (clusters) that best explain that slice of X, under a squared-error objective
-        with an optional per-component penalty β.
-
-        Model & Notation
-        ----------------
-        Data matrix: X ∈ ℝ^{m×n} with reconstruction X̂ = U B Vᵀ.
-        During the greedy step we hold "component templates" fixed:
-
-        • Row update (axis=0): components = G ∈ ℝ^{R×n},  where G[r,:] is the template
-            contributed to row i when U[i,r]=1.  Reconstruction slice: X̂[i,:] = U[i,:] G.
-
-        • Column update (axis=1): components = H ∈ ℝ^{m×C}, where H[:,c] is the template
-            contributed to column j when V[j,c]=1. Reconstruction slice: X̂[:,j] = H V[j,:].
-
-        For a slice s (row i or column j), define the **current base residual**
-        by removing the present reconstruction for that slice and adding back its
-        own contributions (so we can re-select memberships from a clean slate):
-
-            Row i:   b = X[i,:] - X̂[i,:] + ∑_{r: U[i,r]=1} G[r,:]                  (1)
-            Col j:   b = X[:,j] - X̂[:,j] + ∑_{c: V[j,c]=1} H[:,c]                  (2)
-
-        We then greedily add components one-by-one, each time picking the index
-        k* that maximizes a **gain score** s_k computed by `scorer_fn`. Under a
-        Gaussian (least-squares) objective with a per-selection penalty β, a
-        common gain for a candidate template t_k is:
-
-            s_k = ⟨residual, t_k⟩  -  ½(‖t_k‖₂² + β),                               (3)
-
-        where residual is updated as we add templates. (Your `scorer_fn` computes
-        these scores; `comp_norm2` typically supplies ‖t_k‖₂².)
-
-        We accept only **positive-gain** additions:
-
-            k* = argmax_k s_k,   add if  s_{k*} > 0,                                (4)
-
-        updating the residual:
-
-            residual ← residual - t_{k*}.                                           (5)
-
-        We repeat until we reach the cardinality limit (k_limit) or no positive
-        gain remains. If nothing was selected, we force one membership by taking
-        argmax_k s_k once.
-
-        Finally, we refresh the reconstruction slice from the new memberships:
-
-            Row i:  X̂[i,:] ← U[i,:] G,      Col j:  X̂[:,j] ← H V[j,:].            (6)
+        """
+        Fast greedy: one-shot for k=1, Gram-updated scores for k>1.
+        Keeps the previous 'fallback' fix (updates residual/scores when forcing one pick).
         """
         if axis == 0:
-            # ---------- ROW UPDATE (i = idx) ----------
             i = idx
-            # base residual (Eq. 1)
             base = X[i, :] - Xhat[i, :]
             if memberships[i, :].any():
                 base = base + components[memberships[i, :] == 1, :].sum(axis=0)
 
-            # clear memberships for this row, start greedy loop
             memberships[i, :] = 0
-            residual = base.copy()
 
-            R = components.shape[0]
-            used = np.zeros(R, dtype=bool)
+            # Precompute initial scores s_k = <base, t_k> - 0.5||t_k||^2 - beta
+            s = components @ base  # (R,) since components is R×n
+            s = s - 0.5 * comp_norm2 - beta
+            used = np.zeros(components.shape[0], dtype=bool)
+
+            # k=1: pick once and bail (fast path)
+            if k_limit == 1:
+                r_star = int(np.argmax(s))
+                if s[r_star] > 0:
+                    memberships[i, r_star] = 1
+                    # refresh slice
+                    Xhat[i, :] = memberships[i, :] @ components
+                    return
+                else:
+                    # fallback: force best (keeps old semantics, but updates slice)
+                    memberships[i, r_star] = 1
+                    Xhat[i, :] = memberships[i, :] @ components
+                    return
+
+            # k>1: Gram-accelerated updates
+            # Gram over templates: T[a,b] = <t_a, t_b>
+            T = components @ components.T  # (R,R)
             picks = 0
             while (k_limit is None) or (picks < k_limit):
-                # gain scores s_k (Eq. 3) from your scorer
-                scores = scorer_fn(
-                    residual, components, comp_norm2, beta
-                )  # shape: (R,)
-                scores[used] = -np.inf
-                r_star = int(np.argmax(scores))
-                # accept only positive-gain additions (Eq. 4)
-                if scores[r_star] <= 0:
+                s[used] = -np.inf
+                r_star = int(np.argmax(s))
+                if s[r_star] <= 0:
                     break
                 memberships[i, r_star] = 1
-                # update residual by subtracting chosen template (Eq. 5)
-                residual -= components[r_star, :]
                 used[r_star] = True
                 picks += 1
+                # Score update: residual ← residual - t_r  ⇒  s_k ← s_k - <t_r, t_k>
+                s -= T[r_star, :]
 
-            # ensure at least one membership (fallback argmax of scores)
             if memberships[i, :].sum() == 0:
-                scores = scorer_fn(residual, components, comp_norm2, beta)
-                memberships[i, int(np.argmax(scores))] = 1
+                # force best, and apply the same score update once
+                r_star = int(np.argmax(s))
+                memberships[i, r_star] = 1
+                # (no need to maintain residual explicitly here)
 
-            # refresh reconstruction slice (Eq. 6)
             Xhat[i, :] = memberships[i, :] @ components
 
         else:
-            # ---------- COLUMN UPDATE (j = idx) ----------
             j = idx
-            # base residual (Eq. 2)
             base = X[:, j] - Xhat[:, j]
             if memberships[j, :].any():
                 base = base + components[:, memberships[j, :] == 1].sum(axis=1)
 
             memberships[j, :] = 0
-            residual = base.copy()
 
-            C = components.shape[1]
-            used = np.zeros(C, dtype=bool)
+            # s_c = <base, h_c> - 0.5||h_c||^2 - beta
+            s = components.T @ base  # (C,), components is m×C
+            s = s - 0.5 * comp_norm2 - beta
+            used = np.zeros(components.shape[1], dtype=bool)
+
+            if k_limit == 1:
+                c_star = int(np.argmax(s))
+                if s[c_star] > 0:
+                    memberships[j, c_star] = 1
+                    Xhat[:, j] = components @ memberships[j, :]
+                    return
+                else:
+                    memberships[j, c_star] = 1
+                    Xhat[:, j] = components @ memberships[j, :]
+                    return
+
+            # Gram over column templates: T[c,d] = <h_c, h_d>
+            T = components.T @ components  # (C,C)
             picks = 0
             while (k_limit is None) or (picks < k_limit):
-                # gain scores s_k (Eq. 3) from your scorer
-                scores = scorer_fn(
-                    residual, components, comp_norm2, beta
-                )  # shape: (C,)
-                scores[used] = -np.inf
-                c_star = int(np.argmax(scores))
-                if scores[c_star] <= 0:
+                s[used] = -np.inf
+                c_star = int(np.argmax(s))
+                if s[c_star] <= 0:
                     break
                 memberships[j, c_star] = 1
-                # update residual (Eq. 5)
-                residual -= components[:, c_star]
                 used[c_star] = True
                 picks += 1
+                s -= T[c_star, :]
 
             if memberships[j, :].sum() == 0:
-                scores = scorer_fn(residual, components, comp_norm2, beta)
-                memberships[j, int(np.argmax(scores))] = 1
+                c_star = int(np.argmax(s))
+                memberships[j, c_star] = 1
 
-            # refresh reconstruction slice (Eq. 6)
             Xhat[:, j] = components @ memberships[j, :]
 
     def _greedy_update_poisson(
