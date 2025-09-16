@@ -69,7 +69,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         max_iter=30,
         tol=1e-4,
         random_state=0,
-        verbose=False,
+        verbose=True,
         block_l1=0.0,
         b_inner=15,
     ):
@@ -461,8 +461,10 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 logger.info(f"[iter {it:02d}] loss={loss:.6e}")
 
             # Early stopping on relative improvement
-            if np.isfinite(prev) and prev - loss < self.tol * max(1.0, prev):
-                break
+            if np.isfinite(prev):
+                rel = (prev - loss) / max(1.0, abs(prev))
+                if (prev >= loss) and (rel < self.tol):
+                    break
             prev = loss
 
         # Save learned factors (cast U,V to 0/1 int8)

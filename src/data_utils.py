@@ -903,7 +903,7 @@ def _generate_growth_rate_features_sequential(
         return pd.DataFrame()
 
 
-def _process_store_item_batch(args):
+def _process_growth_rate_store_item_batch(args):
     """Process a batch of store-item combinations in parallel."""
     (
         df_subset,
@@ -998,13 +998,13 @@ def _generate_growth_rate_features_parallel(
 
             batch_results = list(
                 tqdm(
-                    executor.map(_process_store_item_batch, batch_args),
+                    executor.map(_process_growth_rate_store_item_batch, batch_args),
                     total=len(batches),
                     desc="Processing batches",
                 )
             )
         else:
-            batch_results = list(executor.map(_process_store_item_batch, batch_args))
+            batch_results = list(executor.map(_process_growth_rate_store_item_batch, batch_args))
 
     # Flatten results from all batches
     for batch_result in batch_results:
