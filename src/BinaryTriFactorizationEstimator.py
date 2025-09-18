@@ -6,6 +6,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, ClusterMixin
 from sklearn.utils.validation import check_array
 from src.utils import get_logger
+import time
 
 logger = get_logger(__name__)
 
@@ -64,7 +65,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         max_iter=30,
         tol=1e-4,
         random_state=0,
-        verbose=False,
         block_l1=0.0,
         b_inner=15,
     ):
@@ -91,8 +91,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             Tolerance for convergence
         random_state : int or None, default=0
             Random seed for reproducibility
-        verbose : bool, default=False
-            Whether to print progress information
         block_l1 : float, default=0.0
             L1 regularization on B matrix (0 = off)
         b_inner : int, default=15
@@ -108,7 +106,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         self.max_iter = max_iter
         self.tol = tol
         self.random_state = random_state
-        self.verbose = verbose
         self.block_l1 = block_l1
         self.b_inner = b_inner
 
@@ -401,34 +398,20 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     # -------- Fit --------
     def fit(self, X, y=None):
         """
-        Fit the binary tri-factorization model to X.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Training data
-        y : Ignored
-            Not used, present for API consistency by convention.
-
-        Returns
-        -------
-        self : object
-            Returns the instance itself.
+        Fit the binary tri-factorization model to X (Gaussian or Poisson).
+        Adds PVE/RMSE logging each iteration.
         """
-        import time
-
-        # --- validate & shapes ---
         X = check_array(X, dtype=np.float64, ensure_2d=True)
         _ = y
         I, J = X.shape
         R, C = self.n_row_clusters, self.n_col_clusters
         rng = self._rng()
 
-        # --- init memberships ---
+        # init memberships
         U = self._init_binary((I, R), self.k_row, rng)
         V = self._init_binary((J, C), self.k_col, rng)
 
-        # --- init B ---
+        # init B
         if self.loss == "gaussian":
             B = self._update_B_gaussian(X, U, V)
         elif self.loss == "poisson":
@@ -437,28 +420,32 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         else:
             raise ValueError("loss must be 'gaussian' or 'poisson'")
 
-        # --- history ---
         if self.history_flag:
             self.loss_history_ = []
 
-        # --- baseline (accepted) state before outer iters ---
+        # baseline
         Xhat = U @ (B @ V.T)
         loss_prev = self._objective(X, Xhat, U, V)
-        prev = loss_prev  # for early-stop relative improvement
+        prev = loss_prev
 
         logger.info(
             f"BTriF start I={I} J={J} R={R} C={C} k_row={self.k_row} k_col={self.k_col} "
             f"alpha={self.alpha} beta={self.beta} block_l1={self.block_l1} tol={self.tol} "
             f"max_iter={self.max_iter} loss={self.loss}"
         )
-        rep_X = self._nan_inf_report("X", X)
-        logger.debug(f"sanity_init {rep_X}")
+        logger.debug(f"sanity_init {self._nan_inf_report('X', X)}")
 
-        # -------- outer loop --------
+        # for the optional “stable assignments” stop (no new attribute needed)
+        stable_iters = 0
+        stable_patience = 2  # consecutive iters with no membership changes
+
+        # precompute total signal power for PVE (||X||_F^2)
+        total_power = float(np.sum(X * X)) if np.isfinite(X).all() else np.nan
+
         for it in range(self.max_iter):
             t0 = time.perf_counter()
 
-            # snapshot (for rollback + change metrics)
+            # snapshot (rollback + deltas)
             self._u_forced = self._u_positive = 0
             self._v_forced = self._v_positive = 0
             U_prev, V_prev, B_prev = U.copy(), V.copy(), B.copy()
@@ -474,15 +461,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             tB1 = time.perf_counter()
 
             # --- Precompute shared quantities ---
-            G = B @ V.T  # (R, J): row templates for U-step
-            H = U @ B  # (I, C): col templates for V-step
-            Xhat = U @ G  # == H @ V.T
+            G = B @ V.T
+            H = U @ B
+            Xhat = U @ G
 
-            # norms for Gaussian scorer
             if self.loss == "gaussian":
-                G_norm2 = np.einsum("rj,rj->r", G, G)  # (R,)
+                G_norm2 = np.einsum("rj,rj->r", G, G)
 
-            # --- U-step (row-wise greedy) ---
+            # --- U-step ---
             tU0 = time.perf_counter()
             for i in range(I):
                 if self.loss == "gaussian":
@@ -511,15 +497,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                     )
             tU1 = time.perf_counter()
 
-            # refresh after U-step
+            # refresh after U
             H = U @ B
             Xhat = H @ V.T
-
-            # update H_norm2 now (depends on U)
             if self.loss == "gaussian":
-                H_norm2 = np.einsum("ic,ic->c", H, H)  # (C,)
+                H_norm2 = np.einsum("ic,ic->c", H, H)
 
-            # --- V-step (col-wise greedy) ---
+            # --- V-step ---
             tV0 = time.perf_counter()
             for j in range(J):
                 if self.loss == "gaussian":
@@ -551,18 +535,23 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # membership dynamics
             dU = int((U != U_prev).sum())
             dV = int((V != V_prev).sum())
-
             row_on = float(U.sum(1).mean())
             col_on = float(V.sum(1).mean())
 
-            # --- finalize this outer iteration ---
+            # optional stability-based stop
+            stable_iters = stable_iters + 1 if (dU == 0 and dV == 0) else 0
+            if stable_iters >= stable_patience:
+                logger.info(
+                    f"{R}-{C}-it:{it:02d} Early stopping (stable assignments for {stable_iters} iters)"
+                )
+                break
+
+            # finalize this outer iteration
             G = B @ V.T
             Xhat = U @ G
-
-            # compute new loss (AFTER all updates)
             loss_new = self._objective(X, Xhat, U, V)
 
-            # monotonic guard: rollback if worse than baseline (tolerate tiny FP noise)
+            # monotonic guard
             rolled_back = False
             if loss_new > loss_baseline + 1e-8:
                 rolled_back = True
@@ -577,47 +566,48 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                     f"{R}-{C}-it:{it:02d} rollback (loss_new={loss_new:.6e} > baseline={loss_baseline:.6e})"
                 )
 
-            # reg breakdown (Gaussian path terms shown; l1 only when enabled)
+            # diagnostics (Gaussian regs shown; l1 only if enabled)
             rss = self._rss(X, Xhat)
             regB = 0.5 * self.alpha * float(np.sum(B * B))
             l1B = float(np.sum(np.abs(B))) if self.block_l1 > 0 else 0.0
 
-            # history / logging
+            # PVE / RMSE (safe for z-scored data)
+            rmse = float(np.sqrt(rss / (I * J)))
+            pve = (
+                float(1.0 - (rss / max(total_power, 1e-12)))
+                if np.isfinite(total_power)
+                else float("nan")
+            )
+
             if self.history_flag:
                 self.loss_history_.append(loss)
 
-            # compact single INFO line with everything needed to diagnose plateaus
             logger.info(
-                f"{R}-{C}-it:{it:02d} "
-                f"loss={loss:.6e} rss={rss:.6e} regB={regB:.6e} l1B={l1B:.6e} "
-                f"dU={dU} dV={dV} row_on≈{row_on:.2f} col_on≈{col_on:.2f} "
+                f"{R}-{C}-it:{it:02d} loss={loss:.6e} rss={rss:.6e} PVE={pve:.2%} RMSE={rmse:.3f} "
+                f"regB={regB:.6e} l1B={l1B:.6e} dU={dU} dV={dV} "
+                f"row_on≈{row_on:.2f} col_on≈{col_on:.2f} "
                 f"U_forced={self._u_forced} U_pos={self._u_positive} "
                 f"V_forced={self._v_forced} V_pos={self._v_positive}"
             )
-
-            # lightweight timing at DEBUG level
             logger.debug(
                 f"time B={tB1-tB0:.3f}s U={tU1-tU0:.3f}s V={tV1-tV0:.3f}s iter_total={time.perf_counter()-t0:.3f}s"
             )
 
-            # periodic sanity (every 10 iterations)
             if it % 10 == 0:
-                rep_B = self._nan_inf_report("B", B)
-                rep_Xhat = self._nan_inf_report("Xhat", Xhat)
-                logger.debug(f"sanity_iter{it} {rep_B} {rep_Xhat}")
+                logger.debug(
+                    f"sanity_iter{it} {self._nan_inf_report('B', B)} {self._nan_inf_report('Xhat', Xhat)}"
+                )
 
-            # early stop on relative improvement over last accepted loss
+            # relative-improvement early stop
             if np.isfinite(prev):
                 rel = (prev - loss) / max(1.0, abs(prev))
                 if (prev >= loss) and (rel < self.tol):
-                    logger.info(
-                        f"{self.n_row_clusters}-{self.n_col_clusters}-it:{it} Early stopping  {rel:.6f}"
-                    )
+                    logger.info(f"{R}-{C}-it:{it} Early stopping  {rel:.6f}")
                     break
             prev = loss
-            loss_prev = loss  # next iteration's baseline
+            loss_prev = loss
 
-        # --- save learned factors ---
+        # save
         self.U_, self.V_, self.B_, self.Xhat_ = (
             U.astype(np.int8),
             V.astype(np.int8),
@@ -627,7 +617,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         return self
 
     # -------- Helpers / API --------
-
     def _greedy_update_gaussian(
         self,
         X: np.ndarray,
@@ -635,55 +624,43 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         memberships: np.ndarray,  # U (I×R) if axis=0, or V (J×C) if axis=1
         idx: int,
         components: np.ndarray,  # G (R×J) if axis=0, or H (I×C) if axis=1
-        comp_norm2: np.ndarray,  # ||t_k||^2 per template (shape R or C)
+        comp_norm2: np.ndarray,  # ||t_k||^2 per template
         k_limit: int | None,
         beta: float,
         axis: int,  # 0=row update, 1=col update
     ) -> None:
-        """
-        Fast greedy for the Gaussian objective.
+        import logging
 
-        For k_limit == 1:
-            - compute scores once and pick the best component (forced if its score ≤ 0).
-        For k_limit > 1 or None:
-            - use a Gram-updated scoring loop; stop when the best remaining score ≤ 0
-            or when k_limit picks are reached. If no positive-scored pick happened,
-            fall back to forcing the best component.
-
-        Side-effects:
-            - updates 'memberships' and the corresponding slice/column of Xhat in place.
-            - increments self._u_forced/_u_positive (axis=0) or self._v_forced/_v_positive (axis=1).
-        """
         if axis == 0:
             # -------- ROW UPDATE (U) --------
             i = idx
-            # base residual for row i
             base = X[i, :] - Xhat[i, :]
             if memberships[i, :].any():
                 base = base + components[memberships[i, :] == 1, :].sum(axis=0)
 
-            # clear current memberships
             memberships[i, :] = 0
 
-            # initial scores: s_r = <base, t_r> - 0.5||t_r||^2 - beta
-            s = components @ base  # (R,)
+            # initial scores s = <base, t_k> - 0.5||t_k||^2 - beta
+            s = components @ base
             s = s - 0.5 * comp_norm2 - beta
+
+            if logger.isEnabledFor(logging.DEBUG):
+                smax = float(np.max(s)) if s.size else float("-inf")
+                logger.debug(f"U[i={i}] smax={smax:.3e}")
+
             used = np.zeros(components.shape[0], dtype=bool)
 
-            # --- k == 1 fast path ---
             if k_limit == 1:
                 r_star = int(np.argmax(s))
                 forced = not (s[r_star] > 0)
-                # increment counters BEFORE returning
                 self._u_forced += int(forced)
                 self._u_positive += int(not forced)
-
                 memberships[i, r_star] = 1
                 Xhat[i, :] = memberships[i, :] @ components
                 return
 
-            # --- k > 1 (or None) Gram-accelerated updates ---
-            T = components @ components.T  # (R,R), Gram
+            # k > 1
+            T = components @ components.T
             picks = 0
             while (k_limit is None) or (picks < k_limit):
                 s[used] = -np.inf
@@ -693,16 +670,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 memberships[i, r_star] = 1
                 used[r_star] = True
                 picks += 1
-                # s_k ← s_k - <t_r*, t_k>
                 s -= T[r_star, :]
 
             if memberships[i, :].sum() == 0:
-                # forced fallback (no positive-scored pick)
                 r_star = int(np.argmax(s))
                 memberships[i, r_star] = 1
                 self._u_forced += 1
             else:
-                # at least one positive-scored pick happened
                 self._u_positive += 1
 
             Xhat[i, :] = memberships[i, :] @ components
@@ -710,33 +684,32 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         else:
             # -------- COLUMN UPDATE (V) --------
             j = idx
-            # base residual for column j
             base = X[:, j] - Xhat[:, j]
             if memberships[j, :].any():
                 base = base + components[:, memberships[j, :] == 1].sum(axis=1)
 
-            # clear current memberships
             memberships[j, :] = 0
 
-            # initial scores: s_c = <base, h_c> - 0.5||h_c||^2 - beta
-            s = components.T @ base  # (C,)
+            s = components.T @ base
             s = s - 0.5 * comp_norm2 - beta
+
+            if logger.isEnabledFor(logging.DEBUG):
+                smax = float(np.max(s)) if s.size else float("-inf")
+                logger.debug(f"V[j={j}] smax={smax:.3e}")
+
             used = np.zeros(components.shape[1], dtype=bool)
 
-            # --- k == 1 fast path ---
             if k_limit == 1:
                 c_star = int(np.argmax(s))
                 forced = not (s[c_star] > 0)
-                # increment counters BEFORE returning
                 self._v_forced += int(forced)
                 self._v_positive += int(not forced)
-
                 memberships[j, c_star] = 1
                 Xhat[:, j] = components @ memberships[j, :]
                 return
 
-            # --- k > 1 (or None) Gram-accelerated updates ---
-            T = components.T @ components  # (C,C), Gram
+            # k > 1
+            T = components.T @ components
             picks = 0
             while (k_limit is None) or (picks < k_limit):
                 s[used] = -np.inf
@@ -746,11 +719,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 memberships[j, c_star] = 1
                 used[c_star] = True
                 picks += 1
-                # s_k ← s_k - <h_c*, h_k>
                 s -= T[c_star, :]
 
             if memberships[j, :].sum() == 0:
-                # forced fallback
                 c_star = int(np.argmax(s))
                 memberships[j, c_star] = 1
                 self._v_forced += 1
@@ -1155,7 +1126,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             "max_iter": self.max_iter,
             "tol": self.tol,
             "random_state": self.random_state,
-            "verbose": self.verbose,
         }
 
     def set_params(self, **params):
