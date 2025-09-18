@@ -1196,7 +1196,6 @@ def cluster_data_and_explain_blocks(
     n_jobs: int = 1,
     batch_size: int = 4,
     plot_figure: bool = False,
-    verbose: bool = False,
 ) -> pd.DataFrame:
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=k_row,
@@ -1208,7 +1207,6 @@ def cluster_data_and_explain_blocks(
         b_inner=b_inner,  # inner prox steps for B when block_l1>0
         max_iter=max_iter,
         tol=tol,
-        verbose=verbose,
     )
 
     norm_data = normalize_data(
