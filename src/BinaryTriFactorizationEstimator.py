@@ -477,15 +477,18 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # history / logging
             if self.history_flag:
                 self.loss_history_.append(loss)
-            if self.verbose and self.loss == "gaussian":
+            if self.verbose:
                 logger.info(
-                    f"[iter {it:02d}] loss={loss:.6e}  rss={self._rss(X, Xhat):.6e}"
+                    f"{self.n_row_clusters}-{self.n_col_clusters}-it:{it:02d}-loss={loss:.6e}-rss={self._rss(X, Xhat):.6e}"
                 )
 
             # early stop on relative improvement over last accepted loss
             if np.isfinite(prev):
                 rel = (prev - loss) / max(1.0, abs(prev))
                 if (prev >= loss) and (rel < self.tol):
+                    logger.info(
+                        f"{self.n_row_clusters}-{self.n_col_clusters}-it:{it} Early stopping  {rel:.6f}"
+                    )
                     break
             prev = loss
             loss_prev = loss  # next iteration's baseline
@@ -498,160 +501,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             Xhat,
         )
         return self
-
-    # def fit(self, X, y=None):
-    #     X = check_array(X, dtype=np.float64, ensure_2d=True)
-    #     _ = y
-    #     I, J = X.shape
-    #     R, C = self.n_row_clusters, self.n_col_clusters
-    #     rng = self._rng()
-
-    #     # --- init memberships ---
-    #     U = self._init_binary((I, R), self.k_row, rng)
-    #     V = self._init_binary((J, C), self.k_col, rng)
-
-    #     # --- init B ---
-    #     if self.loss == "gaussian":
-    #         B = self._update_B_gaussian(X, U, V)
-    #     elif self.loss == "poisson":
-    #         B = np.abs(rng.normal(0.5, 0.1, size=(R, C))) + 0.1
-    #         B = self._update_B_poisson(X, U, V, B, n_inner=20)
-    #     else:
-    #         raise ValueError("loss must be 'gaussian' or 'poisson'")
-
-    #     if self.history_flag:
-    #         self.loss_history_ = []
-
-    #     # baseline (accepted) state before outer iters
-    #     Xhat = U @ (B @ V.T)
-    #     loss_prev = self._objective(X, Xhat, U, V)
-    #     prev = loss_prev  # for relative improvement check against last accepted loss
-
-    #     for it in range(self.max_iter):
-    #         # snapshot (for rollback)
-    #         U_prev, V_prev, B_prev = U.copy(), V.copy(), B.copy()
-    #         Xhat_prev = Xhat.copy()
-    #         loss_baseline = loss_prev
-
-    #         # --- B-step ---
-    #         if self.loss == "gaussian":
-    #             B = self._update_B_gaussian(X, U, V)
-    #         else:
-    #             B = self._update_B_poisson(X, U, V, B, n_inner=self.b_inner)
-
-    #         # --- Precompute shared quantities ---
-    #         G = B @ V.T  # (R, J)
-    #         H = U @ B  # (I, C)
-    #         Xhat = U @ G  # == H @ V.T
-
-    #         # norms for Gaussian scorer
-    #         if self.loss == "gaussian":
-    #             G_norm2 = np.einsum("rj,rj->r", G, G)  # (R,)
-    #             H_norm2 = np.einsum("ic,ic->c", H, H)  # (C,)
-
-    #         # --- U-step ---
-    #         for i in range(I):
-    #             if self.loss == "gaussian":
-    #                 self._greedy_update_gaussian(
-    #                     X=X,
-    #                     Xhat=Xhat,
-    #                     memberships=U,
-    #                     idx=i,
-    #                     components=G,
-    #                     comp_norm2=G_norm2,
-    #                     k_limit=self.k_row,
-    #                     scorer_fn=self._toggle_scores_gaussian_row,
-    #                     beta=self.beta,
-    #                     axis=0,
-    #                 )
-    #             else:
-    #                 self._greedy_update_poisson(
-    #                     X=X,
-    #                     Xhat=Xhat,
-    #                     memberships=U,
-    #                     idx=i,
-    #                     components=G,
-    #                     scorer_fn=self._poisson_delta_ll_row,
-    #                     beta=self.beta,
-    #                     k_limit=self.k_row,
-    #                     axis=0,
-    #                 )
-
-    #         # refresh after U-step
-    #         H = U @ B
-    #         Xhat = H @ V.T
-
-    #         # update H_norm2 if Gaussian (depends on U)
-    #         if self.loss == "gaussian":
-    #             H_norm2 = np.einsum("ic,ic->c", H, H)
-
-    #         # --- V-step ---
-    #         for j in range(J):
-    #             if self.loss == "gaussian":
-    #                 self._greedy_update_gaussian(
-    #                     X=X,
-    #                     Xhat=Xhat,
-    #                     memberships=V,
-    #                     idx=j,
-    #                     components=H,
-    #                     comp_norm2=H_norm2,
-    #                     k_limit=self.k_col,
-    #                     scorer_fn=self._toggle_scores_gaussian_col,
-    #                     beta=self.beta,
-    #                     axis=1,
-    #                 )
-    #             else:
-    #                 self._greedy_update_poisson(
-    #                     X=X,
-    #                     Xhat=Xhat,
-    #                     memberships=V,
-    #                     idx=j,
-    #                     components=H,
-    #                     scorer_fn=self._poisson_delta_ll_col,
-    #                     beta=self.beta,
-    #                     k_limit=self.k_col,
-    #                     axis=1,
-    #                 )
-
-    #         # --- finalize this outer iteration ---
-    #         G = B @ V.T
-    #         Xhat = U @ G
-
-    #         # compute new loss (AFTER all updates)
-    #         loss_new = self._objective(X, Xhat, U, V)
-
-    #         # monotonic guard: rollback if worse than baseline
-    #         if loss_new > loss_baseline + 1e-12:
-    #             U, V, B = U_prev, V_prev, B_prev
-    #             Xhat = Xhat_prev
-    #             loss = loss_baseline
-    #         else:
-    #             loss = loss_new
-
-    #         # history / logging
-    #         if self.history_flag:
-    #             self.loss_history_.append(loss)
-    #         if self.verbose and self.loss == "gaussian":
-    #             logger.info(
-    #                 f"[iter {it:02d}] loss={loss:.6e}  rss={self._rss(X,Xhat):.6e}"
-    #             )
-
-    #         # early stop on relative improvement over last accepted loss
-    #         if np.isfinite(prev):
-    #             rel = (prev - loss) / max(1.0, abs(prev))
-    #             if (prev >= loss) and (rel < self.tol):
-    #                 break
-    #         prev = loss
-    #         loss_prev = loss  # next iteration's baseline
-
-    #     # save learned factors
-    #     self.U_, self.V_, self.B_, self.Xhat_ = (
-    #         U.astype(np.int8),
-    #         V.astype(np.int8),
-    #         B,
-    #         Xhat,
-    #     )
-    #     return self
 
     # -------- Helpers / API --------
 
