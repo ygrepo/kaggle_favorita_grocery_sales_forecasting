@@ -365,7 +365,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if tail > 0:
             bins_str += f"  (>{K}:{tail})"
 
-        logger.info(f"{name} memberships — n={n}  mean={mean:.2f}  median={med:.2f}  p90={p90:.2f}  p95={p95:.2f}  p99={p99:.2f}  |  counts: {bins_str}")
+        logger.info(
+            f"{name} memberships — n={n}  mean={mean:.2f}  median={med:.2f}  p90={p90:.2f}  p95={p95:.2f}  p99={p99:.2f}  |  counts: {bins_str}"
+        )
 
     # -------- Toggle scoring (marginal gain) --------
     def _poisson_delta_ll_row(self, x_row, mu_row, g_row):
@@ -653,12 +655,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         )
         # After the training loop, before saving/returning
         try:
-            self._log_membership_histogram(
-                U, name="stores", top_bins=10, level=logging.INFO
-            )
-            self._log_membership_histogram(
-                V, name="items", top_bins=10, level=logging.INFO
-            )
+            self._log_membership_histogram(U, name="stores", top_bins=10)
+            self._log_membership_histogram(V, name="items", top_bins=10)
         except Exception as e:
             logger.debug(f"membership histogram logging skipped: {e!r}")
 
