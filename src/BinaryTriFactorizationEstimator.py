@@ -330,6 +330,43 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         return B
 
+    def _log_membership_histogram(
+        self, M: np.ndarray, name: str, top_bins: int = 10
+    ) -> None:
+        """
+        Log a compact histogram of per-entity membership counts for a binary assignment matrix M.
+        - For U (stores×row_clusters), call with name="stores"
+        - For V (items×col_clusters),  call with name="items"
+        """
+        if M.size == 0:
+            logger.info("{name}: empty membership matrix")
+            return
+
+        # Each row of M corresponds to one entity (store or item); sum across clusters
+        counts = np.asarray(M.sum(axis=1)).astype(int).ravel()
+        n = counts.size
+        kmax = int(counts.max(initial=0))
+
+        # Histogram: show bins 0..K, and lump any higher counts into a tail
+        K = min(kmax, int(top_bins))
+        hist = np.bincount(counts, minlength=K + 1)
+        shown = hist[: K + 1].sum()
+        tail = n - shown
+
+        # Basic stats
+        mean = float(counts.mean()) if n else 0.0
+        med = float(np.median(counts)) if n else 0.0
+        p90 = float(np.percentile(counts, 90)) if n else 0.0
+        p95 = float(np.percentile(counts, 95)) if n else 0.0
+        p99 = float(np.percentile(counts, 99)) if n else 0.0
+
+        # Build a compact string for the first K bins (e.g., "0:12  1:345  2:789 ...")
+        bins_str = "  ".join(f"{k}:{int(hist[k])}" for k in range(K + 1))
+        if tail > 0:
+            bins_str += f"  (>{K}:{tail})"
+
+        logger.info(f"{name} memberships — n={n}  mean={mean:.2f}  median={med:.2f}  p90={p90:.2f}  p95={p95:.2f}  p99={p99:.2f}  |  counts: {bins_str}")
+
     # -------- Toggle scoring (marginal gain) --------
     def _poisson_delta_ll_row(self, x_row, mu_row, g_row):
         """
@@ -614,6 +651,17 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             B,
             Xhat,
         )
+        # After the training loop, before saving/returning
+        try:
+            self._log_membership_histogram(
+                U, name="stores", top_bins=10, level=logging.INFO
+            )
+            self._log_membership_histogram(
+                V, name="items", top_bins=10, level=logging.INFO
+            )
+        except Exception as e:
+            logger.debug(f"membership histogram logging skipped: {e!r}")
+
         return self
 
     # -------- Helpers / API --------

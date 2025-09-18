@@ -1197,6 +1197,10 @@ def cluster_data_and_explain_blocks(
     batch_size: int = 4,
     plot_figure: bool = False,
 ) -> pd.DataFrame:
+    if k_row <= 0 or k_col <= 0:
+        k_row = None
+        k_col = None
+
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=k_row,
         k_col=k_col,
