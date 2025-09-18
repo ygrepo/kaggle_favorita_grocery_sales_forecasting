@@ -170,6 +170,14 @@ def sort_df(
     return df
 
 
+def get_nan_stats(df: pd.DataFrame):
+    arr = df.to_numpy()
+    num_total = arr.size
+    num_nans = np.isnan(arr).sum()
+    num_finite = np.isfinite(arr).sum()
+    return num_nans, num_total, num_finite
+
+
 def load_raw_data(data_fn: Path) -> pd.DataFrame:
     """Load and preprocess training data.
 
@@ -1812,8 +1820,6 @@ def zscore_with_axis(
       - "zero": for all-NaN slices, return zeros in that slice
       - "skip": for all-NaN slices, leave them as-is (no scaling)
     """
-    import numpy as np
-    import pandas as pd
 
     if axis not in (0, 1):
         raise ValueError("axis must be 0 (columns) or 1 (rows)")
@@ -1890,59 +1896,65 @@ def zscore_with_axis(
     return pd.DataFrame(z, index=df.index, columns=df.columns)
 
 
-# def zscore_with_axis(
-#     df: pd.DataFrame, axis: int = 0, nan_policy: str = "omit", epsilon: float = 1e-8
-# ) -> pd.DataFrame:
-#     """
-#     Compute z-score along rows (axis=1) or columns (axis=0), optionally ignoring NaNs.
-#     Avoids division by zero by adding epsilon to zero std values.
-#     """
-#     values = df.values.astype(float)
-
-#     logger.info(f"values={values}")
-
-#     if nan_policy == "omit":
-#         mean = np.nanmean(values, axis=axis, keepdims=True)
-#         std = np.nanstd(values, axis=axis, ddof=0, keepdims=True)
-#     elif nan_policy == "propagate":
-#         mean = np.mean(values, axis=axis, keepdims=True)
-#         std = np.std(values, axis=axis, ddof=0, keepdims=True)
-#     else:
-#         raise ValueError("nan_policy must be 'omit' or 'propagate'")
-
-#     std_safe = np.where(std == 0, epsilon, std)
-#     z = (values - mean) / std_safe
-#     return pd.DataFrame(z, index=df.index, columns=df.columns)
-
-
 def median_mean_transform(
     df: pd.DataFrame,
     *,
-    # freq="W",
-    column_name="unit_sales",
+    column_name="growth_rate_1",
     median_transform=True,
     mean_transform=False,
 ) -> pd.DataFrame:
     if median_transform:
-        # df = (
-        #     df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
-        #         "unit_sales"
-        #     ]
-        #     .median()
-        #     .reset_index()
-        # )
-        df = df.groupby(["store", "item"])[column_name].median().unstack(fill_value=0)
+        df = df.pivot_table(
+            values=column_name, index="store", columns="item", aggfunc="median"
+        )
     elif mean_transform:
-        # df = (
-        #     df.groupby([pd.Grouper(key="date", freq=freq), "store", "item"])[
-        #         "unit_sales"
-        #     ]
-        #     .mean()
-        #     .reset_index()
-        # )
-        df = df.groupby(["store", "item"])[column_name].mean().unstack(fill_value=0)
+        df = df.pivot_table(
+            values=column_name, index="store", columns="item", aggfunc="mean"
+        )
     else:
         raise ValueError("Set either median_transform or mean_transform to True.")
+    df = df.sort_index().sort_index(axis=1)
+    return df
+
+
+def impute_with_col_mean_median(
+    df: pd.DataFrame,
+    cnt: pd.DataFrame,
+    median_transform=True,
+    mean_transform=False,
+) -> pd.DataFrame:
+    """
+    Replace entries in `df` where `cnt == 0` with column means or medians
+    computed only from observed (cnt > 0) values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data matrix to impute.
+    cnt : pd.DataFrame
+        Same shape as df, counts of observations.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of df with missing entries replaced by column means.
+    """
+    # Compute means or medians only on observed values (cnt > 0)
+    if mean_transform:
+        col_means_obs = df.where(cnt > 0).mean(axis=0)
+    elif median_transform:
+        col_means_obs = df.where(cnt > 0).median(axis=0)
+    else:
+        raise ValueError("method must be 'mean' or 'median'")
+
+    # Broadcast means to full shape
+    mean_matrix = pd.DataFrame(
+        [col_means_obs.values] * len(df), columns=df.columns, index=df.index
+    )
+
+    # Mask where cnt == 0, fill from col_means_obs
+    df = df.where(cnt > 0, mean_matrix)
+
     return df
 
 
@@ -1950,10 +1962,10 @@ def normalize_data(
     df: pd.DataFrame,
     # freq="W",
     *,
-    column_name="unit_sales",
+    column_name="growth_rate_1",
     median_transform=True,
     mean_transform=False,
-    log_transform=True,
+    log_transform=False,
     zscore_rows=True,
     zscore_cols=False,  # safer default to avoid double scaling
 ):
@@ -1980,12 +1992,37 @@ def normalize_data(
     pd.DataFrame
         A normalized store × item matrix
     """
+    # Create count matrix first (before transforming df)
+    cnt = df.pivot_table(
+        values=column_name, index="store", columns="item", aggfunc="count"
+    )
+
+    # Transform df to store × item matrix
     df = median_mean_transform(
         df,
         column_name=column_name,
         median_transform=median_transform,
         mean_transform=mean_transform,
     )
+
+    # Align count matrix with transformed df
+    cnt = cnt.reindex(index=df.index, columns=df.columns, fill_value=0)
+
+    # Impute missing values with column means
+    df = impute_with_col_mean_median(df, cnt, median_transform, mean_transform)
+
+    num_nans, num_total, num_finite = get_nan_stats(df)
+    logger.info(
+        f"Finite: {num_finite}, NaNs: {num_nans}, {100 * num_nans / num_total:.1f}%)"
+    )
+
+    # Check if imputation worked - if still all NaNs, fill with zeros
+    if df.isna().all().all():
+        logger.warning("Imputation failed - all values are NaN. Filling with zeros.")
+        df = df.fillna(0)
+    elif df.isna().any().any():
+        logger.warning(f"Some NaN values remain after imputation. Filling with zeros.")
+        df = df.fillna(0)
 
     if log_transform:
         df = df.apply(np.log1p)
@@ -1997,29 +2034,6 @@ def normalize_data(
         df = zscore_with_axis(df, axis=0)
 
     return df
-
-
-def impute_by_column_mean(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Impute missing values by column mean.
-    """
-    mat = df.pivot_table(
-        values="growth_rate_1", index="store", columns="item", aggfunc="median"
-    )
-    cnt = df.pivot_table(
-        values="growth_rate_1", index="store", columns="item", aggfunc="count"
-    )
-    mat = mat.sort_index().sort_index(axis=1)
-    cnt = cnt.reindex(index=mat.index, columns=mat.columns)
-
-    col_means_obs = mat.where(cnt > 0).mean(axis=0)
-    mat_imp = mat.copy()
-    for c in mat.columns:
-        v = mat[c].to_numpy(copy=True)
-        miss = cnt[c].to_numpy() == 0
-        v[miss] = col_means_obs[c]
-        mat_imp[c] = v
-    return mat_imp
 
 
 def normalize_store_item_data(

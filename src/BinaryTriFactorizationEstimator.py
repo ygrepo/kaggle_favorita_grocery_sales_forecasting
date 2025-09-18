@@ -1942,6 +1942,9 @@ class BTFEstimatorBuilder:
         kw.update(overrides)
         kw["n_row_clusters"] = int(n_row_clusters)
         kw["n_col_clusters"] = int(n_col_clusters)
+        logger.info(
+            f"Building estimator with n_row={n_row_clusters}, n_col={n_col_clusters}"
+        )
         if random_state is not None:
             kw["random_state"] = int(random_state)
         return self.estimator_class(**kw)

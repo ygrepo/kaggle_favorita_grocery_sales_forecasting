@@ -115,6 +115,18 @@ def parse_args():
         help="Top k for BT-NMF",
     )
     parser.add_argument(
+        "--verbose",
+        type=bool,
+        default=True,
+        help="Whether to print verbose output",
+    )
+    parser.add_argument(
+        "--plot_figure",
+        type=bool,
+        default=False,
+        help="Whether to plot the figure",
+    )
+    parser.add_argument(
         "--top_rank_fn",
         type=str,
         default="",
@@ -228,6 +240,8 @@ def main():
             figure_fn=figure_fn,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
+            verbose=args.verbose,
+            plot_figure=args.plot_figure,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:
