@@ -181,6 +181,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # Lipschitz bound for ∇f(B) = Uᵀ(UBVᵀ - X)V + αB
             L = float(np.linalg.norm(UtU, 2) * np.linalg.norm(VtV, 2) + self.alpha)
             eta = 1.0 / max(L, 1e-12)
+            logger.debug(
+                f"B_step_ISTA L={L:.3e}-eta={eta:.3e}-B_L1={np.sum(np.abs(B)):.6e}"
+            )
 
             lam = float(self.block_l1)
             a = float(self.alpha)
@@ -189,10 +192,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 # Gradient step
                 E = (U @ B) @ V.T - X  # residual in data space
                 G = U.T @ E @ V + a * B  # gradient in B-space
+                logger.debug(f"B_step_ISTA G={np.sum(np.abs(G)):.6e}")
                 B = B - eta * G
                 # Soft-thresholding
                 thr = eta * lam
                 B = np.sign(B) * np.maximum(np.abs(B) - thr, 0.0)
+                logger.debug(f"B_step_ISTA B={np.sum(np.abs(B)):.6e}")
 
             return B
 
@@ -327,6 +332,41 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     def _rss(self, X, Xhat):
         return float(np.sum((X - Xhat) ** 2))
 
+    def _nan_inf_report(self, name, arr):
+        return dict(
+            name=name,
+            has_nan=bool(np.isnan(arr).any()),
+            has_inf=bool(np.isinf(arr).any()),
+            max_abs=float(np.max(np.abs(arr))) if arr.size else 0.0,
+            frob=float(np.linalg.norm(arr)) if arr.size else 0.0,
+        )
+
+    def _cond_spd(self, A):
+        # A is small (R×R or C×C); add tiny diag to avoid crashes in logging
+        eps = 1e-12
+        try:
+            w = np.linalg.eigvalsh(A + eps * np.eye(A.shape[0]))
+            w = np.clip(w, eps, None)
+            return float(w.max() / w.min())
+        except Exception:
+            return float("inf")
+
+    def _grad_B_gaussian(self, X, U, V, B, alpha):
+        # ∇_B 0.5||X - U B Vᵀ||² + (alpha/2)||B||²  = Uᵀ(U B Vᵀ - X)V + alpha B
+        E = (U @ B) @ V.T - X
+        return U.T @ E @ V + alpha * B
+
+    def _hamming_changes(self, A_new, A_prev):
+        return int(np.sum(A_new != A_prev))
+
+    def _describe_scores(self, s):
+        if s.size == 0:
+            return dict(max=float("-inf"), p95=float("-inf"), pos_frac=0.0)
+        maxv = float(np.max(s))
+        p95 = float(np.percentile(s, 95))
+        pos_frac = float(np.mean(s > 0))
+        return dict(max=maxv, p95=p95, pos_frac=pos_frac)
+
     # -------- Fit --------
     def fit(self, X, y=None):
         """
@@ -372,6 +412,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         Xhat = U @ (B @ V.T)
         loss_prev = self._objective(X, Xhat, U, V)
         prev = loss_prev  # for early-stop relative improvement
+
+        logger.info(
+            f"BTriF start I={I} J={J} R={R} C={C} k_row={self.k_row} k_col={self.k_col} "
+            f"alpha={self.alpha} beta={self.beta} block_l1={self.block_l1} tol={self.tol} "
+            f"max_iter={self.max_iter} loss={self.loss}"
+        )
+        rep_X = self._nan_inf_report("X", X)
+        logger.debug(f"sanity_init {rep_X}")
 
         # -------- outer loop --------
         for it in range(self.max_iter):
