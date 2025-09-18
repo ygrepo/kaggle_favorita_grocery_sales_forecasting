@@ -1197,8 +1197,8 @@ def cluster_data_and_explain_blocks(
     verbose: bool = False,
 ) -> pd.DataFrame:
     make_btf = BinaryTriFactorizationEstimator.factory(
-        k_row=None,
-        k_col=None,
+        k_row=1,
+        k_col=1,
         loss="gaussian",
         alpha=alpha,
         beta=beta,
@@ -1244,7 +1244,7 @@ def cluster_data_and_explain_blocks(
     )
 
     logger.info(f"Grid search completed. Found {len(grid_df)} combinations")
-    
+
     # # Rank and pick the best
     # ranked_df, best = pick_best_btf_setting(
     #     grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
