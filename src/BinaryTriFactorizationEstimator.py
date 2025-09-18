@@ -181,9 +181,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # Lipschitz bound for ∇f(B) = Uᵀ(UBVᵀ - X)V + αB
             L = float(np.linalg.norm(UtU, 2) * np.linalg.norm(VtV, 2) + self.alpha)
             eta = 1.0 / max(L, 1e-12)
-            logger.debug(
-                f"B_step_ISTA L={L:.3e}-eta={eta:.3e}-B_L1={np.sum(np.abs(B)):.6e}"
-            )
+            # logger.debug(
+            #     f"B_step_ISTA L={L:.3e}-eta={eta:.3e}-B_L1={np.sum(np.abs(B)):.6e}"
+            # )
 
             lam = float(self.block_l1)
             a = float(self.alpha)
@@ -192,12 +192,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 # Gradient step
                 E = (U @ B) @ V.T - X  # residual in data space
                 G = U.T @ E @ V + a * B  # gradient in B-space
-                logger.debug(f"B_step_ISTA G={np.sum(np.abs(G)):.6e}")
+                # logger.debug(f"B_step_ISTA G={np.sum(np.abs(G)):.6e}")
                 B = B - eta * G
                 # Soft-thresholding
                 thr = eta * lam
                 B = np.sign(B) * np.maximum(np.abs(B) - thr, 0.0)
-                logger.debug(f"B_step_ISTA B={np.sum(np.abs(B)):.6e}")
+                # logger.debug(f"B_step_ISTA B={np.sum(np.abs(B)):.6e}")
 
             return B
 
