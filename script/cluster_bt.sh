@@ -18,12 +18,12 @@ DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
 ROW_RANGE="46:47"
-COL_RANGE="48:49"
+COL_RANGE="32:40"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
 
 ALPHA="1"
-BETA="0.03"
+BETA="0.02"
 BLOCK_L1="0"
 B_INNER="35"
 MAX_ITER="200"  
@@ -31,8 +31,9 @@ TOL="1E-6"
 MAX_PVE_DROP="0.01"  
 MIN_SIL="-0.05"  
 MIN_KEEP="6"  
-TOP_K="10"  
-
+TOP_K="10"
+K_ROW = 1  
+K_COL = 2
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
@@ -46,7 +47,7 @@ OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_it
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
-LOG_LEVEL="DEBUG"
+LOG_LEVEL="INFO"
 
 
 N_JOBS=-1
@@ -63,6 +64,8 @@ while [[ $# -gt 0 ]]; do
     --beta) BETA="$2"; shift 2 ;;
     --block_l1) BLOCK_L1="$2"; shift 2 ;;
     --b_inner) B_INNER="$2"; shift 2 ;;
+    --k_row) K_ROW="$2"; shift 2 ;;
+    --k_col) K_COL="$2"; shift 2 ;;
     --max_iter) MAX_ITER="$2"; shift 2 ;;
     --tol) TOL="$2"; shift 2 ;;
     --max_pve_drop) MAX_PVE_DROP="$2"; shift 2 ;;
@@ -98,6 +101,8 @@ echo "Block l1: $BLOCK_L1" | tee -a "$LOG_FILE"
 echo "B inner: $B_INNER" | tee -a "$LOG_FILE"
 echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
+echo "K row: $K_ROW" | tee -a "$LOG_FILE"
+echo "K col: $K_COL" | tee -a "$LOG_FILE"
 echo "Max PVE drop: $MAX_PVE_DROP" | tee -a "$LOG_FILE"
 echo "Min Silhouette: $MIN_SIL" | tee -a "$LOG_FILE"
 echo "Min keep: $MIN_KEEP" | tee -a "$LOG_FILE"
@@ -124,6 +129,8 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --b_inner "$B_INNER" \
   --max_iter "$MAX_ITER" \
   --tol "$TOL" \
+  --k_row "$K_ROW" \
+  --k_col "$K_COL" \
   --max_pve_drop "$MAX_PVE_DROP" \
   --min_sil "$MIN_SIL" \
   --min_keep "$MIN_KEEP" \

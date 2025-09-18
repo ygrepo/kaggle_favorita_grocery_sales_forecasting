@@ -85,6 +85,18 @@ def parse_args():
         help="Maximum number of iterations",
     )
     parser.add_argument(
+        "--k_row",
+        type=int,
+        default=1,
+        help="K row for BT-NMF",
+    )
+    parser.add_argument(
+        "--k_col",
+        type=int,
+        default=1,
+        help="K col for BT-NMF",
+    )
+    parser.add_argument(
         "--tol",
         type=float,
         default=1e-5,
@@ -198,6 +210,8 @@ def main():
         logger.info(f"  Block l1: {args.block_l1}")
         logger.info(f"  B inner: {args.b_inner}")
         logger.info(f"  Max iter: {args.max_iter}")
+        logger.info(f"  K row: {args.k_row}")
+        logger.info(f"  K col: {args.k_col}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Max PVE drop: {args.max_pve_drop}")
         logger.info(f"  Min Silhouette: {args.min_sil}")
@@ -229,6 +243,8 @@ def main():
             block_l1=args.block_l1,
             b_inner=args.b_inner,
             max_iter=args.max_iter,
+            k_row=args.k_row,
+            k_col=args.k_col,
             tol=args.tol,
             max_pve_drop=args.max_pve_drop,
             min_sil=args.min_sil,

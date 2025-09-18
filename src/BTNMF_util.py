@@ -1182,6 +1182,8 @@ def cluster_data_and_explain_blocks(
     block_l1: float = 0.0,
     b_inner: int = 15,
     max_iter: int = 50,
+    k_row: int = 1,
+    k_col: int = 1,
     tol: float = 1e-5,
     max_pve_drop: float = 0.01,
     min_sil: float = -0.05,
@@ -1197,8 +1199,8 @@ def cluster_data_and_explain_blocks(
     verbose: bool = False,
 ) -> pd.DataFrame:
     make_btf = BinaryTriFactorizationEstimator.factory(
-        k_row=1,
-        k_col=1,
+        k_row=k_row,
+        k_col=k_col,
         loss="gaussian",
         alpha=alpha,
         beta=beta,

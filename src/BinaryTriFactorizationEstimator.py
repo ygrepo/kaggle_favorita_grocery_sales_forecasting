@@ -551,6 +551,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # membership dynamics
             dU = int((U != U_prev).sum())
             dV = int((V != V_prev).sum())
+
             row_on = float(U.sum(1).mean())
             col_on = float(V.sum(1).mean())
 
@@ -563,7 +564,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             # monotonic guard: rollback if worse than baseline (tolerate tiny FP noise)
             rolled_back = False
-            if loss_new > loss_baseline + 1e-9:
+            if loss_new > loss_baseline + 1e-8:
                 rolled_back = True
                 U, V, B = U_prev, V_prev, B_prev
                 Xhat = Xhat_prev
