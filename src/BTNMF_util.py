@@ -21,7 +21,7 @@ def get_normalized_assignments(
     row_col: str = "store",
     col_col: str = "item",
     value_col: str = "growth_rate_1",
-    drop_unassigned: bool = False,  # set True to remove block_id == -1
+    drop_unassigned: bool = True,  # set True to remove block_id == -1
 ) -> pd.DataFrame:
 
     block_id_mat = np.asarray(assign["block_id"])
@@ -53,13 +53,9 @@ def get_normalized_assignments(
 
     # Optional cleanup
     if drop_unassigned:
-        df = df[df["block_id"] >= 0].copy()
+        df = df[df["block_id"] >= 0]
 
-    # Keep block_id as int if possible
-    if pd.api.types.is_float_dtype(df["block_id"]):
-        # only safe if no NaN; otherwise keep float
-        if not df["block_id"].isna().any():
-            df["block_id"] = df["block_id"].astype(int)
+    df["block_id"] = df["block_id"].astype("Int64")  # pandas nullable int
 
     return df
 
@@ -1309,7 +1305,6 @@ def cluster_data_and_explain_blocks(
 
     est.fit(X_array)
     assign = est.filter_blocks(X=X_array, min_keep=min_keep, return_frame=False)
-
     if summary_fn is not None:
         summary = est.explain_blocks(
             X=X_array,
@@ -1321,21 +1316,28 @@ def cluster_data_and_explain_blocks(
         logger.info(f"Saving summary to {summary_fn}")
         summary.to_csv(summary_fn, index=False)
 
-    # get_normalized_assignments expects a DataFrame, so ensure we have one
-    if hasattr(norm_data, "index"):
-        # norm_data is a DataFrame
-        norm_data_df = norm_data
-    else:
-        # norm_data is a NumPy array - we need to reconstruct the DataFrame
-        # This shouldn't happen with current code, but adding as safety
-        logger.warning(
-            "norm_data is NumPy array, cannot create assignments without index/columns"
-        )
-        raise ValueError("norm_data must be a DataFrame for get_normalized_assignments")
+    U, B, V = est.factors()  # U: (I,R), V: (J,C)
+    R, C = U.shape[1], V.shape[1]
+    bid = np.asarray(assign["block_id"])
+
+    logger.info(
+        f"unique block_ids (first 20): {np.unique(bid)[:20]} count: {np.unique(bid).size}"
+    )
+    logger.info(f"bid shape: {bid.shape}")
+
+    # Cluster occupancy (are we collapsed to one cluster?)
+    logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # length R
+    logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # length C
 
     df2 = get_normalized_assignments(
-        assign, norm_data_df
+        assign, norm_data
     )  # contains unique per-cell block_id
+    df = df.merge(
+        df2.drop(columns="growth_rate_1", axis=1), on=["store", "item"], how="left"
+    )
+    if output_fn is not None:
+        logger.info(f"Saving output to {output_fn}")
+        save_csv_or_parquet(df, output_fn)
 
     # plot
     if plot_figure:
@@ -1362,12 +1364,5 @@ def cluster_data_and_explain_blocks(
             xtick_rotation=45,
             show_plot=False,
         )
-    df = df.merge(
-        df2.drop(columns="growth_rate_1", axis=1), on=["store", "item"], how="left"
-    )
-
-    if output_fn is not None:
-        logger.info(f"Saving output to {output_fn}")
-        save_csv_or_parquet(df, output_fn)
 
     return df
