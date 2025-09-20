@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, Any, Iterable, Optional, Callable
+from typing import Dict, Any, Iterable, Optional, Callable, Tuple
 import pandas as pd
 from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
