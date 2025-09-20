@@ -172,7 +172,12 @@ def merge_blocks_by_stat(
       - "sign": positives vs negatives (by chosen stat)
       - "kmeans": k-means in 1D on the chosen stat (k groups)
     """
-    summ = summarize_blocks_for_merge(est, norm_data.to_numpy(), assign)
+    # Handle both DataFrame and NumPy array cases
+    if hasattr(norm_data, "to_numpy"):
+        X_array = norm_data.to_numpy()
+    else:
+        X_array = norm_data
+    summ = summarize_blocks_for_merge(est, X_array, assign)
     stat_col = "mean" if stat == "mean" else "median"
     s = summ[stat_col].to_numpy()
 
@@ -1195,10 +1200,15 @@ def normalize_data_and_fit_estimator(
         zscore_cols=True,
     ).fillna(0)
     est = est_maker(n_row, n_col, random_state=random_state)
-    est.fit(norm_data.to_numpy())
-    assign = est.filter_blocks(
-        X=norm_data.to_numpy(), min_keep=min_keep, return_frame=False
-    )
+
+    # Handle both DataFrame and NumPy array cases
+    if hasattr(norm_data, "to_numpy"):
+        X_array = norm_data.to_numpy()
+    else:
+        X_array = norm_data
+
+    est.fit(X_array)
+    assign = est.filter_blocks(X=X_array, min_keep=min_keep, return_frame=False)
     return est, assign
 
 
@@ -1291,22 +1301,47 @@ def cluster_data_and_explain_blocks(
     n_row = best["n_row"]
     n_col = best["n_col"]
     est = make_btf(n_row, n_col, random_state=42)
-    est.fit(norm_data.to_numpy())
-    assign = est.filter_blocks(
-        X=norm_data.to_numpy(), min_keep=min_keep, return_frame=False
-    )
+
+    # Handle both DataFrame and NumPy array cases
+    if hasattr(norm_data, "to_numpy"):
+        # norm_data is a DataFrame
+        X_array = norm_data.to_numpy()
+        row_names = norm_data.index.to_numpy()
+        col_names = norm_data.columns.to_numpy()
+    else:
+        # norm_data is already a NumPy array
+        X_array = norm_data
+        row_names = None
+        col_names = None
+
+    est.fit(X_array)
+    assign = est.filter_blocks(X=X_array, min_keep=min_keep, return_frame=False)
+
     if summary_fn is not None:
         summary = est.explain_blocks(
-            X=norm_data.to_numpy(),
+            X=X_array,
             assign=assign,
-            row_names=norm_data.index.to_numpy(),
-            col_names=norm_data.columns.to_numpy(),
+            row_names=row_names,
+            col_names=col_names,
             top_k=5,
         )
         logger.info(f"Saving summary to {summary_fn}")
         summary.to_csv(summary_fn, index=False)
+
+    # get_normalized_assignments expects a DataFrame, so ensure we have one
+    if hasattr(norm_data, "index"):
+        # norm_data is a DataFrame
+        norm_data_df = norm_data
+    else:
+        # norm_data is a NumPy array - we need to reconstruct the DataFrame
+        # This shouldn't happen with current code, but adding as safety
+        logger.warning(
+            "norm_data is NumPy array, cannot create assignments without index/columns"
+        )
+        raise ValueError("norm_data must be a DataFrame for get_normalized_assignments")
+
     df2 = get_normalized_assignments(
-        assign, norm_data
+        assign, norm_data_df
     )  # contains unique per-cell block_id
 
     # plot
