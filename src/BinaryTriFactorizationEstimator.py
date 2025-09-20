@@ -366,8 +366,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             bins_str += f"  (>{K}:{tail})"
 
         logger.info(
-            f"{name} memberships — n={n}  mean={mean:.2f}  median={med:.2f}  p90={p90:.2f}  p95={p95:.2f}  p99={p99:.2f}  |  counts: {bins_str}"
+            f"{name} memberships — n={n}  "
+            f"Row_clusters:{self.n_row_clusters}-"
+            f"Col_clusters:{self.n_col_clusters}  "
+            f"mean={mean:.2f}  median={med:.2f}  "
+            f"p90={p90:.2f}  p95={p95:.2f}  p99={p99:.2f}"
         )
+        logger.info(f"  counts: {bins_str}")
 
     # -------- Toggle scoring (marginal gain) --------
     def _poisson_delta_ll_row(self, x_row, mu_row, g_row):
@@ -538,8 +543,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             tU1 = time.perf_counter()
 
             # refresh after U
-            H = U @ B
-            Xhat = H @ V.T
+            Xhat = U @ B @ V.T
+            Rres = X - Xhat
+            a = Rres.mean(axis=1, keepdims=True)  # I×1
+            b = (Rres - a).mean(axis=0, keepdims=True)  # 1×J
+            Xhat = Xhat + a + b
+
             if self.loss == "gaussian":
                 H_norm2 = np.einsum("ic,ic->c", H, H)
 
@@ -618,14 +627,24 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 if np.isfinite(total_power)
                 else float("nan")
             )
+            # relative contributions
+            tot_loss = rss + regB + (self.block_l1 * l1B if self.block_l1 > 0 else 0.0)
+            frac_rss = rss / tot_loss if tot_loss > 0 else 0.0
+            frac_reg = regB / tot_loss if tot_loss > 0 else 0.0
+            frac_l1 = (
+                (self.block_l1 * l1B) / tot_loss
+                if self.block_l1 > 0 and tot_loss > 0
+                else 0.0
+            )
 
             if self.history_flag:
                 self.loss_history_.append(loss)
 
             logger.info(
                 f"{R}-{C}-it:{it:02d} loss={loss:.6e} rss={rss:.6e} PVE={pve:.2%} RMSE={rmse:.3f} "
-                f"regB={regB:.6e} l1B={l1B:.6e} dU={dU} dV={dV} "
-                f"row_on≈{row_on:.2f} col_on≈{col_on:.2f} "
+                f"regB={regB:.3e} l1B={l1B:.3e} | frac_rss={frac_rss:.2%} frac_reg={frac_reg:.2%} frac_l1={frac_l1:.2%} "
+                f"dU={dU} dV={dV} "
+                f"averag_clusters_per_row={row_on:.2f} averag_clusters_per_col={col_on:.2f} "
                 f"U_forced={self._u_forced} U_pos={self._u_positive} "
                 f"V_forced={self._v_forced} V_pos={self._v_positive}"
             )
@@ -654,6 +673,19 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             B,
             Xhat,
         )
+        # --- final diagnostics (last accepted iteration) ---
+        rows_forced_pct = 100.0 * (self._u_forced / max(1, I))
+        rows_pos_pct = 100.0 * (self._u_positive / max(1, I))
+        cols_forced_pct = 100.0 * (self._v_forced / max(1, J))
+        cols_pos_pct = 100.0 * (self._v_positive / max(1, J))
+
+        logger.info(
+            f"Final pick summary — rows: forced={self._u_forced}/{I} ({rows_forced_pct:.2f}%) "
+            f"positive={self._u_positive}/{I} ({rows_pos_pct:.2f}%) | "
+            f"cols: forced={self._v_forced}/{J} ({cols_forced_pct:.2f}%) "
+            f"positive={self._v_positive}/{J} ({cols_pos_pct:.2f}%)"
+        )
+
         # After the training loop, before saving/returning
         try:
             self._log_membership_histogram(U, name="stores", top_bins=10)
@@ -1299,52 +1331,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         min_abs_B: float | None = None,
         on_empty: str = "fallback",  # "skip" | "fallback" | "raise"
     ):
-        r"""
-        Assign a **unique (row-block r*, col-block c*)** to every cell (i,j) of X
-        consistent with the current tri-factorization X̂ = U B Vᵀ.
-
-        Plain-English:
-        • For each cell (i,j), only blocks (r,c) where row cluster r is active for i (U[i,r]=1)
-            and column cluster c is active for j (V[j,c]=1) are eligible.
-        • We score each eligible block using one of three modes and choose the best one:
-            1) "dominant"       : pick the block with largest |B_rc| (Gaussian) or largest B_rc (Poisson).
-            2) "gaussian_delta" : use a squared-error-based local score.
-            3) "poisson_delta"  : use a Poisson log-likelihood-based local score.
-        • Optionally restrict choices with `allowed_mask` (or via `min_abs_B`), and follow
-            a policy if a cell has no eligible blocks.
-
-        Notation used in the scoring:
-        x_ij   := X[i,j]            (only needed for delta methods)
-        x̂_ij  := Xhat[i,j]         (current reconstruction)
-        b      := B[r,c]            (candidate block weight)
-
-        Scoring formulas (per (i,j) and per candidate (r,c)):
-
-        (A) Dominant (magnitude / sign-only preference):
-            score_dom(rc) =
-                { |b|    if self.loss == "gaussian"
-                {  b     if self.loss == "poisson"
-
-        (B) Gaussian delta (local squared-error heuristic):
-            r_ij := x_ij - x̂_ij                                             (residual)
-            score_gauss(rc) = r_ij * b + 0.5 * b^2
-            (Heuristic ranking derived from the local effect of attributing (i,j) to block (r,c)
-            under an L2 objective; larger is better.)
-
-        (C) Poisson delta (exact scalar Δ log-likelihood for a Poisson mean change):
-            μ_ij := max(x̂_ij, eps)                                         (keep μ>0)
-            Consider attributing (i,j) to (r,c) by **removing** b from μ (so μ - b is the
-            counterfactual mean owned by other blocks). The gain of choosing (r,c) as owner is:
-                Δℓ = ℓ(x_ij | μ_ij) - ℓ(x_ij | μ_ij - b)
-                    = x_ij * [log(μ_ij) - log(μ_ij - b)] - b
-            score_pois(rc) = Δℓ, with μ_ij - b floored at eps to avoid log(0).
-
-        Returns:
-        dict with:
-            - "r_star": (I×J) chosen row-block indices
-            - "c_star": (I×J) chosen col-block indices
-            - "block_id": (I×J) flat ids = r_star * C + c_star
-            - "as_frame" (optional): tidy DataFrame of assignments
+        """
+        Assign a unique (r*, c*) to each (i,j) consistent with X̂ = U B Vᵀ.
+        Fast vectorized path for method == "dominant"; others use the scalar loop.
         """
         # --- Preconditions ---
         if self.U_ is None or self.V_ is None or self.B_ is None or self.Xhat_ is None:
@@ -1353,12 +1342,15 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         I, J = U.shape[0], V.shape[0]
         R, C = B.shape
 
-        # --- Optional allowed mask derived from a magnitude threshold on B ---
-        # allowed_mask[r,c] = True iff |B[r,c]| >= min_abs_B
+        # --- Allowed mask via magnitude threshold ---
         if allowed_mask is None and min_abs_B is not None:
             allowed_mask = np.abs(B) >= min_abs_B
+        if allowed_mask is not None and allowed_mask.shape != B.shape:
+            raise ValueError(
+                f"allowed_mask shape {allowed_mask.shape} must match B {B.shape}"
+            )
 
-        # --- Auto-select method if not provided ---
+        # --- Auto-select method ---
         if method is None:
             method = (
                 "gaussian_delta"
@@ -1372,103 +1364,205 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if method in ("gaussian_delta", "poisson_delta") and X is None:
             raise ValueError(f"Method '{method}' requires X.")
 
-        # --- Default row/col names for output frame ---
+        # --- Default names for optional frame ---
         if row_names is None:
             row_names = [f"row_{i}" for i in range(I)]
         if col_names is None:
             col_names = [f"col_{j}" for j in range(J)]
 
-        # --- Active memberships per row/col: R_i = {r: U[i,r]=1}, C_j = {c: V[j,c]=1} ---
-        row_active = [np.flatnonzero(U[i]).astype(int) for i in range(I)]
-        col_active = [np.flatnonzero(V[j]).astype(int) for j in range(J)]
-
-        # --- Outputs to fill ---
+        # --- Outputs ---
         r_star = np.full((I, J), -1, dtype=int)
         c_star = np.full((I, J), -1, dtype=int)
 
-        # --- Global fallback: the best allowed block overall (used when a cell has none allowed) ---
+        # --- Quick exit if no memberships ---
+        if (
+            U.nnz == 0 or V.nnz == 0
+            if hasattr(U, "nnz") and hasattr(V, "nnz")
+            else (U.sum() == 0 or V.sum() == 0)
+        ):
+            # No active memberships anywhere
+            block_id = -1 * np.ones((I, J), dtype=int)
+            out = {"r_star": r_star, "c_star": c_star, "block_id": block_id}
+            if return_frame:
+                ii, jj = np.meshgrid(np.arange(I), np.arange(J), indexing="ij")
+                out["as_frame"] = pd.DataFrame(
+                    {
+                        "row_i": ii.ravel(),
+                        "row_name": np.array(row_names, dtype=object)[ii.ravel()],
+                        "col_j": jj.ravel(),
+                        "col_name": np.array(col_names, dtype=object)[jj.ravel()],
+                        "r_star": r_star.ravel(),
+                        "c_star": c_star.ravel(),
+                        "block_id": (-1 * np.ones_like(r_star)).ravel(),
+                    }
+                )
+            return out
+
+        # =========================
+        # Fast path: "dominant"
+        # =========================
+        if method == "dominant":
+            # 1) base score matrix S (R×C)
+            if self.loss == "gaussian":
+                S = np.abs(B).astype(np.float64, copy=False)
+            else:  # poisson
+                S = B.astype(np.float64, copy=False)
+
+            # Apply allowed_mask: disallowed -> -inf
+            if allowed_mask is not None:
+                S = np.where(allowed_mask, S, -np.inf)
+
+            # Global fallback (only meaningful when we have allowed_mask)
+            if allowed_mask is not None and np.isfinite(S).any():
+                gr, gc = np.unravel_index(np.nanargmax(S), S.shape)
+            else:
+                # If no mask, any (r,c) with max S is OK as a fallback.
+                if np.isfinite(S).any():
+                    gr, gc = np.unravel_index(np.nanargmax(S), S.shape)
+                else:
+                    gr = gc = 0  # degenerate case: everything -inf
+
+            # 2) Precompute, for every column j:
+            #    M[:, j] = max_c in Cj S[:, c]
+            #    Carg[:, j] = argmax_c in Cj (index in [0..C-1]) achieving that max
+            V_bool = (V > 0).astype(bool)
+            M = np.full((R, J), -np.inf, dtype=np.float64)
+            Carg = np.full((R, J), -1, dtype=int)
+
+            # Loop over j (J is usually much larger than I; this keeps memory light)
+            for j in range(J):
+                cj = np.flatnonzero(V_bool[j])
+                if cj.size == 0:
+                    continue
+                S_sub = S[:, cj]  # (R × |Cj|)
+                # argmax across c for each r
+                arg_c = np.argmax(S_sub, axis=1)  # (R,)
+                M[:, j] = S_sub[np.arange(R), arg_c]
+                Carg[:, j] = cj[arg_c]
+
+            # 3) For each row i, restrict to active r and take argmax over r for all j
+            U_bool = (U > 0).astype(bool)
+            cols = np.arange(J)
+
+            for i in range(I):
+                ri = np.flatnonzero(U_bool[i])
+                if ri.size == 0:
+                    continue
+
+                # Mask M to only active r; set others to -inf
+                Mi = M.copy()
+                inactive = np.ones(R, dtype=bool)
+                inactive[ri] = False
+                Mi[inactive, :] = -np.inf
+
+                # Best r for each j
+                rbest = np.argmax(Mi, axis=0)  # (J,)
+                vmax = Mi[rbest, cols]  # values at the chosen r
+
+                # If a column j has no eligible (r,c) (all -inf), handle on_empty
+                bad = ~np.isfinite(vmax)
+                if np.any(bad):
+                    if on_empty == "skip":
+                        # leave (-1,-1)
+                        pass
+                    elif on_empty == "fallback":
+                        r_star[i, bad] = gr
+                        c_star[i, bad] = gc
+                    else:
+                        # raise with context on first bad j
+                        j0 = int(np.flatnonzero(bad)[0])
+                        raise RuntimeError(
+                            f"No allowed (r,c) for cell (i={i}, j={j0})."
+                        )
+
+                # Valid columns: set winners
+                good = ~bad
+                if np.any(good):
+                    r_star[i, good] = rbest[good]
+                    c_star[i, good] = Carg[rbest[good], cols[good]]
+
+            # Flattened block id; keep -1 for unassigned
+            block_id = np.where((r_star >= 0) & (c_star >= 0), r_star * C + c_star, -1)
+
+            out = {"r_star": r_star, "c_star": c_star, "block_id": block_id}
+            if return_frame:
+                ii, jj = np.meshgrid(np.arange(I), np.arange(J), indexing="ij")
+                out["as_frame"] = pd.DataFrame(
+                    {
+                        "row_i": ii.ravel(),
+                        "row_name": np.array(row_names, dtype=object)[ii.ravel()],
+                        "col_j": jj.ravel(),
+                        "col_name": np.array(col_names, dtype=object)[jj.ravel()],
+                        "r_star": r_star.ravel(),
+                        "c_star": c_star.ravel(),
+                        "block_id": block_id.ravel(),
+                    }
+                )
+            return out
+
+        # =========================
+        # Scalar loop for other methods
+        # =========================
+        # (keeps the fixed Gaussian-delta sign & the -1 block_id semantics)
+        row_active = [np.flatnonzero(U[i]).astype(int) for i in range(I)]
+        col_active = [np.flatnonzero(V[j]).astype(int) for j in range(J)]
+
         if allowed_mask is not None:
-            # global_scores mirrors (A): |B| for Gaussian, B for Poisson
-            global_scores = np.where(
+            # global fallback uses dominant score definition
+            Sglob = np.where(
                 allowed_mask,
                 (np.abs(B) if self.loss == "gaussian" else B),
                 -np.inf,
             )
-            if np.isfinite(global_scores).any():
-                gr, gc = np.unravel_index(np.argmax(global_scores), global_scores.shape)
+            if np.isfinite(Sglob).any():
+                gr, gc = np.unravel_index(np.argmax(Sglob), Sglob.shape)
             else:
-                gr = gc = 0  # no allowed blocks at all (arbitrary fallback)
+                gr = gc = 0
 
-        # --- Main loop over cells (i,j) ---
         for i in range(I):
             Ri = row_active[i]
             if Ri.size == 0:
-                # no active row clusters => cannot assign a block owner for any (i,·)
                 continue
             for j in range(J):
                 Cj = col_active[j]
                 if Cj.size == 0:
-                    # no active col clusters => cannot assign a block owner for (·,j)
                     continue
 
-                # Candidate submatrix of B visible to this (i,j): B_sub ∈ R^{|Ri| × |Cj|}
                 B_sub = B[np.ix_(Ri, Cj)]
 
-                # --- Compute scores for each (r,c) in Ri×Cj according to the chosen method ---
-                if method == "dominant":
-                    # (A) Dominant: |b| for Gaussian, b for Poisson
-                    scores = np.abs(B_sub) if self.loss == "gaussian" else B_sub
-
-                elif method == "gaussian_delta":
-                    # (B) Gaussian delta: score = r_ij * b + 0.5 * b^2, where r_ij = x_ij - x̂_ij
+                if method == "gaussian_delta":
                     r_ij = float(X[i, j] - Xhat[i, j])
-                    scores = r_ij * B_sub + 0.5 * (B_sub * B_sub)
-
+                    scores = r_ij * B_sub - 0.5 * (B_sub * B_sub)
                 else:  # "poisson_delta"
-                    # (C) Poisson delta: Δℓ = x_ij * (log μ - log(μ - b)) - b
                     x_ij = float(X[i, j])
-                    mu_ij = float(max(Xhat[i, j], eps))  # μ := max(x̂_ij, eps)
-                    denom = np.maximum(mu_ij - B_sub, eps)  # μ - b, floored at eps
+                    mu_ij = float(max(Xhat[i, j], eps))
+                    denom = np.maximum(mu_ij - B_sub, eps)
                     scores = x_ij * (np.log(mu_ij) - np.log(denom)) - B_sub
 
-                # --- Apply allowed_mask if provided (mask disallowed candidates with -inf) ---
                 if allowed_mask is not None:
                     mask_sub = allowed_mask[np.ix_(Ri, Cj)]
                     scores = np.where(mask_sub, scores, -np.inf)
 
-                # --- Handle the case with no finite candidates for this cell (i,j) ---
                 if not np.isfinite(scores).any():
                     if on_empty == "skip":
-                        # leave r_star[i,j], c_star[i,j] as -1
                         continue
                     elif on_empty == "fallback":
-                        # assign the global best allowed block (gr,gc)
                         r_star[i, j], c_star[i, j] = int(gr), int(gc)
                         continue
                     else:
-                        raise RuntimeError("No allowed (r,c) for this cell.")
+                        raise RuntimeError(f"No allowed (r,c) for cell (i={i}, j={j}).")
 
-                # --- Pick argmax over the |Ri|×|Cj| grid and map back to global (r*,c*) ---
-                flat_idx = int(
-                    np.argmax(scores)
-                )  # flattens scores to 1D and returns the index of the maximum score.
-                rr, cc = divmod(
-                    flat_idx, scores.shape[1]
-                )  # rr = row index, cc = column index
-                # Map back to global (r*,c*) indices using the active lists Ri, Cj
-                # (rr,cc) are indices into the submatrix B_sub
+                flat_idx = int(np.argmax(scores))
+                rr, cc = divmod(flat_idx, scores.shape[1])
                 r_star[i, j] = int(Ri[rr])
                 c_star[i, j] = int(Cj[cc])
 
-        # --- Flattened block id for convenience: block_id = r* * C + c* ---
-        block_id = r_star * C + c_star
-
+        block_id = np.where((r_star >= 0) & (c_star >= 0), r_star * C + c_star, -1)
         out = {"r_star": r_star, "c_star": c_star, "block_id": block_id}
 
-        # --- Optional tidy frame for downstream analysis / plotting ---
         if return_frame:
             ii, jj = np.meshgrid(np.arange(I), np.arange(J), indexing="ij")
-            as_frame = pd.DataFrame(
+            out["as_frame"] = pd.DataFrame(
                 {
                     "row_i": ii.ravel(),
                     "row_name": np.array(row_names, dtype=object)[ii.ravel()],
@@ -1479,7 +1573,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                     "block_id": block_id.ravel(),
                 }
             )
-            out["as_frame"] = as_frame
+
         return out
 
     # -------- ClusterMixin compatibility --------
