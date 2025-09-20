@@ -56,9 +56,8 @@ def setup_logging(log_path: str | Path | None, level: str = "INFO") -> logging.L
 
     _BASE.handlers.clear()
     _BASE.setLevel(getattr(logging, level.upper(), logging.INFO))
-
     fmt = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s",
+        "%(asctime)s - %(name)s - %(levelname)s - pid=%(process)d - %(filename)s:%(lineno)d - %(funcName)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 

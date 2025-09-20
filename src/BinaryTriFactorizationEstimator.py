@@ -509,7 +509,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             # --- U-step ---
             tU0 = time.perf_counter()
-            for i in range(I):
+            for i in rng.permutation(I):
+                # for i in range(I):
                 if self.loss == "gaussian":
                     self._greedy_update_gaussian(
                         X=X,
@@ -544,7 +545,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             # --- V-step ---
             tV0 = time.perf_counter()
-            for j in range(J):
+            for j in rng.permutation(J):
                 if self.loss == "gaussian":
                     self._greedy_update_gaussian(
                         X=X,
