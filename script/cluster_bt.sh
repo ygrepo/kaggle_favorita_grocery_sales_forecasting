@@ -17,8 +17,8 @@ DATA_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2
 DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item.parquet"
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
-ROW_RANGE="46:47"
-COL_RANGE="32:40"
+ROW_RANGE="64:70"
+COL_RANGE="64:65"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
 
@@ -32,8 +32,8 @@ MAX_PVE_DROP="0.01"
 MIN_SIL="-0.05"  
 MIN_KEEP="6"  
 TOP_K="10"
-K_ROW=0
-K_COL=0
+K_ROW=2
+K_COL=3
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
