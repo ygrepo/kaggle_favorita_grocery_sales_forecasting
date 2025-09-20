@@ -1316,7 +1316,7 @@ def cluster_data_and_explain_blocks(
         logger.info(f"Saving summary to {summary_fn}")
         summary.to_csv(summary_fn, index=False)
 
-    U, B, V = est.factors()  # U: (I,R), V: (J,C)
+    U, B, V = est.factors()  
     R, C = U.shape[1], V.shape[1]
     bid = np.asarray(assign["block_id"])
 
@@ -1331,16 +1331,12 @@ def cluster_data_and_explain_blocks(
 
     df2_blocks = get_normalized_assignments(assign, norm_data)[
         ["store", "item", "growth_rate_1", "block_id"]
-    ].rename(columns={"block_id": "bt_block_id"})
-    logger.info(
-        f"bt_block_id nunique: {df2_blocks['bt_block_id'].nunique(dropna=True)}"
-    )
-
+    ]
     df = df.merge(
-        df2_blocks[["store", "item", "bt_block_id"]], on=["store", "item"], how="left"
+        df2_blocks[["store", "item", "block_id"]], on=["store", "item"], how="left"
     )
-    logger.info(f"bt_block_id nunique: {df['bt_block_id'].nunique(dropna=True)}")
-    logger.info(df["bt_block_id"].value_counts(dropna=False).head(10))
+    logger.debug(f"block_id nunique: {df['block_id'].nunique(dropna=True)}")
+    logger.debug(df["bt_block_id"].value_counts(dropna=False))
 
     if output_fn is not None:
         logger.info(f"Saving output to {output_fn}")
