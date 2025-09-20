@@ -17,8 +17,8 @@ DATA_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2
 DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item.parquet"
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
-ROW_RANGE="60:61"
-COL_RANGE="219:225"
+ROW_RANGE=60
+COL_RANGE=230,240,250
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
 
@@ -34,6 +34,11 @@ MIN_KEEP="6"
 TOP_K="10"
 K_ROW=0
 K_COL=0
+
+# (R=60, C∈{230, 240, 250}) @ (α∈{1.0, 0.5}, β∈{0.02, 0.015, 0.01})
+
+# Then (C=best, R∈{70, 80, 90}) with the same α/β sweep.
+# block_l1 (e.g., 1e-3 to 5e-3)
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"

@@ -31,6 +31,23 @@ def parse_range(range_str):
         ) from e
 
 
+def parse_range(arg: str):
+    """
+    Parse a CLI argument that can be either:
+      - a colon-separated range 'START:END' (inclusive of START, exclusive of END),
+      - or a comma-separated list 'a,b,c'.
+    Returns a Python range or list of ints.
+    """
+    if ":" in arg:
+        start, end = arg.split(":")
+        return range(int(start), int(end))
+    elif "," in arg:
+        return [int(x) for x in arg.split(",")]
+    else:
+        # single integer
+        return [int(arg)]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Clustering for Favorita Grocery Sales Forecasting model"
@@ -46,13 +63,13 @@ def parse_args():
         "--row_range",
         type=parse_range,
         default=range(2, 5),
-        help="Range of number of rows to cluster (format: START:END)",
+        help="Range of rows: START:END or explicit list a,b,c",
     )
     parser.add_argument(
         "--col_range",
         type=parse_range,
         default=range(2, 5),
-        help="Range of number of columns to cluster (format: START:END)",
+        help="Range of columns: START:END or explicit list a,b,c",
     )
     parser.add_argument(
         "--alpha",
