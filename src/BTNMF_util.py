@@ -1329,21 +1329,28 @@ def cluster_data_and_explain_blocks(
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # length R
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # length C
 
-    df2 = get_normalized_assignments(
-        assign, norm_data
-    )  # contains unique per-cell block_id
-    df = df.merge(
-        df2.drop(columns="growth_rate_1", axis=1), on=["store", "item"], how="left"
+    df2_blocks = get_normalized_assignments(assign, norm_data)[
+        ["store", "item", "growth_rate_1", "block_id"]
+    ].rename(columns={"block_id": "bt_block_id"})
+    logger.info(
+        f"bt_block_id nunique: {df2_blocks['bt_block_id'].nunique(dropna=True)}"
     )
+
+    df = df.merge(
+        df2_blocks[["store", "item", "bt_block_id"]], on=["store", "item"], how="left"
+    )
+    logger.info(f"bt_block_id nunique: {df['bt_block_id'].nunique(dropna=True)}")
+    logger.info(df["bt_block_id"].value_counts(dropna=False).head(10))
+
     if output_fn is not None:
         logger.info(f"Saving output to {output_fn}")
         save_csv_or_parquet(df, output_fn)
 
     # plot
     if plot_figure:
-        row_order, col_order = get_sorted_row_col(df2)
+        row_order, col_order = get_sorted_row_col(df2_blocks)
         plot_block_annot_heatmap(
-            df2,
+            df2_blocks,
             ttl="Store-SKU Clusters",
             value_col="growth_rate_1",
             block_col="block_id",
