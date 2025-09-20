@@ -18,7 +18,7 @@ DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
 ROW_RANGE="64:70"
-COL_RANGE="90:100"
+COL_RANGE="200:220"
 # ROW_RANGE="10:20"
 # COL_RANGE="10:20"
 
