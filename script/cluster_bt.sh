@@ -17,12 +17,13 @@ DATA_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2
 DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item.parquet"
 #DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
 
-#ROW_RANGE=60
-ROW_RANGE=70,80,90
+ROW_RANGE=90
+#ROW_RANGE=90,100,110
+#ROW_RANGE=70,80,90
 #COL_RANGE=230,240,250
 COL_RANGE=230
 
-ALPHA="1"
+ALPHA="0.5"
 BETA="0.02"
 BLOCK_L1="0"
 B_INNER="35"
