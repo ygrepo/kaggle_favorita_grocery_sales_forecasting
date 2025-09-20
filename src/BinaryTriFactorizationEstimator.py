@@ -622,11 +622,25 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             # PVE / RMSE (safe for z-scored data)
             rmse = float(np.sqrt(rss / (I * J)))
-            pve = (
-                float(1.0 - (rss / max(total_power, 1e-12)))
-                if np.isfinite(total_power)
-                else float("nan")
-            )
+            # PVE with MEAN baseline (matches compute_pve)
+            eps = 1e-12
+            if self.loss == "gaussian":
+                mu = float(np.mean(X))
+                L_model = float(np.sum((X - Xhat) ** 2))
+                L_base = float(np.sum((X - mu) ** 2))
+                pve = 1.0 - (L_model / max(L_base, eps))
+            else:  # poisson (mean-rate baseline, constants cancel in ratio)
+                mu = float(np.mean(X))
+
+                # Poisson NLL without constants: sum(λ - x*log λ); safe log
+                def _pois_nll(x, lam):
+                    lam_safe = np.maximum(lam, eps)
+                    return float(np.sum(lam_safe - x * np.log(lam_safe)))
+
+                L_model = _pois_nll(X, np.maximum(Xhat, eps))
+                L_base = _pois_nll(X, mu)
+                pve = 1.0 - (L_model / max(L_base, eps))
+
             # relative contributions
             tot_loss = rss + regB + (self.block_l1 * l1B if self.block_l1 > 0 else 0.0)
             frac_rss = rss / tot_loss if tot_loss > 0 else 0.0
@@ -1978,38 +1992,72 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     def explain_blocks(
         self,
         X: np.ndarray,
-        assign: pd.DataFrame,
+        assign: pd.DataFrame,  # still used to know which blocks are present
         row_names: np.ndarray,
         col_names: np.ndarray,
         top_k: int = 5,
     ) -> pd.DataFrame:
-        used = np.unique(assign["block_id"])
-        used = used[used >= 0]
-        rows = []
+        """
+        Summarize blocks using the U/V memberships (rectangular masks), not the assign mask.
+        Requires that self.U_, self.V_, self.B_ are already set by fit().
+        """
         U, B, V = self.U_, self.B_, self.V_
         R, C = B.shape
+
+        # ensure arrays for boolean indexing
+        row_names = np.asarray(row_names)
+        col_names = np.asarray(col_names)
+
+        # which blocks to report (ignore -1 if present)
+        used = np.unique(assign["block_id"].to_numpy())
+        used = used[used >= 0]
+
+        rows = []
+        total_cells = X.size
+
         for b in used:
-            r, c = int(b // C), int(b % C)
-            cells = assign["block_id"] == b
+            r, c = divmod(int(b), C)
+
+            # rectangular mask for this block using U/V
+            u_mask = U[:, r].astype(bool)  # shape (I,)
+            v_mask = V[:, c].astype(bool)  # shape (J,)
+            M = u_mask[:, None] & v_mask[None, :]  # shape (I,J)
+
+            n_cells = int(M.sum())
+            if n_cells == 0:
+                # skip empty blocks (can happen if 'used' was built differently)
+                continue
+
+            vals = X[M]
+            B_rc = float(B[r, c])
+
+            # top-k names (any order; you can sort by something custom if desired)
+            stores_in_r = row_names[u_mask][:top_k].tolist()
+            items_in_c = col_names[v_mask][:top_k].tolist()
+
             rows.append(
                 {
                     "block_id": int(b),
                     "r": r,
                     "c": c,
-                    "B_rc": float(B[r, c]),
-                    "n_cells": int(cells.sum()),
-                    "coverage_%": 100.0 * cells.mean(),
-                    "mean": float(X[cells].mean()),
-                    "median": float(np.median(X[cells])),
-                    "stores_in_r": [
-                        row_names[i] for i in np.where(U[:, r] == 1)[0][:top_k]
-                    ],
-                    "items_in_c": [
-                        col_names[j] for j in np.where(V[:, c] == 1)[0][:top_k]
-                    ],
+                    "B_rc": B_rc,
+                    "n_cells": n_cells,
+                    "coverage_%": 100.0 * (n_cells / total_cells),
+                    "mean": float(vals.mean()),
+                    "median": float(np.median(vals)),
+                    "n_stores_in_r": int(u_mask.sum()),
+                    "n_items_in_c": int(v_mask.sum()),
+                    "stores_in_r": stores_in_r,
+                    "items_in_c": items_in_c,
                 }
             )
-        return pd.DataFrame(rows).sort_values("B_rc", ascending=False)
+
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            # Sort by magnitude of the block weight (often more meaningful than sign)
+            df = df.sort_values("B_rc", ascending=False)
+            # or: df = df.reindex(df["B_rc"].abs().sort_values(ascending=False).index)
+        return df
 
     @classmethod
     def factory(

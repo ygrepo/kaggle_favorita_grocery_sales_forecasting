@@ -21,29 +21,45 @@ def get_normalized_assignments(
     row_col: str = "store",
     col_col: str = "item",
     value_col: str = "growth_rate_1",
+    drop_unassigned: bool = False,  # set True to remove block_id == -1
 ) -> pd.DataFrame:
 
-    block_id_mat = assign["block_id"]
+    block_id_mat = np.asarray(assign["block_id"])
+    I, J = norm_data.shape
+    assert block_id_mat.shape == (I, J), "block_id matrix must match norm_data shape"
 
-    # long (store,item,block_id)
+    # Build a DF aligned to norm_data’s index/columns
+    blk_df = pd.DataFrame(
+        block_id_mat, index=norm_data.index, columns=norm_data.columns
+    )
+
+    # Long (row,item,block_id)
     blk_long = (
-        pd.DataFrame(block_id_mat, index=norm_data.index, columns=norm_data.columns)
-        .stack()
+        blk_df.stack()
         .rename("block_id")
         .reset_index()
         .rename(columns={"level_0": row_col, "level_1": col_col})
     )
 
-    # long values from the SAME matrix used for clustering
-    df = (
+    # Long values from the SAME matrix used for clustering
+    val_long = (
         norm_data.stack()
         .rename(value_col)
         .reset_index()
         .rename(columns={"level_0": row_col, "level_1": col_col})
     )
 
-    # store, item, value, block_id (no date column)
-    df = df.merge(blk_long, on=[row_col, col_col], how="left")
+    df = val_long.merge(blk_long, on=[row_col, col_col], how="left")
+
+    # Optional cleanup
+    if drop_unassigned:
+        df = df[df["block_id"] >= 0].copy()
+
+    # Keep block_id as int if possible
+    if pd.api.types.is_float_dtype(df["block_id"]):
+        # only safe if no NaN; otherwise keep float
+        if not df["block_id"].isna().any():
+            df["block_id"] = df["block_id"].astype(int)
 
     return df
 
@@ -421,8 +437,6 @@ def ablate_block_delta_loss(
 # ----------------------------
 # WCV / BCV / silhouette-like
 # ----------------------------
-
-
 def compute_block_wcv_bcv_silhouette(
     X: np.ndarray,
     assign_dict: Dict[str, Any],
@@ -434,93 +448,88 @@ def compute_block_wcv_bcv_silhouette(
     Using per-cell assignments from assign_unique_blocks(...):
       - assign_dict["r_star"], assign_dict["c_star"] with -1 for unassigned.
 
-    Returns a DataFrame with per-block rows (r,c) and columns:
+    Returns per-block rows with columns:
       ["r", "c", "n", "mean", "WCV", "BCV_nearest", "silhouette_like"].
 
     Notes:
-      - WCV is mean squared deviation within the (r,c) block.
-      - BCV_nearest is the minimum squared separation between this block mean
-        and any other block's mean.
-      - silhouette_like is in [-1, 1]; higher is better separation vs compactness.
+      - WCV: mean squared deviation within block (r,c).
+      - BCV_nearest: min squared distance between this block mean and any other defined block's mean.
+      - silhouette_like in [-1, 1]: (BCV - WCV) / max(BCV, WCV).
     """
-    # Per-cell block assignments (shape must match X)
-    r_star = assign_dict["r_star"]  # shape (I,J), values in {0..R-1} or -1
-    c_star = assign_dict["c_star"]  # shape (I,J), values in {0..C-1} or -1
+    r_star = np.asarray(assign_dict["r_star"])
+    c_star = np.asarray(assign_dict["c_star"])
     I, J = r_star.shape
+    assert X.shape == (I, J), "X shape must match r_star/c_star shapes"
 
-    # Observed mask: include only cells that are both observed and assigned to some block
+    # observed & assigned mask
     if mask is None:
-        obs_mask = np.ones_like(r_star, dtype=bool)
+        obs_mask = np.ones((I, J), dtype=bool)
     else:
-        obs_mask = mask.astype(bool)
+        obs_mask = np.asarray(mask, dtype=bool)
+        assert obs_mask.shape == (I, J), "mask must match X shape"
 
-    # Prepare outputs: per-block mean and count (n)
-    stats = []  # list of rows for the final DataFrame
-    block_means = np.full((R, C), np.nan)  # block centroids (means)
-    block_ns = np.zeros((R, C), dtype=int)  # cell counts per block
+    assigned = (r_star >= 0) & (c_star >= 0)
+    obs_mask = obs_mask & assigned
 
-    # First pass: compute per-block means and counts
+    block_means = np.full((R, C), np.nan, dtype=float)
+    block_ns = np.zeros((R, C), dtype=int)
+
+    # ---- pass 1: means & counts
     for r in range(R):
         for c in range(C):
-            # cells that belong to block (r,c), are observed, and not unassigned
             sel = (r_star == r) & (c_star == c) & obs_mask
             n = int(sel.sum())
             block_ns[r, c] = n
             if n > 0:
-                vals = X[sel].astype(float)
-                if vals.size > 0:  # Additional safety check
-                    block_means[r, c] = float(vals.mean())
-                else:
-                    block_means[r, c] = np.nan
+                block_means[r, c] = float(X[sel].mean())
 
-    # Second pass: compute WCV, nearest-BCV, and silhouette-like per block
+    # ---- pass 2: WCV, BCV_nearest, silhouette-like
+    rows = []
+    # Precompute list of defined block means for BCV lookup
+    defined_idx = np.argwhere(~np.isnan(block_means))
+    defined_vals = block_means[~np.isnan(block_means)]
+
     for r in range(R):
         for c in range(C):
             n = block_ns[r, c]
-
-            # If this block has no cells, emit a row with NaNs for stats
             if n == 0:
-                # BUGFIX: include the 'mean' slot; previously one field short
-                stats.append((r, c, 0, np.nan, np.nan, np.nan, np.nan))
+                rows.append((r, c, 0, np.nan, np.nan, np.nan, np.nan))
                 continue
 
-            # Gather this block's values and mean
             sel = (r_star == r) & (c_star == c) & obs_mask
             vals = X[sel].astype(float)
             mu = block_means[r, c]
 
-            # WCV = mean squared deviation from the block mean
-            if vals.size > 0:
-                wcv = float(np.mean((vals - mu) ** 2))
+            # WCV: mean squared deviation within block
+            wcv = float(np.mean((vals - mu) ** 2))
+
+            # BCV_nearest: min squared distance to any other defined block mean
+            if defined_vals.size <= 1:
+                bcv = np.nan
             else:
-                wcv = np.nan
+                # exclude this block's own mean by masking by coordinates
+                # (safer than comparing floats)
+                mask_self = ~((defined_idx[:, 0] == r) & (defined_idx[:, 1] == c))
+                others = defined_vals[mask_self]
+                if others.size == 0:
+                    bcv = np.nan
+                else:
+                    diffs2 = (others - mu) ** 2
+                    bcv = float(diffs2.min())
 
-            # BCV_nearest = min squared distance to any other defined block mean
-            diffs = []
-            for p in range(R):
-                for q in range(C):
-                    if p == r and q == c:
-                        continue
-                    other_mu = block_means[p, q]
-                    if not np.isnan(other_mu):
-                        diffs.append((mu - other_mu) ** 2)
-            bcv = float(np.min(diffs)) if diffs else np.nan
-
-            # Silhouette-like: (bcv - wcv) / max(bcv, wcv), in [-1, 1]
+            # silhouette-like
             if np.isnan(bcv):
                 sil = np.nan
             else:
                 denom = max(bcv, wcv)
                 sil = (bcv - wcv) / denom if denom > 0 else 0.0
 
-            stats.append((r, c, n, mu, wcv, bcv, sil))
+            rows.append((r, c, n, mu, wcv, bcv, sil))
 
-    # Assemble tidy per-block DataFrame
-    df = pd.DataFrame(
-        stats,
+    return pd.DataFrame(
+        rows,
         columns=["r", "c", "n", "mean", "WCV", "BCV_nearest", "silhouette_like"],
     )
-    return df
 
 
 # ----------------------------
@@ -1180,8 +1189,8 @@ def normalize_data_and_fit_estimator(
         df,
         column_name="growth_rate_1",
         log_transform=False,
-        median_transform=False,
-        mean_transform=True,
+        median_transform=True,
+        mean_transform=False,
         zscore_rows=False,
         zscore_cols=True,
     ).fillna(0)
@@ -1279,73 +1288,58 @@ def cluster_data_and_explain_blocks(
         logger.info(f"Saving top {top_k} ranked_df to {top_rank_fn}")
         top_k_df = ranked_df.iloc[:top_k]
         top_k_df.to_csv(top_rank_fn, index=False)
+    n_row = best["n_row"]
+    n_col = best["n_col"]
+    est = make_btf(n_row, n_col, random_state=42)
+    est.fit(norm_data.to_numpy())
+    assign = est.filter_blocks(
+        X=norm_data.to_numpy(), min_keep=min_keep, return_frame=False
+    )
+    if summary_fn is not None:
+        summary = est.explain_blocks(
+            X=norm_data.to_numpy(),
+            assign=assign,
+            row_names=norm_data.index.to_numpy(),
+            col_names=norm_data.columns.to_numpy(),
+            top_k=5,
+        )
+        logger.info(f"Saving summary to {summary_fn}")
+        summary.to_csv(summary_fn, index=False)
+    df2 = get_normalized_assignments(
+        assign, norm_data
+    )  # contains unique per-cell block_id
 
-    # est_maker = BinaryTriFactorizationEstimator.factory(
-    #     n_row_clusters=best["n_row"],
-    #     n_col_clusters=best["n_col"],
-    #     k_row=None,
-    #     k_col=None,
-    #     loss="gaussian",
-    #     alpha=alpha,
-    #     beta=beta,
-    #     block_l1=block_l1,
-    #     b_inner=b_inner,
-    #     max_iter=max_iter,
-    #     tol=tol,
-    #     verbose=verbose,
-    # )
-    # n_row = best["n_row"]
-    # n_col = best["n_col"]
-    # est = est_maker(n_row, n_col, random_state=42)
-    # est.fit(norm_data.to_numpy())
-    # assign = est.filter_blocks(
-    #     X=norm_data.to_numpy(), min_keep=min_keep, return_frame=False
-    # )
-    # if summary_fn is not None:
-    #     summary = est.explain_blocks(
-    #         X=norm_data.to_numpy(),
-    #         assign=assign,
-    #         row_names=norm_data.index.to_numpy(),
-    #         col_names=norm_data.columns.to_numpy(),
-    #         top_k=5,
-    #     )
-    #     logger.info(f"Saving summary to {summary_fn}")
-    #     summary.to_csv(summary_fn, index=False)
-    # df2 = get_normalized_assignments(
-    #     assign, norm_data
-    # )  # contains unique per-cell block_id
+    # plot
+    if plot_figure:
+        row_order, col_order = get_sorted_row_col(df2)
+        plot_block_annot_heatmap(
+            df2,
+            ttl="Store-SKU Clusters",
+            value_col="growth_rate_1",
+            block_col="block_id",
+            row_col="store",
+            col_col="item",
+            date_col=None,
+            row_order=row_order,
+            col_order=col_order,
+            fmt="{:.0f}",
+            cell_h=0.6,
+            cell_w=0.75,
+            font_size=11,
+            # figsize=(6, 4),
+            xlabel_size=14,
+            ylabel_size=14,
+            label_weight="bold",
+            fn=figure_fn,
+            xtick_rotation=45,
+            show_plot=False,
+        )
+    df = df.merge(
+        df2.drop(columns="growth_rate_1", axis=1), on=["store", "item"], how="left"
+    )
 
-    # # plot
-    # if plot_figure:
-    #     row_order, col_order = get_sorted_row_col(df2)
-    #     plot_block_annot_heatmap(
-    #         df2,
-    #         ttl="Store-SKU Clusters",
-    #         value_col="growth_rate_1",
-    #         block_col="block_id",
-    #         row_col="store",
-    #         col_col="item",
-    #         date_col=None,
-    #         row_order=row_order,
-    #         col_order=col_order,
-    #         fmt="{:.0f}",
-    #         cell_h=0.6,
-    #         cell_w=0.75,
-    #         font_size=11,
-    #         # figsize=(6, 4),
-    #         xlabel_size=14,
-    #         ylabel_size=14,
-    #         label_weight="bold",
-    #         fn=figure_fn,
-    #         xtick_rotation=45,
-    #         show_plot=False,
-    #     )
-    # df = df.merge(
-    #     df2.drop(columns="growth_rate_1", axis=1), on=["store", "item"], how="left"
-    # )
-
-    # if output_fn is not None:
-    #     logger.info(f"Saving output to {output_fn}")
-    #     save_csv_or_parquet(df, output_fn)
+    if output_fn is not None:
+        logger.info(f"Saving output to {output_fn}")
+        save_csv_or_parquet(df, output_fn)
 
     return df
