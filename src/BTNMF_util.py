@@ -1303,16 +1303,9 @@ def cluster_data_and_explain_blocks(
     est = make_btf(n_row, n_col, random_state=42)
 
     # Handle both DataFrame and NumPy array cases
-    if hasattr(norm_data, "to_numpy"):
-        # norm_data is a DataFrame
-        X_array = norm_data.to_numpy()
-        row_names = norm_data.index.to_numpy()
-        col_names = norm_data.columns.to_numpy()
-    else:
-        # norm_data is already a NumPy array
-        X_array = norm_data
-        row_names = None
-        col_names = None
+    X_array = norm_data.to_numpy()
+    row_names = norm_data.index.to_numpy()
+    col_names = norm_data.columns.to_numpy()
 
     est.fit(X_array)
     assign = est.filter_blocks(X=X_array, min_keep=min_keep, return_frame=False)

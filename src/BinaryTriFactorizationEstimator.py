@@ -1992,7 +1992,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     def explain_blocks(
         self,
         X: np.ndarray,
-        assign: pd.DataFrame,  # still used to know which blocks are present
+        assign: Dict[str, Any],  # still used to know which blocks are present
         row_names: np.ndarray,
         col_names: np.ndarray,
         top_k: int = 5,
@@ -2009,7 +2009,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         col_names = np.asarray(col_names)
 
         # which blocks to report (ignore -1 if present)
-        used = np.unique(assign["block_id"].to_numpy())
+        used = np.unique(assign["block_id"])
         used = used[used >= 0]
 
         rows = []
