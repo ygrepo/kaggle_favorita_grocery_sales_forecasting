@@ -1088,60 +1088,81 @@ def _sweep_btf_grid_parallel(
 # ----------------------------
 # Rank settings — flexible order
 # ----------------------------
-
-
 def pick_best_btf_setting(
-    df: pd.DataFrame, max_pve_drop: float = 0.01, min_sil: float = -0.05
-) -> tuple[pd.DataFrame, pd.Series]:
+    df: pd.DataFrame,
+    max_pve_drop: float = 0.01,
+    min_sil: float = -0.05,
+) -> Tuple[pd.DataFrame, pd.Series]:
     d = df.copy()
-    # Per-obs scores help compare across N
-    if {"AIC", "BIC", "Coverage"}.issubset(d.columns):
-        N = d["Coverage"] * 0 + 1  # placeholder if you don’t have N per row
-    # Filter by silhouette
+
+    # --- Filter by silhouette (with single back-off) ---
     if "Mean Silhouette" in d.columns:
-        d = d[d["Mean Silhouette"] >= min_sil]
-        if d.empty:  # if too strict, back off once
-            d = df.copy()
-    # PVE within epsilon of best
+        d1 = d[d["Mean Silhouette"] >= min_sil]
+        if not d1.empty:
+            d = d1  # keep filtered; else keep original d (back off)
+
+    # --- Filter by PVE window around best ---
     if "PVE" in d.columns:
-        pve_star = d["PVE"].max()
-        d = d[d["PVE"] >= pve_star - max_pve_drop]
+        pve_series = pd.to_numeric(d["PVE"], errors="coerce")
+        if pve_series.notna().any():
+            pve_star = float(pve_series.max())
+            d = d[pve_series >= pve_star - float(max_pve_drop)]
+        # if all NaN, skip PVE filtering
 
-    # Now rank: favor simplicity and structure after the filter
+    if d.empty:
+        raise ValueError("No candidate settings remain after filters (PVE/Silhouette).")
+
+    # --- Sorting: prefer high PVE/structure, then smaller models, then deterministic tie ---
     sort_cols = [
-        "PVE",  # maximize: explained variance
-        "Mean Silhouette",  # maximize: cluster separation
-        "BlockContribution_RelBaseline",  # maximize: relative gain
-        "BlockContribution_Gini",  # maximize: concentrated signal
-        "BlockContribution_FracWeak20",  # minimize: few weak blocks
-        "n_row",
-        "n_col",  # minimize model size
+        "PVE",  # maximize
+        "Mean Silhouette",  # maximize
+        "BlockContribution_RelBaseline",  # maximize
+        "BlockContribution_Gini",  # maximize
+        "BlockContribution_FracWeak20",  # minimize
+        "n_row",  # minimize
+        "n_col",  # minimize
     ]
-    ascending = [
-        False,  # PVE
-        False,  # Silhouette
-        False,  # BlockContribution_RelBaseline
-        False,  # BlockContribution_Gini
-        True,  # BlockContribution_FracWeak20
-        True,
-        True,  # size
-    ]
+    ascending = [False, False, False, False, True, True, True]
 
-    used = [(c, a) for c, a in zip(sort_cols, ascending) if c in d.columns]
-    if used:
-        by, asc = zip(*used)
+    # Only use columns that exist; preserve paired asc flags
+    cols_use, asc_use = (
+        zip(*[(c, a) for c, a in zip(sort_cols, ascending) if c in d.columns])
+        if any(c in d.columns for c in sort_cols)
+        else ([], [])
+    )
+
+    if cols_use:
+        # Convert numeric-like cols safely to numeric for consistent ordering
+        for c in cols_use:
+            if c in (
+                "n_row",
+                "n_col",
+                "BlockContribution_FracWeak20",
+                "PVE",
+                "Mean Silhouette",
+                "BlockContribution_RelBaseline",
+                "BlockContribution_Gini",
+            ):
+                d[c] = pd.to_numeric(d[c], errors="coerce")
+        # Deterministic tie-breaker even if all sort cols tie
         d = d.sort_values(
-            list(by),
-            ascending=list(asc),
+            list(cols_use) + ["n_row", "n_col"],
+            ascending=list(asc_use) + [True, True],
             kind="mergesort",
             na_position="last",
             ignore_index=True,
         )
 
-    # best unique (n_row,n_col)
+    # --- Ensure n_row/n_col present and pick best unique pair ---
     if not {"n_row", "n_col"}.issubset(d.columns):
-        raise ValueError("Missing n_row/n_col")
-    settings_sorted = d.drop_duplicates(subset=["n_row", "n_col"], keep="first")
+        raise ValueError("Missing required columns: n_row and/or n_col.")
+
+    settings_sorted = d.drop_duplicates(
+        subset=["n_row", "n_col"], keep="first"
+    ).reset_index(drop=True)
+    if settings_sorted.empty:
+        raise ValueError("After de-duplicating (n_row, n_col), no settings remain.")
+
     best = settings_sorted.iloc[0].copy()
     return settings_sorted, best
 
@@ -1249,15 +1270,15 @@ def cluster_data_and_explain_blocks(
 
     logger.info(f"Grid search completed. Found {len(grid_df)} combinations")
 
-    # # Rank and pick the best
-    # ranked_df, best = pick_best_btf_setting(
-    #     grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
-    # )
+    # Rank and pick the best
+    ranked_df, best = pick_best_btf_setting(
+        grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
+    )
 
-    # if top_rank_fn is not None:
-    #     logger.info(f"Saving top {top_k} ranked_df to {top_rank_fn}")
-    #     top_k_df = ranked_df.iloc[:top_k]
-    #     top_k_df.to_csv(top_rank_fn, index=False)
+    if top_rank_fn is not None:
+        logger.info(f"Saving top {top_k} ranked_df to {top_rank_fn}")
+        top_k_df = ranked_df.iloc[:top_k]
+        top_k_df.to_csv(top_rank_fn, index=False)
 
     # est_maker = BinaryTriFactorizationEstimator.factory(
     #     n_row_clusters=best["n_row"],
