@@ -1980,6 +1980,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if self.B_ is None:
             raise ValueError("Model has not been fitted yet")
 
+        logger.info(
+            f"Computing allowed mask from gap with min_keep={min_keep} eps={eps}"
+        )
         # 1) Collect absolute values of all block weights into a flat vector
         absB = np.abs(self.B_).ravel()
 

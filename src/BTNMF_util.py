@@ -1321,7 +1321,7 @@ def cluster_data_and_explain_blocks(
     # Cluster occupancy (are we collapsed to one cluster?)
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # length R
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # length C
-
+    logger.info(np.asarray(assign["block_id"]))
     df2_blocks = get_normalized_assignments(assign, norm_data)[
         ["store", "item", "growth_rate_1", "block_id"]
     ]
@@ -1362,3 +1362,16 @@ def cluster_data_and_explain_blocks(
         )
 
     return df
+
+
+def block_id_heatmap(df: pd.DataFrame):
+    norm_data = normalize_data(
+        df,
+        column_name="growth_rate_1",
+        log_transform=False,
+        median_transform=True,
+        mean_transform=False,
+        zscore_rows=False,
+        zscore_cols=True,
+    )
+    pass
