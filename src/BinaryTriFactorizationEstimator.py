@@ -1993,6 +1993,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         # If the number of non-negligible entries is small, keep them all
         if vals.size <= min_keep:
+            logger.info(f"Only {vals.size} non-negligible blocks; keeping them all.")
             cut = vals[-1]  # the smallest of what's left
             return np.abs(self.B_) >= cut
 
@@ -2008,6 +2009,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         k = max(min_keep, k)
 
         # 6) Threshold: keep anything with |B| >= the k-th value
+        logger.info(f"Keeping {k} blocks with |B| >= {cut}.")
         cut = vals[k - 1]
         return np.abs(self.B_) >= cut
 
@@ -2133,12 +2135,15 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         if keep_strategy is None:
             # legacy: whatever your current gap logic does
+            logger.info("Computing allowed mask from gap.")
             allowed = (
                 self.allowed_mask_from_gap(min_keep=min_keep) if mask is None else mask
             )
         else:
             # data-driven
+            logger.info("Computing allowed mask from stats.")
             stats = self.collect_block_stats(X, mask=None)
+            logger.info(f"stats:\n{stats}")
             allowed = allowed_mask_from_stats(
                 stats,
                 rule=keep_strategy,
@@ -2147,6 +2152,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 min_rows=min_rows,
                 min_cols=min_cols,
             )
+            logger.info(f"allowed:\n{allowed}")
 
         assign = self.assign_unique_blocks(
             X,

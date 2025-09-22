@@ -1308,7 +1308,7 @@ def cluster_data_and_explain_blocks(
         df2_blocks[["store", "item", "block_id"]], on=["store", "item"], how="left"
     )
     logger.debug(f"block_id nunique: {df['block_id'].nunique(dropna=True)}")
-    logger.debug(df["bt_block_id"].value_counts(dropna=False))
+    logger.debug(df["block_id"].value_counts(dropna=False))
 
     if output_fn is not None:
         logger.info(f"Saving output to {output_fn}")
