@@ -5,6 +5,8 @@ from sklearn.cluster import KMeans
 from src.BinaryTriFactorizationEstimator import (
     BinaryTriFactorizationEstimator,
     model_loss,
+    gaussian_loss,
+    poisson_nll,
 )
 from src.data_utils import normalize_data, get_nan_stats
 from src.utils import save_csv_or_parquet
@@ -494,16 +496,25 @@ def coverage_from_assign(assign_dict: Dict[str, Any]):
     return float(np.mean(r_star >= 0))  # fraction of cells assigned
 
 
-def _baseline_array(
-    X: np.ndarray, loss_name: str, mask: np.ndarray | None
-) -> np.ndarray:
+def _baseline_array(X: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
     """
     Constant-mean baseline:
       - Gaussian: baseline = mean(X[mask])
       - Poisson : baseline = mean-rate μ = mean(X[mask])
     """
     obs = X if mask is None else X[mask]
-    mu = float(np.mean(obs))
+
+    # Handle empty observations
+    if obs.size == 0:
+        logger.warning("Empty observations for baseline calculation, using 0.0")
+        mu = 0.0
+    else:
+        mu = float(np.mean(obs))
+        # Handle NaN/inf results
+        if not np.isfinite(mu):
+            logger.warning(f"Non-finite baseline mean: {mu}, using 0.0")
+            mu = 0.0
+
     return np.full_like(X, mu, dtype=float)
 
 
@@ -865,10 +876,21 @@ def _process_single_rc_pair(
         # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
         per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
 
-        base = _baseline_array(X, loss_name, mask)
+        base = _baseline_array(X, mask)
         baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
+
+        # Ensure baseline_loss is a valid number for comparison
+        if baseline_loss is None or not np.isfinite(baseline_loss):
+            baseline_loss = np.nan
+
         rel_block_contribution = (
-            (total_block_contribution / baseline_loss) if baseline_loss > 0 else np.nan
+            (total_block_contribution / baseline_loss)
+            if (
+                baseline_loss is not None
+                and np.isfinite(baseline_loss)
+                and baseline_loss > 0
+            )
+            else np.nan
         )
 
         # --- Extras ---
@@ -1289,7 +1311,6 @@ def cluster_data_and_explain_blocks(
         summary.to_csv(summary_fn, index=False)
 
     U, B, V = est.factors()
-    R, C = U.shape[1], V.shape[1]
     bid = np.asarray(assign["block_id"])
 
     logger.info(
@@ -1307,8 +1328,8 @@ def cluster_data_and_explain_blocks(
     df = df.merge(
         df2_blocks[["store", "item", "block_id"]], on=["store", "item"], how="left"
     )
-    logger.debug(f"block_id nunique: {df['block_id'].nunique(dropna=True)}")
-    logger.debug(df["block_id"].value_counts(dropna=False))
+    logger.info(f"block_id nunique: {df['block_id'].nunique(dropna=True)}")
+    logger.info(df["block_id"].value_counts(dropna=False))
 
     if output_fn is not None:
         logger.info(f"Saving output to {output_fn}")

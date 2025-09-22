@@ -2009,8 +2009,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         k = max(min_keep, k)
 
         # 6) Threshold: keep anything with |B| >= the k-th value
-        logger.info(f"Keeping {k} blocks with |B| >= {cut}.")
         cut = vals[k - 1]
+        logger.info(f"Keeping {k} blocks with |B| >= {cut}.")
         return np.abs(self.B_) >= cut
 
     def blockmask_to_cellmask(self, allowed_mask: np.ndarray) -> np.ndarray:
