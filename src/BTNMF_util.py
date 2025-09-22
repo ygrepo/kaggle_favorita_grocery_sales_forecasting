@@ -1295,7 +1295,7 @@ def cluster_data_and_explain_blocks(
     logger.info(
         f"Current min_keep: {min_keep}-Suggested min_keep: {suggested_min_keep_elbow}"
     )
-    min_keep = max(min_keep, suggested_min_keep_elbow)
+    min_keep = min(min_keep, suggested_min_keep_elbow)
     assign = est.filter_blocks(
         X=X_array, min_keep=min_keep, keep_strategy=keep_strategy, return_frame=False
     )
