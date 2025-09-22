@@ -2133,7 +2133,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if self.B_ is None:
             raise ValueError("Model has not been fitted yet")
 
-        if keep_strategy is None:
+        if keep_strategy == "":
             # legacy: whatever your current gap logic does
             logger.info("Computing allowed mask from gap.")
             allowed = (
