@@ -34,6 +34,7 @@ MIN_KEEP="6"
 TOP_K="10"
 K_ROW=0
 K_COL=0
+KEEP_STRATEGY="delta_then_size"
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
@@ -73,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --min_keep) MIN_KEEP="$2"; shift 2 ;;
     --top_k) TOP_K="$2"; shift 2 ;;
     --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
+    --keep_strategy) KEEP_STRATEGY="$2"; shift 2 ;;
     --n_jobs) N_JOBS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
@@ -103,6 +105,7 @@ echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
 echo "K row: $K_ROW" | tee -a "$LOG_FILE"
 echo "K col: $K_COL" | tee -a "$LOG_FILE"
+echo "Keep strategy: $KEEP_STRATEGY" | tee -a "$LOG_FILE"
 echo "Max PVE drop: $MAX_PVE_DROP" | tee -a "$LOG_FILE"
 echo "Min Silhouette: $MIN_SIL" | tee -a "$LOG_FILE"
 echo "Min keep: $MIN_KEEP" | tee -a "$LOG_FILE"
@@ -136,6 +139,7 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --min_keep "$MIN_KEEP" \
   --top_k "$TOP_K" \
   --top_rank_fn "$TOP_RANK_FN" \
+  --keep_strategy "$KEEP_STRATEGY" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --summary_fn "$SUMMARY_FN" \

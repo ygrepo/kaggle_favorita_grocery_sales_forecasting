@@ -34,6 +34,99 @@ def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
     return int(np.argmax(counts))  # ties → lowest index
 
 
+# ----------------------------
+# Losses
+# ----------------------------
+def gaussian_loss(X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None) -> float:
+    if mask is None:
+        diff = X - Xhat
+    else:
+        diff = (X - Xhat)[mask]
+    return float(np.sum(diff * diff))
+
+
+def poisson_nll(
+    X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None, eps=1e-9
+) -> float:
+    # NLL(μ; x) = μ - x*log μ (+ const)
+    if mask is None:
+        x = X
+        mu = np.maximum(Xhat, eps)
+    else:
+        x = X[mask]
+        mu = np.maximum(Xhat[mask], eps)
+    return float(np.sum(mu - x * np.log(mu)))
+
+
+def model_loss(
+    X: np.ndarray, Xhat: np.ndarray, loss_name, mask: np.ndarray = None
+) -> float:
+    if loss_name == "gaussian":
+        return gaussian_loss(X, Xhat, mask)
+    elif loss_name == "poisson":
+        return poisson_nll(X, Xhat, mask)
+    else:
+        raise ValueError(f"Unknown loss: {loss_name}")
+
+
+def elbow_cutoff_by_gap(values: np.ndarray, min_floor: int = 1):
+    vals = np.asarray(values, float)
+    vals = vals[np.isfinite(vals)]
+    vals = np.sort(vals)
+    if vals.size == 0:
+        return min_floor
+    diffs = np.diff(vals) / np.maximum(vals[:-1], 1e-12)  # relative jump
+    if diffs.size == 0:
+        return max(min_floor, int(vals[0]))
+    k = int(np.argmax(diffs))  # index before the largest jump
+    cutoff = vals[k]  # everything >= this is "kept"
+    return int(max(min_floor, np.floor(cutoff)))
+
+
+def allowed_mask_from_stats(
+    stats: pd.DataFrame,
+    rule: str = "delta_then_size",
+    size_quantile: float = 0.50,
+    delta_quantile: float = 0.50,
+    min_rows: int = 1,
+    min_cols: int = 1,
+):
+    R = int(stats["r"].max()) + 1
+    C = int(stats["c"].max()) + 1
+    allow = np.zeros((R, C), dtype=bool)
+
+    if rule == "size_gap":
+        th = elbow_cutoff_by_gap(stats["n_cells"].values, min_floor=min_rows * min_cols)
+        keep = stats["n_cells"] >= th
+
+    elif rule == "effect_gap":
+        th = elbow_cutoff_by_gap(stats["effect_score"].values, min_floor=1)
+        keep = stats["effect_score"] >= th
+
+    elif rule == "delta_then_size":
+        dth = np.nanquantile(stats["delta_loss"].values, delta_quantile)
+        sth = np.nanquantile(stats["n_cells"].values, size_quantile)
+        keep = (
+            (stats["delta_loss"] > 0)
+            & (stats["delta_loss"] >= dth)
+            & (stats["n_cells"] >= sth)
+        )
+
+    elif rule == "quantiles":
+        sth = np.nanquantile(stats["n_cells"].values, size_quantile)
+        keep = stats["n_cells"] >= sth
+
+    else:
+        raise ValueError(f"unknown rule: {rule}")
+
+    # also enforce row/col minimums if desired
+    keep &= (stats["n_rows"] >= min_rows) & (stats["n_cols"] >= min_cols)
+
+    for _, row in stats[keep].iterrows():
+        allow[int(row["r"]), int(row["c"])] = True
+    return allow
+
+
 class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     """
     Binary (multi-hard) tri-factorization:
@@ -1930,6 +2023,88 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         M = A @ V.astype(int).T  # (I, J)
         return M > 0
 
+    # ----------------------------
+    # Fast per-block ablation ΔLoss
+    # ----------------------------
+
+    def compute_all_block_delta_losses(self, X: np.ndarray, mask: np.ndarray = None):
+
+        # If B is larger, trim a view
+        U, B, V = self.factors()
+        # Use aligned dims from U and V
+        R = U.shape[1]
+        C = V.shape[1]
+        # B = est.B_
+        if B.shape != (R, C):
+            B = B[:R, :C]
+
+        dmat = np.zeros((R, C), dtype=float)
+        for r in range(R):
+            for c in range(C):
+                dmat[r, c] = self.ablate_block_delta_loss(X, r, c, B=B, mask=mask)
+        return dmat
+
+    def ablate_block_delta_loss(
+        self,
+        X: np.ndarray,
+        r: int,
+        c: int,
+        B: np.ndarray,
+        mask: np.ndarray = None,
+    ):
+        """
+        ΔLoss_rc = Loss(X, Xhat_without_rc) - Loss(X, Xhat_full)
+        where removing block (r,c) is a rank-1 update:
+        Xhat_without = Xhat - B_rc * (U[:,r] ⊗ V[:,c])
+        Positive Δ means the block is helpful.
+        """
+        U, _, V = self.factors()
+        Xhat = self.reconstruct()
+        # U, V, B, Xhat = est.U_, est.V_, Bview, est.Xhat_
+
+        b_rc = float(B[r, c])
+        if b_rc == 0.0:
+            return 0.0
+        loss_name = self.loss
+        L_full = model_loss(X, Xhat, loss_name, mask)
+        # rank-1 contribution with current U/V
+        outer = np.outer(U[:, r].astype(float), V[:, c].astype(float))
+        Xhat_wo = Xhat - b_rc * outer
+        L_wo = model_loss(X, Xhat_wo, loss_name, mask)
+        return L_wo - L_full
+
+    def collect_block_stats(self, X, mask=None):
+        U, B, V = self.factors()
+        R, C = U.shape[1], V.shape[1]
+
+        # counts
+        n_rows = U.sum(axis=0).astype(int)  # (R,)
+        n_cols = V.sum(axis=0).astype(int)  # (C,)
+
+        rows = []
+        for r in range(R):
+            for c in range(C):
+                nr, nc = int(n_rows[r]), int(n_cols[c])
+                n_cells = nr * nc
+                b = float(B[r, c])
+
+                # ΔLoss (positive means helpful)
+                dloss = self.ablate_block_delta_loss(X, r, c, B=B, mask=mask)
+
+                rows.append(
+                    {
+                        "r": r,
+                        "c": c,
+                        "B_rc": b,
+                        "n_rows": nr,
+                        "n_cols": nc,
+                        "n_cells": n_cells,
+                        "delta_loss": dloss,
+                        "effect_score": abs(b) * (n_cells**0.5),
+                    }
+                )
+        return pd.DataFrame(rows)
+
     def filter_blocks(
         self,
         X: np.ndarray,
@@ -1938,26 +2113,49 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         min_keep: int = 4,
         method: str = "gaussian_delta",
         return_frame: bool = False,
+        keep_strategy: str | None = None,  # NEW: None = legacy behavior
+        size_q: float = 0.50,
+        delta_q: float = 0.50,
+        min_rows: int = 1,
+        min_cols: int = 1,
     ) -> Dict[str, Any]:
         """
-        Filter the blocks by a boolean mask.
+        Filter blocks by a boolean mask or by data-driven stats.
+        keep_strategy:
+        - None: use legacy mask = self.allowed_mask_from_gap(min_keep=min_keep)
+        - 'size_gap'        : elbow on n_cells
+        - 'effect_gap'      : elbow on effect_score = |B| * sqrt(n_cells)
+        - 'delta_then_size' : ΔLoss quantile AND size quantile (recommended)
+        - 'quantiles'       : size-only quantile
         """
         if self.B_ is None:
             raise ValueError("Model has not been fitted yet")
-        if mask is None:
-            mask = self.allowed_mask_from_gap(min_keep=min_keep)
 
-        # per-cell assignment with the mask
+        if keep_strategy is None:
+            # legacy: whatever your current gap logic does
+            allowed = (
+                self.allowed_mask_from_gap(min_keep=min_keep) if mask is None else mask
+            )
+        else:
+            # data-driven
+            stats = self.collect_block_stats(X, mask=None)
+            allowed = allowed_mask_from_stats(
+                stats,
+                rule=keep_strategy,
+                size_quantile=size_q,
+                delta_quantile=delta_q,
+                min_rows=min_rows,
+                min_cols=min_cols,
+            )
+
         assign = self.assign_unique_blocks(
             X,
             method=method,
-            allowed_mask=mask,
+            allowed_mask=allowed,
             on_empty="fallback",
             return_frame=return_frame,
         )
-        if return_frame:
-            return assign["as_frame"]
-        return assign
+        return assign["as_frame"] if return_frame else assign
 
     def get_row_col_orders(
         self,

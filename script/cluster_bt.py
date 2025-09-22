@@ -132,6 +132,12 @@ def parse_args():
         help="Min Silhouette for BT-NMF",
     )
     parser.add_argument(
+        "--keep_strategy",
+        type=str,
+        default="delta_then_size",
+        help="Keep strategy for BT-NMF",
+    )
+    parser.add_argument(
         "--min_keep",
         type=int,
         default=6,
@@ -223,6 +229,7 @@ def main():
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  K row: {args.k_row}")
         logger.info(f"  K col: {args.k_col}")
+        logger.info(f"  Keep strategy: {args.keep_strategy}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Max PVE drop: {args.max_pve_drop}")
         logger.info(f"  Min Silhouette: {args.min_sil}")
@@ -256,6 +263,7 @@ def main():
             max_iter=args.max_iter,
             k_row=args.k_row,
             k_col=args.k_col,
+            keep_strategy=args.keep_strategy,
             tol=args.tol,
             max_pve_drop=args.max_pve_drop,
             min_sil=args.min_sil,

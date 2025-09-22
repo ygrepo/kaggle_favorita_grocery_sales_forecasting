@@ -2,7 +2,10 @@ import numpy as np
 from typing import Dict, Any, Iterable, Optional, Callable, Tuple
 import pandas as pd
 from sklearn.cluster import KMeans
-from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationEstimator
+from src.BinaryTriFactorizationEstimator import (
+    BinaryTriFactorizationEstimator,
+    model_loss,
+)
 from src.data_utils import normalize_data, get_nan_stats
 from src.utils import save_csv_or_parquet
 from dataclasses import dataclass
@@ -316,41 +319,6 @@ def get_sorted_row_col(
 
 
 # ----------------------------
-# Losses
-# ----------------------------
-def gaussian_loss(X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None) -> float:
-    if mask is None:
-        diff = X - Xhat
-    else:
-        diff = (X - Xhat)[mask]
-    return float(np.sum(diff * diff))
-
-
-def poisson_nll(
-    X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None, eps=1e-9
-) -> float:
-    # NLL(μ; x) = μ - x*log μ (+ const)
-    if mask is None:
-        x = X
-        mu = np.maximum(Xhat, eps)
-    else:
-        x = X[mask]
-        mu = np.maximum(Xhat[mask], eps)
-    return float(np.sum(mu - x * np.log(mu)))
-
-
-def model_loss(
-    X: np.ndarray, Xhat: np.ndarray, loss_name, mask: np.ndarray = None
-) -> float:
-    if loss_name == "gaussian":
-        return gaussian_loss(X, Xhat, mask)
-    elif loss_name == "poisson":
-        return poisson_nll(X, Xhat, mask)
-    else:
-        raise ValueError(f"Unknown loss: {loss_name}")
-
-
-# ----------------------------
 # PVE (percent variance explained)
 # ----------------------------
 def compute_pve(
@@ -383,26 +351,6 @@ def compute_pve(
 # ----------------------------
 # Fast per-block ablation ΔLoss
 # ----------------------------
-
-
-def compute_all_block_delta_losses(
-    est: BinaryTriFactorizationEstimator, X: np.ndarray, mask: np.ndarray = None
-):
-
-    # If B is larger, trim a view
-    U, B, V = est.factors()
-    # Use aligned dims from U and V
-    R = U.shape[1]
-    C = V.shape[1]
-    # B = est.B_
-    if B.shape != (R, C):
-        B = B[:R, :C]
-
-    dmat = np.zeros((R, C), dtype=float)
-    for r in range(R):
-        for c in range(C):
-            dmat[r, c] = ablate_block_delta_loss(est, X, r, c, B=B, mask=mask)
-    return dmat
 
 
 def ablate_block_delta_loss(
@@ -735,6 +683,7 @@ def sweep_btf_grid(
     restarts: int = 3,
     seeds: Optional[Iterable[int]] = None,
     min_keep: int = 6,
+    keep_strategy: str = "delta_then_size",
     fit_kwargs: Optional[Dict[str, Any]] = None,
     n_jobs: int = 1,  # NEW: Number of parallel processes
     batch_size: int = 4,  # NEW: Number of (R,C) pairs per batch
@@ -783,7 +732,7 @@ def sweep_btf_grid(
     if n_jobs == 1:
         # Single-threaded processing
         return _sweep_btf_grid_sequential(
-            est_maker, X, rc_pairs, restarts, seeds, min_keep, fit_kwargs
+            est_maker, X, rc_pairs, restarts, seeds, min_keep, keep_strategy, fit_kwargs
         )
     else:
         # Multi-threaded processing
@@ -794,6 +743,7 @@ def sweep_btf_grid(
             restarts,
             seeds,
             min_keep,
+            keep_strategy,
             fit_kwargs,
             n_jobs,
             batch_size,
@@ -823,7 +773,7 @@ def suggest_min_keep_elbow(est) -> int:
 
 
 def _process_single_rc_pair(
-    R: int, C: int, est_maker, X, restarts, seeds, min_keep, fit_kwargs
+    R: int, C: int, est_maker, X, restarts, seeds, min_keep, keep_strategy, fit_kwargs
 ):
     """Process a single (R,C) pair and return the metrics row."""
 
@@ -886,7 +836,7 @@ def _process_single_rc_pair(
         # Compute ΔLoss for every block (r,c) in the factorization
         # ΔLoss_rc = Loss_without_block - Loss_full
         # Positive values mean the block is "helpful"
-        ablation_mat = compute_all_block_delta_losses(est, X, mask=mask)
+        ablation_mat = est.compute_all_block_delta_losses(X, mask=mask)
 
         # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
         ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
@@ -955,13 +905,13 @@ def _process_single_rc_pair(
 
 
 def _sweep_btf_grid_sequential(
-    est_maker, X, rc_pairs, restarts, seeds, min_keep, fit_kwargs
+    est_maker, X, rc_pairs, restarts, seeds, min_keep, keep_strategy, fit_kwargs
 ):
     """Sequential processing of (R,C) pairs."""
     rows = []
     for R, C in rc_pairs:
         row = _process_single_rc_pair(
-            R, C, est_maker, X, restarts, seeds, min_keep, fit_kwargs
+            R, C, est_maker, X, restarts, seeds, min_keep, keep_strategy, fit_kwargs
         )
         rows.append(row)
     return pd.DataFrame(rows)
@@ -976,6 +926,7 @@ def _process_rc_batch(args):
         restarts,
         seeds,
         min_keep,
+        keep_strategy,
         fit_kwargs,
     ) = args
 
@@ -983,7 +934,7 @@ def _process_rc_batch(args):
     for R, C in rc_batch:
         try:
             row = _process_single_rc_pair(
-                R, C, est_maker, X, restarts, seeds, min_keep, fit_kwargs
+                R, C, est_maker, X, restarts, seeds, min_keep, keep_strategy, fit_kwargs
             )
             results.append(row)
         except Exception as e:
@@ -1035,7 +986,16 @@ def _validate_est_maker_for_multiprocessing(est_maker):
 
 
 def _sweep_btf_grid_parallel(
-    est_maker, X, rc_pairs, restarts, seeds, min_keep, fit_kwargs, n_jobs, batch_size
+    est_maker,
+    X,
+    rc_pairs,
+    restarts,
+    seeds,
+    min_keep,
+    keep_strategy,
+    fit_kwargs,
+    n_jobs,
+    batch_size,
 ):
     """Parallel processing of (R,C) pairs using multiprocessing."""
     from concurrent.futures import ProcessPoolExecutor
@@ -1061,6 +1021,7 @@ def _sweep_btf_grid_parallel(
             restarts,
             seeds,
             min_keep,
+            keep_strategy,
             fit_kwargs,
         )
         for batch in batches
@@ -1182,6 +1143,7 @@ def normalize_data_and_fit_estimator(
     est_maker: Callable[..., BinaryTriFactorizationEstimator],
     n_row: int,
     n_col: int,
+    keep_strategy: str = "delta_then_size",
     random_state: int = 0,
     min_keep: int = 6,
 ) -> tuple[BinaryTriFactorizationEstimator, dict]:
@@ -1204,7 +1166,9 @@ def normalize_data_and_fit_estimator(
         X_array = norm_data
 
     est.fit(X_array)
-    assign = est.filter_blocks(X=X_array, min_keep=min_keep, return_frame=False)
+    assign = est.filter_blocks(
+        X=X_array, min_keep=min_keep, keep_strategy=keep_strategy, return_frame=False
+    )
     return est, assign
 
 
@@ -1220,6 +1184,7 @@ def cluster_data_and_explain_blocks(
     max_iter: int = 50,
     k_row: int = 1,
     k_col: int = 1,
+    keep_strategy: str = "delta_then_size",
     tol: float = 1e-5,
     max_pve_drop: float = 0.01,
     min_sil: float = -0.05,
@@ -1277,7 +1242,8 @@ def cluster_data_and_explain_blocks(
         C_list,
         restarts=3,
         seeds=range(123, 999),
-        min_keep=min_keep,
+        min_keep=None,
+        keep_strategy=keep_strategy,
         fit_kwargs={"max_iter": max_iter, "tol": tol},
         n_jobs=n_jobs,
         batch_size=batch_size,
@@ -1302,9 +1268,15 @@ def cluster_data_and_explain_blocks(
     X_array = norm_data.to_numpy()
     row_names = norm_data.index.to_numpy()
     col_names = norm_data.columns.to_numpy()
-
     est.fit(X_array)
-    assign = est.filter_blocks(X=X_array, min_keep=min_keep, return_frame=False)
+    suggested_min_keep_elbow = suggest_min_keep_elbow(est)
+    logger.info(
+        f"Current min_keep: {min_keep}-Suggested min_keep: {suggested_min_keep_elbow}"
+    )
+    min_keep = max(min_keep, suggested_min_keep_elbow)
+    assign = est.filter_blocks(
+        X=X_array, min_keep=min_keep, keep_strategy=keep_strategy, return_frame=False
+    )
     if summary_fn is not None:
         summary = est.explain_blocks(
             X=X_array,
@@ -1316,7 +1288,7 @@ def cluster_data_and_explain_blocks(
         logger.info(f"Saving summary to {summary_fn}")
         summary.to_csv(summary_fn, index=False)
 
-    U, B, V = est.factors()  
+    U, B, V = est.factors()
     R, C = U.shape[1], V.shape[1]
     bid = np.asarray(assign["block_id"])
 
