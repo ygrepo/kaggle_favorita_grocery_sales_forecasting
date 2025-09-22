@@ -48,7 +48,7 @@ OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_it
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_data_clustering.log"
-LOG_LEVEL="DEBUG"
+LOG_LEVEL="INFO"
 
 
 N_JOBS=-1
