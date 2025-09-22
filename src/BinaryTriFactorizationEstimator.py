@@ -2013,6 +2013,17 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         logger.info(f"Keeping {k} blocks with |B| >= {cut}.")
         return np.abs(self.B_) >= cut
 
+    def keep_topk_blocks(self, k):
+        if self.B_ is None:
+            raise ValueError("Model has not been fitted yet")
+
+        # 1) Collect absolute values of all block weights into a flat vector
+        absB = np.abs(self.B_).ravel()
+
+        thr = np.partition(absB, -k)[-k]
+        logger.info(f"Keeping top {k} blocks with |B| >= {thr}.")
+        return np.abs(self.B_) >= thr
+
     def blockmask_to_cellmask(self, allowed_mask: np.ndarray) -> np.ndarray:
         """
         allowed_mask: (R, C) boolean or {0,1}
@@ -2124,7 +2135,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         """
         Filter blocks by a boolean mask or by data-driven stats.
         keep_strategy:
-        - None: use legacy mask = self.allowed_mask_from_gap(min_keep=min_keep)
+        - Gap: use legacy mask = self.allowed_mask_from_gap(min_keep=min_keep)
+        - TopK: keep top-k blocks by absolute value
         - 'size_gap'        : elbow on n_cells
         - 'effect_gap'      : elbow on effect_score = |B| * sqrt(n_cells)
         - 'delta_then_size' : ΔLoss quantile AND size quantile (recommended)
@@ -2133,12 +2145,15 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if self.B_ is None:
             raise ValueError("Model has not been fitted yet")
 
-        if keep_strategy == "":
+        if keep_strategy == "Gap":
             # legacy: whatever your current gap logic does
             logger.info("Computing allowed mask from gap.")
             allowed = (
                 self.allowed_mask_from_gap(min_keep=min_keep) if mask is None else mask
             )
+        elif keep_strategy == "TopK":
+            logger.info("Computing allowed mask from top-k.")
+            allowed = self.keep_topk_blocks(min_keep)
         else:
             # data-driven
             logger.info("Computing allowed mask from stats.")

@@ -34,7 +34,7 @@ MIN_KEEP="10"
 TOP_K="10"
 K_ROW=0
 K_COL=0
-KEEP_STRATEGY=""
+KEEP_STRATEGY="TopK"
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
