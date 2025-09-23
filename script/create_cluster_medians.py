@@ -114,7 +114,7 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
 
         df = load_data(data_fn)
-        med_df = compute_cluster_medians(df, cluster_col="store_cluster")
+        med_df = compute_cluster_medians(df, cluster_col="block_id")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         logger.info(f"Merged data with shape {df.shape}")
