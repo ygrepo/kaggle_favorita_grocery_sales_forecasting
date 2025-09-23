@@ -13,14 +13,16 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
+
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.utils import setup_logging, get_logger
 from src.data_utils import compute_cluster_medians
-from src.utils import setup_logging
+
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -39,18 +41,6 @@ def parse_args():
         type=str,
         default="",
         help="Path to output file (relative to project root)",
-    )
-    parser.add_argument(
-        "--item_fn",
-        type=str,
-        default="",
-        help="Path to item file (relative to project root)",
-    )
-    parser.add_argument(
-        "--store_fn",
-        type=str,
-        default="",
-        help="Path to store file (relative to project root)",
     )
     parser.add_argument(
         "--log_dir",
@@ -86,28 +76,13 @@ def load_data(
         if data_fn.suffix == ".parquet":
             df = pd.read_parquet(data_fn)
         else:
-            dtype_dict = {
-                "id": np.uint32,
-                "store_item": str,
-                "store": np.uint8,
-                "item": np.uint32,
-                "unit_sales": np.float32,
-            }
-            logger.info(f"Loading {nrows} rows")
+            logger.info("Loading")
             df = pd.read_csv(
                 data_fn,
-                dtype=dtype_dict,
                 low_memory=False,
-                parse_dates=["date"],
             )
-        cols = ["date", "store_item", "store", "item", "unit_sales"] + [
-            c
-            for c in df.columns
-            if c not in ("date", "store_item", "store", "item", "unit_sales")
-        ]
-        df = df[cols]
-        df["date"] = pd.to_datetime(df["date"])
-        df.sort_values(["store_item", "date"], inplace=True)
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+        df.sort_values(["store_item", "start_date"], inplace=True)
         logger.info(f"Loaded data with shape {df.shape}")
         return df
     except Exception as e:
@@ -121,36 +96,23 @@ def main():
     args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
-    item_fn = Path(args.item_fn).resolve()
-    store_fn = Path(args.store_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
-
-    log_dir = Path(args.log_dir).resolve()
-
+    log_fn = Path(args.log_fn).resolve()
     # Set up logging
-    log_level = args.log_level
-    logger = setup_logging(log_dir, log_level)
+    setup_logging(log_fn, args.log_level)
     try:
         # Log configuration
-        logger.info("Starting data clustering with configuration:")
+        logger.info("Starting:")
         logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Item fn: {item_fn}")
-        logger.info(f"  Store fn: {store_fn}")
         logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Log fn: {log_fn}")
 
         df = load_data(data_fn)
-        (store_med, item_med) = compute_cluster_medians(
-            df,
-            store_fn=store_fn,
-            item_fn=item_fn,
-            log_level=log_level,
-        )
-        logger.info(f"Merged data with shape {df.shape}")
+        med_df = compute_cluster_medians(df, cluster_col="store_cluster")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
-        df = df.merge(store_med, on=["store_cluster", "date"], how="left").merge(
-            item_med, on=["item_cluster", "date"], how="left"
-        )
+        logger.info(f"Merged data with shape {df.shape}")
+        df = df.merge(med_df, on=["block_id", "start_date"], how="left")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         if output_fn.suffix == ".parquet":
@@ -160,7 +122,7 @@ def main():
         logger.info(f"Saved data to {output_fn}")
 
     except Exception as e:
-        logger.error(f"Error creating training features: {e}")
+        logger.error(f"Error: {e}")
         raise
 
 

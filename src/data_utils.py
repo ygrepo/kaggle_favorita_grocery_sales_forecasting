@@ -423,34 +423,18 @@ def load_X_y_data(
 
 def compute_cluster_medians(
     df: pd.DataFrame,
-    store_fn: Path | None = None,
-    item_fn: Path | None = None,
+    date_col: str = "start_date",
+    cluster_col: str = "block_id",
     *,
-    value_col: str = "unit_sales",
-    log_level: str = "INFO",
-):
-    store_med = (
-        df.groupby(["store_cluster", "date"], observed=True)[value_col]
+    value_col: str = "sales_day_1",
+) -> pd.DataFrame:
+    df = (
+        df.groupby([cluster_col, date_col], observed=True)[value_col]
         .median()
-        .rename("store_cluster_median")
+        .rename(f"{cluster_col}_median")
         .reset_index()
     )
-
-    item_med = (
-        df.groupby(["item_cluster", "date"], observed=True)[value_col]
-        .median()
-        .rename("item_cluster_median")
-        .reset_index()
-    )
-
-    if store_fn is not None:
-        logger.info(f"Saving store_med to {store_fn}")
-        store_med.to_parquet(store_fn)
-    if item_fn is not None:
-        logger.info(f"Saving item_med to {item_fn}")
-        item_med.to_parquet(item_fn)
-
-    return store_med, item_med
+    return df
 
 
 def generate_aligned_windows(

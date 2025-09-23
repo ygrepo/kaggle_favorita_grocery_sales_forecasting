@@ -11,10 +11,10 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster.parquet"
-OUTPUT_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_medians.parquet"
-ITEM_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_item_cluster_medians.parquet"
-STORE_FN="${DATA_DIR}/train_2014_2015_top_53_store_2000_item_store_cluster_medians.parquet"
+OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
+DATA_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2000_item"
+DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt.parquet"
+OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_medians.parquet"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -23,8 +23,6 @@ LOG_LEVEL="DEBUG"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
-    --item_fn) ITEM_FN="$2"; shift 2 ;;
-    --store_fn) STORE_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -49,16 +47,12 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 set +e  # Disable exit on error to handle the error message
 echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
-echo "  Item fn: ${ITEM_FN}" | tee -a "$LOG_FILE"
-echo "  Store fn: ${STORE_FN}" | tee -a "$LOG_FILE"
 echo "  Output fn: ${OUTPUT_FN}" | tee -a "$LOG_FILE"
 echo "  Log dir: ${LOG_DIR}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/create_cluster_medians.py" \
   --data_fn "$DATA_FN" \
-  --item_fn "$ITEM_FN" \
-  --store_fn "$STORE_FN" \
   --output_fn "$OUTPUT_FN" \
   --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
