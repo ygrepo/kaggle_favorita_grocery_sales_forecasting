@@ -193,60 +193,14 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         if data_fn.suffix == ".parquet":
             df = pd.read_parquet(data_fn)
         else:
-            dtype_dict = {
-                "store": "uint16",
-                "item": "uint32",
-                "store_item": "string",  # allow NaNs as <NA>
-                "unit_sales": "float32",
-                # "id": "Int64",  # nullable integer
-                "onpromotion": "boolean",  # if you want True/False with nulls
-            }
             df = pd.read_csv(
                 data_fn,
-                dtype=dtype_dict,
-                parse_dates=["date"],
-                keep_default_na=True,
-                na_values=[""],
+                low_memory=False,
             )
-        # Convert nullable Int64 or boolean to float64 with NaN
-        cols = [
-            "date",
-            "store_item",
-            "store",
-            "item",
-            "unit_sales",
-            "onpromotion",
-            "weight",
-        ] + [
-            c
-            for c in df.columns
-            if c
-            not in (
-                "date",
-                "store_item",
-                "store",
-                "item",
-                "unit_sales",
-                "onpromotion",
-                "weight",
-            )
-        ]
-        df = df[cols]
-        # df["id"] = df["id"].astype("float64")  # <NA> → np.nan
-        # df["id"] = df["id"].astype(object).where(df["id"].notna(), np.nan)
-        df["store_item"] = (
-            df["store_item"].astype(object).where(df["store_item"].notna(), np.nan)
-        )
-        df["onpromotion"] = (
-            df["onpromotion"].astype(object).where(df["onpromotion"].notna(), np.nan)
-        )
-        df["date"] = pd.to_datetime(df["date"])
-        df.sort_values(["store_item", "date"], inplace=True)
+        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+        df["start_date"] = pd.to_datetime(df["start_date"])
+        df.sort_values(["store_item", "start_date"], inplace=True)
         logger.info(f"Loaded data with shape {df.shape}")
-        df.fillna(0, inplace=True)
-        logger.info(f"Filled NaN values with 0")
-        # df = df[df["unit_sales"].notna()]
-        # logger.info(f"Dropped rows with NaN unit_sales, new shape: {df.shape}")
         return df
     except Exception as e:
         logger.error(f"Error loading data: {e}")
@@ -2135,7 +2089,6 @@ def save_parquets_by_cluster_pairs(
     *,
     to_parquet: bool = True,
     to_csv: bool = False,
-    log_level: str = "INFO",
 ) -> None:
     """
     Splits the dataframe by (store_cluster, item_cluster) pairs and saves each to a compressed Parquet file.
@@ -2147,26 +2100,23 @@ def save_parquets_by_cluster_pairs(
     output_dir : Path
         Directory where the Parquet files will be saved.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    grouped = df.groupby(["store_cluster", "item_cluster"])
+    grouped = df.groupby(["block_id"])
 
     iterator = grouped
     if logger.level == logging.DEBUG:
         iterator = tqdm(iterator, desc="Generating cluster parquets")
 
-    for (store_cluster, item_cluster), group in iterator:
-        logger.info(f"Saving cluster {store_cluster}_{item_cluster}")
+    for block_id, group in iterator:
+        logger.info(f"Saving block {block_id}")
         if to_parquet:
-            filename = f"cluster_{store_cluster}_{item_cluster}.parquet"
+            filename = f"block_{block_id}.parquet"
             group.to_parquet(
                 output_dir / filename,
                 index=False,
-                compression="snappy",
-                engine="pyarrow",
             )
         if to_csv:
-            filename = f"cluster_{store_cluster}_{item_cluster}.csv"
+            filename = f"block_{block_id}.csv"
             group.to_csv(output_dir / filename, index=False)
         del group
 

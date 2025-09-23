@@ -11,12 +11,15 @@ import sys
 import argparse
 from pathlib import Path
 
+
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.utils import setup_logging, get_logger
 from src.data_utils import load_raw_data, save_parquets_by_cluster_pairs
-from src.utils import setup_logging
+
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -42,6 +45,12 @@ def parse_args():
         help="Directory to save script outputs (relative to project root)",
     )
     parser.add_argument(
+        "--log_file",
+        type=str,
+        default="",
+        help="Path to save script outputs (relative to project root)",
+    )
+    parser.add_argument(
         "--log_level",
         type=str,
         default="INFO",
@@ -52,29 +61,27 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    # Parse command line arguments
     args = parse_args()
+    # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
     output_dir = Path(args.output_dir).resolve()
-    log_dir = Path(args.log_dir).resolve()
+    log_fn = Path(args.log_fn).resolve()
+    # Set up logging
+    setup_logging(log_fn, args.log_level)
 
     try:
-        logger = setup_logging(log_dir=log_dir, log_level=args.log_level)
-        logger.info(f"Starting create_store_sku_cluster_data")
+        logger.info(f"Starting")
         logger.info(f"Loading data from {data_fn}")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Output dir: {output_dir}")
-        logger.info(f"  Log dir: {log_dir}")
+        logger.info(f"  Log fn: {log_fn}")
 
         df = load_raw_data(
             data_fn=data_fn,
         )
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        save_parquets_by_cluster_pairs(
-            df,
-            output_dir=output_dir,
-            log_level=args.log_level,
-        )
-        logger.info(f"Finished create_store_sku_cluster_data")
+        save_parquets_by_cluster_pairs(df, output_dir=output_dir)
+        logger.info("Completed successfully")
     except Exception as e:
-        logger.error(f"Error creating store SKU cluster data: {e}")
+        logger.error(f"Error: {e}")
         raise
