@@ -66,16 +66,16 @@ if __name__ == "__main__":
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
     output_dir = Path(args.output_dir).resolve()
-    log_fn = Path(args.log_fn).resolve()
+    log_file = Path(args.log_file).resolve()
     # Set up logging
-    setup_logging(log_fn, args.log_level)
+    setup_logging(log_file, args.log_level)
 
     try:
         logger.info(f"Starting")
         logger.info(f"Loading data from {data_fn}")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Output dir: {output_dir}")
-        logger.info(f"  Log fn: {log_fn}")
+        logger.info(f"  Log fn: {log_file}")
 
         df = load_raw_data(
             data_fn=data_fn,
