@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 
 def get_normalized_assignments(
-    assign: Dict[str, Any],
+    block_id_mat: np.ndarray,
     norm_data: pd.DataFrame,
     *,
     row_col: str = "store",
@@ -29,7 +29,6 @@ def get_normalized_assignments(
     drop_unassigned: bool = True,  # set True to remove block_id == -1
 ) -> pd.DataFrame:
 
-    block_id_mat = np.asarray(assign["block_id"])
     I, J = norm_data.shape
     assert block_id_mat.shape == (I, J), "block_id matrix must match norm_data shape"
 
@@ -1214,6 +1213,7 @@ def cluster_data_and_explain_blocks(
     top_k: Optional[int] = None,
     top_rank_fn: Optional[Path] = None,
     summary_fn: Optional[Path] = None,
+    block_id_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
     figure_fn: Optional[Path] = None,
     n_jobs: int = 1,
@@ -1310,19 +1310,21 @@ def cluster_data_and_explain_blocks(
         logger.info(f"Saving summary to {summary_fn}")
         summary.to_csv(summary_fn, index=False)
 
-    U, B, V = est.factors()
+    U, _, V = est.factors()
     bid = np.asarray(assign["block_id"])
 
     logger.info(
         f"unique block_ids (first 20): {np.unique(bid)[:20]} count: {np.unique(bid).size}"
     )
     logger.info(f"bid shape: {bid.shape}")
+    if block_id_fn is not None:
+        logger.info(f"Saving block_id to {block_id_fn}")
+        np.save(block_id_fn, bid)
 
     # Cluster occupancy (are we collapsed to one cluster?)
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # length R
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # length C
-    logger.info(np.asarray(assign["block_id"]))
-    df2_blocks = get_normalized_assignments(assign, norm_data)[
+    df2_blocks = get_normalized_assignments(bid, norm_data)[
         ["store", "item", "growth_rate_1", "block_id"]
     ]
     df = df.merge(
@@ -1362,16 +1364,3 @@ def cluster_data_and_explain_blocks(
         )
 
     return df
-
-
-def block_id_heatmap(df: pd.DataFrame):
-    norm_data = normalize_data(
-        df,
-        column_name="growth_rate_1",
-        log_transform=False,
-        median_transform=True,
-        mean_transform=False,
-        zscore_rows=False,
-        zscore_cols=True,
-    )
-    pass

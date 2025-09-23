@@ -38,6 +38,7 @@ KEEP_STRATEGY="TopK"
 
 TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
 SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
+BLOCK_ID_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_block_id.npy"
 FIGURE_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_figure.tiff"
 OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt.parquet"
 # TOP_RANK_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_top_rank.csv"
