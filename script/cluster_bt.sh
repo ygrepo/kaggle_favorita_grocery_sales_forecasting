@@ -79,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --n_jobs) N_JOBS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
+    --block_id_fn) BLOCK_ID_FN="$2"; shift 2 ;;
     --figure_fn) FIGURE_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
@@ -115,6 +116,7 @@ echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
 echo "N jobs: $N_JOBS" | tee -a "$LOG_FILE"
 echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
+echo "Block id fn: $BLOCK_ID_FN" | tee -a "$LOG_FILE"
 echo "Figure fn: $FIGURE_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
@@ -144,6 +146,7 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --summary_fn "$SUMMARY_FN" \
+  --block_id_fn "$BLOCK_ID_FN" \
   --figure_fn "$FIGURE_FN" \
   --output_fn "$OUTPUT_FN" \
   --log_fn "$LOG_FILE" \

@@ -168,6 +168,12 @@ def parse_args():
         help="Path to summary file (relative to project root)",
     )
     parser.add_argument(
+        "--block_id_fn",
+        type=str,
+        default="",
+        help="Path to block id file (relative to project root)",
+    )
+    parser.add_argument(
         "--figure_fn",
         type=str,
         default="",
@@ -239,6 +245,7 @@ def main():
         logger.info(f"  N jobs: {args.n_jobs}")
         logger.info(f"  Batch size: {args.batch_size}")
         logger.info(f"  Summary fn: {args.summary_fn}")
+        logger.info(f"  Block id fn: {args.block_id_fn}")
         logger.info(f"  Figure fn: {args.figure_fn}")
         logger.info(f"  Output fn: {args.output_fn}")
         logger.info(f"  Log level: {args.log_level}")
@@ -252,6 +259,7 @@ def main():
         figure_fn = Path(args.figure_fn).resolve()
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
+        block_id_fn = Path(args.block_id_fn).resolve()
         cluster_data_and_explain_blocks(
             df,
             row_range=args.row_range,
@@ -271,6 +279,7 @@ def main():
             top_k=args.top_k,
             top_rank_fn=top_rank_fn,
             summary_fn=summary_fn,
+            block_id_fn=block_id_fn,
             output_fn=output_fn,
             figure_fn=figure_fn,
             n_jobs=args.n_jobs,
