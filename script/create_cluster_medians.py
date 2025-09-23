@@ -49,6 +49,12 @@ def parse_args():
         help="Directory to save script outputs (relative to project root)",
     )
     parser.add_argument(
+        "--log_fn",
+        type=str,
+        default="",
+        help="Path to save script outputs (relative to project root)",
+    )
+    parser.add_argument(
         "--log_level",
         type=str,
         default="INFO",
