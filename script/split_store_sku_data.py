@@ -17,7 +17,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils import setup_logging, get_logger
-from src.data_utils import load_raw_data, save_parquets_by_cluster_pairs
+from src.data_utils import load_raw_data, split_by_block_id
 
 logger = get_logger(__name__)
 
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     setup_logging(log_file, args.log_level)
 
     try:
-        logger.info(f"Starting")
+        logger.info("Starting")
         logger.info(f"Loading data from {data_fn}")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Output dir: {output_dir}")
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         df = load_raw_data(
             data_fn=data_fn,
         )
-        save_parquets_by_cluster_pairs(df, output_dir=output_dir)
+        split_by_block_id(df, output_dir=output_dir)
         logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error: {e}")

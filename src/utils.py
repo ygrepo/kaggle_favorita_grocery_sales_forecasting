@@ -56,23 +56,6 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 logger = get_logger(__name__)
 
-# def get_logger(logger_name: str, log_level: str = "INFO") -> logging.Logger:
-#     """Get a logger with the specified name and log level."""
-#     logger = logging.getLogger(logger_name)
-#     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-#     # Ensure at least one handler exists
-#     if not logger.handlers:
-#         handler = logging.StreamHandler()
-#         formatter = logging.Formatter(
-#             fmt="%(asctime)s - %(levelname)s - %(message)s",
-#             datefmt="%Y-%m-%d %H:%M:%S",
-#         )
-#         handler.setFormatter(formatter)
-#         logger.addHandler(handler)
-
-#     return logger
-
 
 def str2bool(v):
     if isinstance(v, bool):

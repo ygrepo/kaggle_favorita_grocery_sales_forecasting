@@ -2083,12 +2083,9 @@ def reorder_data(data, row_labels, col_labels):
     return data[np.ix_(row_order, col_order)], row_order, col_order
 
 
-def save_parquets_by_cluster_pairs(
+def split_by_block_id(
     df: pd.DataFrame,
     output_dir: Path,
-    *,
-    to_parquet: bool = True,
-    to_csv: bool = False,
 ) -> None:
     """
     Splits the dataframe by (store_cluster, item_cluster) pairs and saves each to a compressed Parquet file.
@@ -2096,29 +2093,23 @@ def save_parquets_by_cluster_pairs(
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with 'store_cluster' and 'item_cluster' columns.
+        DataFrame with a 'block_id' column.
     output_dir : Path
         Directory where the Parquet files will be saved.
     """
 
-    grouped = df.groupby(["block_id"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    grouped = df.groupby("block_id", sort=True)
 
     iterator = grouped
     if logger.level == logging.DEBUG:
-        iterator = tqdm(iterator, desc="Generating cluster parquets")
+        iterator = tqdm(grouped, desc="Generating cluster parquets")
 
     for block_id, group in iterator:
-        logger.info(f"Saving block {block_id}")
-        if to_parquet:
-            filename = f"block_{block_id}.parquet"
-            group.to_parquet(
-                output_dir / filename,
-                index=False,
-            )
-        if to_csv:
-            filename = f"block_{block_id}.csv"
-            group.to_csv(output_dir / filename, index=False)
-        del group
+        filename = output_dir / f"block_{block_id}.parquet"
+        logger.info(f"Saving block {block_id} → {filename}")
+        save_csv_or_parquet(group, filename)
 
 
 def mav(series: pd.Series, is_log1p: bool = True, include_zeros: bool = True):
