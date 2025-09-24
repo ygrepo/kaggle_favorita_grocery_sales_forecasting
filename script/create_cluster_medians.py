@@ -124,13 +124,17 @@ def main():
             },
             inplace=True,
         )
-        med_df = compute_cluster_medians(df, cluster_col="cluster_id")
+        med_df = compute_cluster_medians(
+            df, date_col="date", cluster_col="cluster_id", value_col="growth_rate"
+        )
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         df = df.merge(med_df, on=["cluster_id", "date"], how="left")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
-        med_df = compute_cluster_medians(df, cluster_col="sales")
+        med_df = compute_cluster_medians(
+            df, date_col="date", cluster_col="cluster_id", value_col="sales"
+        )
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         df = df.merge(med_df, on=["cluster_id", "date"], how="left")
