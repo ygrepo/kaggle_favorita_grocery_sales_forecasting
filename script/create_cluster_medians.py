@@ -19,7 +19,7 @@ import pandas as pd
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import setup_logging, get_logger
+from src.utils import setup_logging, get_logger, save_csv_or_parquet
 from src.data_utils import compute_cluster_medians
 
 logger = get_logger(__name__)
@@ -114,19 +114,30 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
 
         df = load_data(data_fn)
-        med_df = compute_cluster_medians(df, cluster_col="block_id")
+        df.rename(
+            columns={
+                "sales_day_1": "sales",
+                "growth_rate_1": "growth_rate",
+                "onpromotion_day_1": "onpromotion",
+                "block_id": "cluster_id",
+                "start_date": "date",
+            },
+            inplace=True,
+        )
+        med_df = compute_cluster_medians(df, cluster_col="cluster_id")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
-        logger.info(f"Merged data with shape {df.shape}")
-        df = df.merge(med_df, on=["block_id", "start_date"], how="left")
+        df = df.merge(med_df, on=["cluster_id", "date"], how="left")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
-        if output_fn.suffix == ".parquet":
-            df.to_parquet(output_fn)
-        else:
-            df.to_csv(output_fn, index=False)
-        logger.info(f"Saved data to {output_fn}")
-
+        med_df = compute_cluster_medians(df, cluster_col="sales")
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        logger.info(f"Unique items: {df['item'].nunique()}")
+        df = df.merge(med_df, on=["cluster_id", "date"], how="left")
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        logger.info(f"Unique items: {df['item'].nunique()}")
+        save_csv_or_parquet(df, output_fn)
+        logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error: {e}")
         raise

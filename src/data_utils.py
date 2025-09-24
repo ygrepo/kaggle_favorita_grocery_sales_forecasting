@@ -380,12 +380,12 @@ def compute_cluster_medians(
     date_col: str = "start_date",
     cluster_col: str = "block_id",
     *,
-    value_col: str = "sales_day_1",
+    value_col: str = "growth_rate",
 ) -> pd.DataFrame:
     df = (
         df.groupby([cluster_col, date_col], observed=True)[value_col]
         .median()
-        .rename(f"{cluster_col}_median")
+        .rename(f"cluster_{value_col}_median")
         .reset_index()
     )
     return df
@@ -1200,12 +1200,11 @@ def generate_sales_features(
     output_path: Optional[Path] = None,
     epsilon: float = 1e-3,
 ) -> pd.DataFrame:
-    # Expected input columns:
-    # 'start_date', 'store_item', 'store', 'item', 'weight' (optional), 'sales_day_1',
-    # 'onpromotion_day_1', 'growth_rate_1', 'block_id', 'block_id_median'
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
 
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.sort_values(["store_item", "start_date"], inplace=False).reset_index(
+        drop=True
+    )
     assert "block_id" in df.columns, "Missing 'block_id' column"
     assert "block_id_median" in df.columns, "Missing 'block_id_median' column"
     assert (
