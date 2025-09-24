@@ -17,7 +17,7 @@ DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}2014_January_top_53_store_2000_item_growth_rate.parquet"
 
 N_JOBS=-1
-BATCH_SIZE=100
+BATCH_SIZE=10
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"

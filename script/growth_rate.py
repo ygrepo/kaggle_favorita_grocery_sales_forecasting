@@ -87,24 +87,28 @@ def main():
 
     try:
         # Log configuration
-        logger.info("Starting data clustering with configuration:")
+        logger.info("Starting with configuration:")
         logger.info(f"  Data fn: {args.data_fn}")
         logger.info(f"  Output fn: {args.output_fn}")
+        logger.info(f"  N jobs: {args.n_jobs}")
+        logger.info(f"  Batch size: {args.batch_size}")
+        logger.info(f"  Log fn: {args.log_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
         data_fn = Path(args.data_fn).resolve()
 
         df = load_raw_data(data_fn)
+        if "id" in df.columns:
+            df.drop(columns=["id"], inplace=True)
 
         output_fn = Path(args.output_fn).resolve()
         generate_growth_rate_features(
             df,
-            output_dir=output_fn.parent,
             output_fn=output_fn,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
         )
-        logger.info("Growth rate data generation completed successfully")
+        logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error Generating growth rate data: {e}")
         raise

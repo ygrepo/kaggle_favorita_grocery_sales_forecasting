@@ -198,8 +198,8 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
                 low_memory=False,
             )
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-        df["start_date"] = pd.to_datetime(df["start_date"])
-        df.sort_values(["store_item", "start_date"], inplace=True)
+        df["date"] = pd.to_datetime(df["start_date"])
+        df.sort_values(["store_item", "date"], inplace=True)
         logger.info(f"Loaded data with shape {df.shape}")
         return df
     except Exception as e:
@@ -679,7 +679,6 @@ def generate_growth_rate_features(
     window_size: int = 1,
     *,
     calendar_aligned: bool = True,
-    output_dir: Optional[Path] = None,
     output_fn: Optional[Path] = None,
     weight_col: str = "weight",
     promo_col: str = "onpromotion",
@@ -718,10 +717,6 @@ def generate_growth_rate_features(
         Combined DataFrame with growth rate features for all store-item combinations
     """
 
-    # Create output directory if specified
-    if output_dir is not None:
-        output_dir.mkdir(parents=True, exist_ok=True)
-
     # Get unique store-item combinations
     grouped = df[["store", "item"]].drop_duplicates()
     total_combinations = len(grouped)
@@ -743,7 +738,6 @@ def generate_growth_rate_features(
             total_combinations,
             window_size,
             calendar_aligned,
-            output_dir,
             weight_col,
             promo_col,
         )
@@ -756,7 +750,6 @@ def generate_growth_rate_features(
             total_combinations,
             window_size,
             calendar_aligned,
-            output_dir,
             output_fn,
             weight_col,
             promo_col,
@@ -771,7 +764,6 @@ def _generate_growth_rate_features_sequential(
     total_combinations: int,
     window_size: int,
     calendar_aligned: bool,
-    output_dir: Optional[Path],
     weight_col: str,
     promo_col: str,
 ) -> pd.DataFrame:
@@ -807,12 +799,6 @@ def _generate_growth_rate_features_sequential(
             store_sku_df,
             window_size=window_size,
             calendar_aligned=calendar_aligned,
-            # output_path=None,  # Do not save to files
-            output_path=(
-                output_dir / f"growth_rate_{store}_{sku}.parquet"
-                if output_dir
-                else None
-            ),
             weight_col=weight_col,
             promo_col=promo_col,
         )
@@ -857,7 +843,6 @@ def _process_growth_rate_store_item_batch(args):
         store_item_pairs,
         window_size,
         calendar_aligned,
-        output_dir,
         weight_col,
         promo_col,
     ) = args
@@ -876,12 +861,6 @@ def _process_growth_rate_store_item_batch(args):
             store_sku_df,
             window_size=window_size,
             calendar_aligned=calendar_aligned,
-            output_path=None,  # Do not save to files
-            # output_path=(
-            #     output_dir / f"growth_rate_{store}_{item}.parquet"
-            #     if output_dir
-            #     else None
-            # ),
             weight_col=weight_col,
             promo_col=promo_col,
         )
@@ -899,7 +878,6 @@ def _generate_growth_rate_features_parallel(
     total_combinations: int,
     window_size: int,
     calendar_aligned: bool,
-    output_dir: Optional[Path],
     output_fn: Optional[Path],
     weight_col: str,
     promo_col: str,
@@ -928,7 +906,6 @@ def _generate_growth_rate_features_parallel(
             batch,
             window_size,
             calendar_aligned,
-            output_dir,
             weight_col,
             promo_col,
         )
@@ -985,7 +962,6 @@ def generate_growth_rate_store_sku_feature(
     window_size: int = 1,
     *,
     calendar_aligned: bool = True,
-    output_path: Optional[Path] = None,
     weight_col: str = "weight",  # <- keep this
     promo_col: str = "onpromotion",  # <- daily flags kept as *_day_i
     batch_size: int = 100,
@@ -1000,8 +976,6 @@ def generate_growth_rate_store_sku_feature(
     logger.debug(f"Total rows: {len(df)}")
 
     # Use efficient data types from the start
-    df_optimized = df
-
     # Convert to smaller data types where possible
     dtype_conversions = {
         "store": "int32",
@@ -1011,12 +985,12 @@ def generate_growth_rate_store_sku_feature(
     }
 
     for col, dtype in dtype_conversions.items():
-        if col in df_optimized.columns:
-            df_optimized[col] = df_optimized[col].astype(dtype)
+        if col in df.columns:
+            df[col] = df[col].astype(dtype)
 
     # Pre-compute weights with efficient data types
-    if weight_col in df_optimized.columns:
-        w_src = df_optimized[["store", "item", weight_col]].dropna(subset=[weight_col])
+    if weight_col in df.columns:
+        w_src = df[["store", "item", weight_col]].dropna(subset=[weight_col])
         if not w_src.empty:
             weight_map = (
                 w_src.groupby(["store", "item"], sort=False)[weight_col]
@@ -1029,7 +1003,7 @@ def generate_growth_rate_store_sku_feature(
         weight_map = pd.Series(dtype="float32")
 
     windows = generate_aligned_windows(
-        df_optimized, window_size, calendar_aligned=calendar_aligned
+        df, window_size, calendar_aligned=calendar_aligned
     )
 
     # Stream processing with batches
@@ -1043,7 +1017,7 @@ def generate_growth_rate_store_sku_feature(
 
         for window_dates in window_batch:
             window_idx = pd.to_datetime(pd.Index(window_dates)).sort_values()
-            w_df = df_optimized[df_optimized["date"].isin(window_idx)].copy()
+            w_df = df[df["date"].isin(window_idx)].copy()
 
             # Create pivot tables with efficient data types
             sales_wide = w_df.pivot_table(
@@ -1088,9 +1062,9 @@ def generate_growth_rate_store_sku_feature(
 
             # Pre-compute previous day data
             prev_day = window_idx[0] - pd.DateOffset(days=1)
-            prev_day_data = df_optimized[df_optimized["date"] == prev_day].set_index(
-                ["store", "item"]
-            )["unit_sales"]
+            prev_day_data = df[df["date"] == prev_day].set_index(["store", "item"])[
+                "unit_sales"
+            ]
 
             # Vectorized processing of all store-items
             for idx, (store, item) in enumerate(store_items):
@@ -1100,7 +1074,7 @@ def generate_growth_rate_store_sku_feature(
 
                 # Use efficient data types in record
                 record = {
-                    "start_date": window_idx[0],
+                    "date": window_idx[0],
                     "store_item": f"{store}_{item}",
                     "store": int(store),  # Ensure int32
                     "item": int(item),  # Ensure int32
@@ -1153,10 +1127,15 @@ def generate_growth_rate_store_sku_feature(
 
     # Efficient final DataFrame construction
     if not all_records:
-        base_cols = ["start_date", "store_item", "store", "item", weight_col]
-        sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
-        growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-        promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        base_cols = ["date", "store_item", "store", "item", weight_col]
+        if window_size >= 1:
+            sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
+            growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+            promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+        else:
+            sales_cols = ["unit_sales"]
+            growth_cols = ["growth_rate"]
+            promo_cols = [promo_col]
         return pd.DataFrame(columns=base_cols + sales_cols + growth_cols + promo_cols)
 
     # Fast DataFrame construction from records
@@ -1169,23 +1148,18 @@ def generate_growth_rate_store_sku_feature(
         if col in ["store", "item"]:
             dtype_map[col] = "int32"
         elif (
-            col.startswith("sales_day_")
-            or col.startswith("growth_rate_")
+            col.startswith("unit_sales")
+            or col.startswith("growth_rate")
             or col == weight_col
         ):
             dtype_map[col] = "float32"
-        elif col.startswith(f"{promo_col}_day_"):
+        elif col.startswith(promo_col):
             dtype_map[col] = "int8"
 
     # Apply data type optimizations in batch
     for col, dtype in dtype_map.items():
         if col in result_df.columns:
             result_df[col] = result_df[col].astype(dtype)
-
-    if output_path is not None:
-        logger.info(f"Saving growth rate features to {output_path}")
-        save_csv_or_parquet(result_df, output_path)
-
     return result_df
 
 
