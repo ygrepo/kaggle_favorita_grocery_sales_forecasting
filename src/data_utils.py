@@ -395,7 +395,7 @@ def generate_aligned_windows(
     df: pd.DataFrame,
     window_size: int,
     *,
-    date_col: str = "start_date",
+    date_col: str = "date",
     calendar_aligned: bool = False,
 ) -> list[list[pd.Timestamp]]:
     """
