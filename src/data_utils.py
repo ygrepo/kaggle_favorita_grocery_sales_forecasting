@@ -1150,20 +1150,22 @@ def generate_growth_rate_store_sku_feature(
             gc.collect()
 
     # Efficient final DataFrame construction
+    base_cols = ["date", "store_item", "store", "item", weight_col]
+    if window_size >= 1:
+        sales_cols = [f"unit_sales_{i}" for i in range(1, window_size + 1)]
+        growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
+        promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
+    else:
+        sales_cols = ["unit_sales"]
+        growth_cols = ["growth_rate"]
+        promo_cols = [promo_col]
+    cols = base_cols + sales_cols + growth_cols + promo_cols
     if not all_records:
-        base_cols = ["date", "store_item", "store", "item", weight_col]
-        if window_size >= 1:
-            sales_cols = [f"sales_day_{i}" for i in range(1, window_size + 1)]
-            growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
-            promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
-        else:
-            sales_cols = ["unit_sales"]
-            growth_cols = ["growth_rate"]
-            promo_cols = [promo_col]
-        return pd.DataFrame(columns=base_cols + sales_cols + growth_cols + promo_cols)
+        return pd.DataFrame(columns=cols)
 
     # Fast DataFrame construction from records
     result_df = pd.DataFrame(all_records)
+    result_df = result_df[cols]
     logger.debug(f"Result DataFrame: {result_df.head()}")
 
     # Optimize final DataFrame data types
