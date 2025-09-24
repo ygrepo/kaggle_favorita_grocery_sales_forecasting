@@ -274,6 +274,9 @@ def prepare_data(
     df["weight"] = df["weight"].fillna(1)
     df["weight"] = df[df["weight"] == 0]["weight"] = 1
     df["unit_sales"] = df["unit_sales"].fillna(0)
+    d["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+    df.sort_values(["date", "store_item"], inplace=True)
+    df.reset_index(drop=True, inplace=True)
 
     # Fill missing unit_sales with NaN
     # missing_mask = df[value_column].isna()
