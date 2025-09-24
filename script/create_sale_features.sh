@@ -10,18 +10,21 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
-DATA_FN="${PROJECT_ROOT}/output/data/clustered_data_2014_2015_top_53_store_2000_item/"
-OUTPUT_DIR="${PROJECT_ROOT}/output/data/sale_data_2014_2015_top_53_store_2000_item/"
+DATA_DIR="${PROJECT_ROOT}/output/data/growth_rate_2014_January_top_53_store_2000_item/data_split"
+# Create output directories if they don't exist
+mkdir -p "$OUTPUT_DIR"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
+mkdir -p "$LOG_DIR"
+LOG_LEVEL="DEBUG"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="${LOG_DIR}/growth_rate_2014_January_top_53_store_2000_item_split_store_sku_data_${TIMESTAMP}.log"
 LOG_LEVEL="DEBUG"
 WINDOW_SIZE=1
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data_fn) DATA_FN="$2"; shift 2 ;;
-    --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
-    --log_dir) LOG_DIR="$2"; shift 2 ;;
+    --data_dir) DATA_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     --window_size) WINDOW_SIZE="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -44,16 +47,14 @@ echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 
 # Run the training script
 set +e  # Disable exit on error to handle the error message
-echo "Starting training with the following configuration:" | tee -a "$LOG_FILE"
-echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
-echo "  Output dir: ${OUTPUT_DIR}" | tee -a "$LOG_FILE"
+echo "Starting:" | tee -a "$LOG_FILE"
+echo "  Data dir: ${DATA_DIR}" | tee -a "$LOG_FILE"
 echo "  Window size: ${WINDOW_SIZE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/create_sale_features.py" \
-  --data_fn "$DATA_FN" \
-  --output_dir "$OUTPUT_DIR" \
-  --log_dir "$LOG_DIR" \
+  --data_dir "$DATA_DIR" \
+  --log_file "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \
   --window_size "$WINDOW_SIZE" \
    2>&1 | tee -a "$LOG_FILE"

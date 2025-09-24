@@ -58,13 +58,14 @@ def create_features(
         else:
             logger.warning(f"Multiple block IDs found: {bid}")
 
-        out_path = output_dir / f"{file_path.stem}.parquet"
-        create_sale_features(
-            df,
-            window_size=window_size,
-            calendar_aligned=True,
-            fn=out_path,
-        )
+        out_path = output_dir / f"{bid[0]}_sale_features.parquet"
+        logger.info(f"Saving sale features to {out_path}")
+        # create_sale_features(
+        #     df,
+        #     window_size=window_size,
+        #     calendar_aligned=True,
+        #     fn=out_path,
+        # )
 
 
 def parse_args():
@@ -77,12 +78,6 @@ def parse_args():
         type=str,
         default="",
         help="Path to training data directory (relative to project root)",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="",
-        help="Path to sales files directory (relative to project root)",
     )
     parser.add_argument(
         "--window_size",
@@ -111,7 +106,6 @@ def main():
     args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_dir = Path(args.data_dir).resolve()
-    output_dir = Path(args.output_dir).resolve()
     log_file = Path(args.log_file).resolve()
     # Set up logging
     setup_logging(log_file, args.log_level)
@@ -120,7 +114,7 @@ def main():
     try:
         logger.info("Starting")
         logger.info(f"Loading data from {data_dir}")
-        logger.info(f"  Output dir: {output_dir}")
+        logger.info(f"  data dir: {data_dir}")
         logger.info(f"  Log fn: {log_file}")
         logger.info(f"  Window size: {window_size}")
 
@@ -133,7 +127,7 @@ def main():
         create_features(
             data_dir,
             window_size=args.window_size,
-            output_dir=output_dir,
+            output_dir=data_dir,
         )
         logger.info("Completed successfully")
     except Exception as e:
