@@ -273,7 +273,6 @@ def prepare_data(
     df = pd.merge(grid, df, on=["store", "item", "date"], how="left")
     df["weight"] = df["weight"].fillna(1)
     df["weight"] = df[df["weight"] == 0]["weight"] = 1
-    df["unit_sales"] = df["unit_sales"].fillna(0)
     df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
     df.sort_values(["date", "store_item"], inplace=True)
     df.reset_index(drop=True, inplace=True)
