@@ -21,7 +21,7 @@ BATCH_SIZE=10
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
-LOG_LEVEL="INFO"
+LOG_LEVEL="DEBUG"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

@@ -780,16 +780,14 @@ def _generate_growth_rate_features_sequential(
     results = []
 
     # Work with a copy to avoid modifying the original
-    # df_working = df.copy()
-    df_working = df
 
     for idx, row in iterator:
         store, sku = row["store"], row["item"]
         logger.debug(f"Generating growth features for store: {store}, item: {sku}")
 
         # Extract data for this store-item combination
-        mask = (df_working["store"] == store) & (df_working["item"] == sku)
-        store_sku_df = df_working[mask].copy()
+        mask = (df["store"] == store) & (df["item"] == sku)
+        store_sku_df = df[mask].copy()
 
         if len(store_sku_df) == 0:
             logger.warning(f"No data found for store {store}, item {sku}")
@@ -812,7 +810,7 @@ def _generate_growth_rate_features_sequential(
             logger.warning(f"Empty features DataFrame for store {store}, item {sku}")
 
         # Remove processed data to free memory
-        df_working = df_working[~mask]
+        df = df[~mask]
 
         # Optional: Force garbage collection periodically
         if (idx + 1) % 100 == 0:  # Every 100 store-item pairs
@@ -855,6 +853,7 @@ def _process_growth_rate_store_item_batch(args):
         store_sku_df = df_subset[mask].copy()
 
         if len(store_sku_df) == 0:
+            logger.warning(f"No data found for store {store}, item {item}")
             continue
 
         features_df = generate_growth_rate_store_sku_feature(
@@ -973,7 +972,7 @@ def generate_growth_rate_store_sku_feature(
       weight (assumed constant per store-item),
       onpromotion_day_1..window_size (0/1, aligned to the window dates).
     """
-    logger.debug(f"Total rows: {len(df)}")
+    logger.info(f"Total rows: {len(df)}")
 
     # Use efficient data types from the start
     # Convert to smaller data types where possible
@@ -984,8 +983,33 @@ def generate_growth_rate_store_sku_feature(
         promo_col: "int8",
     }
 
+    # Check for and handle None values in critical columns before type conversion
+    critical_cols = ["store", "item"]
+    for col in critical_cols:
+        if col in df.columns and df[col].isnull().any():
+            null_count = df[col].isnull().sum()
+            logger.warning(
+                f"Dropping {null_count} rows with None values in critical column '{col}'"
+            )
+            df = df.dropna(subset=[col])
+
     for col, dtype in dtype_conversions.items():
         if col in df.columns:
+            # Handle remaining None values before type conversion
+            if df[col].isnull().any():
+                if dtype in ["int32", "int8"]:
+                    # For non-critical integer columns, fill with appropriate defaults
+                    if col == promo_col:
+                        # Promotion column: None means no promotion (0)
+                        df[col] = df[col].fillna(0)
+                        logger.info(f"Filled {col} None values with 0 (no promotion)")
+                    else:
+                        # Other integer columns: fill with 0
+                        df[col] = df[col].fillna(0)
+                        logger.warning(f"Filled {col} None values with 0")
+                elif dtype == "float32":
+                    # For float columns, None becomes NaN which is fine
+                    pass
             df[col] = df[col].astype(dtype)
 
     # Pre-compute weights with efficient data types
