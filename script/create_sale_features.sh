@@ -12,7 +12,6 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data/growth_rate_2014_January_top_53_store_2000_item/data_split"
 # Create output directories if they don't exist
-mkdir -p "$OUTPUT_DIR"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 mkdir -p "$LOG_DIR"
 LOG_LEVEL="DEBUG"
@@ -33,7 +32,6 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
-mkdir -p "$OUTPUT_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
