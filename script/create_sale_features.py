@@ -59,13 +59,12 @@ def create_features(
             logger.warning(f"Multiple block IDs found: {bid}")
 
         out_path = output_dir / f"{bid[0]}_sale_features.parquet"
-        logger.info(f"Saving sale features to {out_path}")
-        # create_sale_features(
-        #     df,
-        #     window_size=window_size,
-        #     calendar_aligned=True,
-        #     fn=out_path,
-        # )
+        create_sale_features(
+            df,
+            window_size=window_size,
+            calendar_aligned=True,
+            fn=out_path,
+        )
 
 
 def parse_args():
