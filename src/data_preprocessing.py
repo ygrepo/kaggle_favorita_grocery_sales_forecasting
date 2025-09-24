@@ -2,12 +2,9 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import logging
+from src.utils import get_logger, save_csv_or_parquet
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def top_n_by_m(df, n_col="unit_sales", group_column="store_nbr", top_n=10):
@@ -279,22 +276,19 @@ def prepare_data(
     df["unit_sales"] = df["unit_sales"].fillna(0)
 
     # Fill missing unit_sales with NaN
-    missing_mask = df[value_column].isna()
-    num_missing = missing_mask.sum()
-    df.loc[missing_mask, value_column] = 0
+    # missing_mask = df[value_column].isna()
+    # num_missing = missing_mask.sum()
+    # df.loc[missing_mask, value_column] = 0
 
-    # Logging
-    logger.info(
-        f"Filled {num_missing} missing (store, item, date) rows with unit_sales = 0"
-    )
+    # # Logging
+    # logger.info(
+    #     f"Filled {num_missing} missing (store, item, date) rows with unit_sales = 0"
+    # )
     logger.info(f"Final dataset shape: {df.shape}")
     logger.info(f"Unique stores: {df['store'].nunique()}")
     logger.info(f"Unique items: {df['item'].nunique()}")
     logger.info(f"Date range: {df['date'].min()} to {df['date'].max()}")
 
-    if fn:
-        logger.info(f"Saving final_df to {fn}")
-        #        sparse_df = df.astype(pd.SparseDtype("float", fill_value=0))
-        df.to_parquet(fn, compression="snappy")
-
+    save_csv_or_parquet(df, fn)
+    logger.info(f"Saved final dataset to {fn}")
     return df

@@ -16,8 +16,10 @@ WEIGHTS_FN="${DATA_DIR}/items.csv"
 
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_January_top_53_store_2000_item.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.parquet"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
+LOG_FILE="${LOG_DIR}/preprocess_$(date +"%Y%m%d_%H%M%S").log"
+
 LOG_LEVEL="DEBUG"
 ITEM_TOP_N=700
 ITEM_MED_N=300
@@ -32,8 +34,8 @@ NROWS=0
 START_DATE="2014-01-01"
 #END_DATE="2015-12-31"
 END_DATE="2014-01-31"
-ITEM_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.csv"
-STORE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_stores.csv"
+ITEM_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.csv"
+STORE_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_stores.csv"
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
@@ -44,7 +46,6 @@ while [[ $# -gt 0 ]]; do
     --data_dir) DATA_DIR="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --weights_fn) WEIGHTS_FN="$2"; shift 2 ;;
-    #--filtered-data-fn) FILTERED_DATA_FN="$2"; shift 2 ;;
     --nrows) NROWS="$2"; shift 2 ;;
     --start_date) START_DATE="$2"; shift 2 ;;
     --end_date) END_DATE="$2"; shift 2 ;;
@@ -81,7 +82,6 @@ echo "Item fn: $ITEM_FN" | tee -a "$LOG_FILE"
 echo "Store fn: $STORE_FN" | tee -a "$LOG_FILE"
 #echo "Filtered data fn: $FILTERED_DATA_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
-echo "Log dir: $LOG_DIR" | tee -a "$LOG_FILE"
 echo "Nrows: $NROWS" | tee -a "$LOG_FILE"
 echo "Start date: $START_DATE" | tee -a "$LOG_FILE"
 echo "End date: $END_DATE" | tee -a "$LOG_FILE"
@@ -98,8 +98,8 @@ python "${SCRIPT_DIR}/data_preprocessing.py" \
   --output_fn "$OUTPUT_FN" \
   --item_fn "$ITEM_FN" \
   --store_fn "$STORE_FN" \
-  --log_dir "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
+  --log_fn "$LOG_FILE" \
   --nrows "$NROWS" \
   --start_date "$START_DATE" \
   --end_date "$END_DATE" \

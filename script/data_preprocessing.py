@@ -16,11 +16,14 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from src.data_preprocessing import prepare_data
-from src.utils import setup_logging
+from src.utils import setup_logging, get_logger
+
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -47,10 +50,10 @@ def parse_args():
         help="Path to filtered data file (relative to project root)",
     )
     parser.add_argument(
-        "--log_dir",
+        "--log_fn",
         type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
+        default="",
+        help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
         "--log_level",
@@ -260,6 +263,10 @@ def main():
     """Main training function."""
     # Parse command line arguments
     args = parse_args()
+    setup_logging(Path(args.log_fn), args.log_level)
+
+    # Parse command line arguments
+    args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
     log_dir = Path(args.log_dir).resolve()
@@ -268,15 +275,13 @@ def main():
     store_fn = Path(args.store_fn).resolve()
     # filtered_data_fn = Path(args.filtered_data_fn).resolve()
     weights_fn = Path(args.weights_fn).resolve()
-    # Set up logging
-    logger = setup_logging(log_dir, args.log_level)
 
     try:
         # Log configuration
         logger.info("Starting data preprocessing with configuration:")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Weights fn: {weights_fn}")
-        logger.info(f"  Log dir: {log_dir}")
+        logger.info(f"  Log fn: {args.log_fn}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Nrows: {args.nrows}")
         logger.info(f"  Start date: {args.start_date}")
