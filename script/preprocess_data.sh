@@ -94,7 +94,7 @@ echo "Group Store column: $GROUP_STORE_COLUMN" | tee -a "$LOG_FILE"
 echo "Group Item column: $GROUP_ITEM_COLUMN" | tee -a "$LOG_FILE"
 echo "Value column: $VALUE_COLUMN" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/data_preprocessing.py" \
+python "${SCRIPT_DIR}/preprocess_data.py" \
   --data_fn "$DATA_FN" \
   --weights_fn "$WEIGHTS_FN" \
   --output_fn "$OUTPUT_FN" \
