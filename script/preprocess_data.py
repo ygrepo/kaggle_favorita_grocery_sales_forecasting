@@ -269,7 +269,6 @@ def main():
     args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
-    log_dir = Path(args.log_dir).resolve()
     output_fn = Path(args.output_fn).resolve()
     item_fn = Path(args.item_fn).resolve()
     store_fn = Path(args.store_fn).resolve()
