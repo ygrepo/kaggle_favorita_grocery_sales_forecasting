@@ -12,21 +12,22 @@ import logging
 import argparse
 from pathlib import Path
 
+
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data_utils import load_raw_data, create_sale_features
-from src.utils import setup_logging
+from src.utils import setup_logging, get_logger
+from src.data_utils import create_sale_features, load_raw_data
+
+logger = get_logger(__name__)
 
 
 def create_features(
-    data_fn: Path,
+    data_dir: Path,
     window_size: int,
     *,
     output_dir: Path,
-    prefix: str = "sale_features",
-    log_level: str = "INFO",
 ):
     """
     Process each Parquet file in a directory, apply feature creation,
@@ -34,7 +35,7 @@ def create_features(
 
     Parameters
     ----------
-    data_fn : Path
+    data_dir : Path
         Path to a directory containing parquet files or a single parquet file.
     window_size : int
         Rolling window size for feature creation.
@@ -43,38 +44,26 @@ def create_features(
     prefix : str
         Prefix to use when saving processed files.
     """
-    logger = logging.getLogger(__name__)
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-    if data_fn.is_file() and data_fn.suffix == ".parquet":
-        files = [data_fn]
-    else:
-        files = list(data_fn.glob("*.parquet"))
+    files = list(data_dir.glob("*.parquet"))
 
     logger.info(f"Processing {len(files)} Parquet files...")
 
     for file_path in files:
         logger.info(f"Processing {file_path.name}")
         df = load_raw_data(Path(file_path))
-        store_cluster = df["store_cluster"].unique()
-        item_cluster = df["item_cluster"].unique()
+        bid = df["block_id"].unique()
 
-        if len(store_cluster) == 1 and len(item_cluster) == 1:
-            logger.info(
-                f"Store Cluster: {store_cluster[0]}, SKU Cluster: {item_cluster[0]}"
-            )
+        if len(bid) == 1:
+            logger.info(f"Block ID: {bid[0]}")
         else:
-            logger.warning(
-                f"Multiple clusters found: Store Clusters {store_cluster}, SKU Clusters {item_cluster}"
-            )
+            logger.warning(f"Multiple block IDs found: {bid}")
 
-        out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
+        out_path = output_dir / f"{file_path.stem}.parquet"
         create_sale_features(
             df,
             window_size=window_size,
             calendar_aligned=True,
             fn=out_path,
-            log_level=log_level,
         )
 
 
@@ -84,7 +73,7 @@ def parse_args():
         description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--data_fn",
+        "--data_dir",
         type=str,
         default="",
         help="Path to training data directory (relative to project root)",
@@ -98,7 +87,7 @@ def parse_args():
     parser.add_argument(
         "--window_size",
         type=int,
-        default=16,
+        default=1,
         help="Size of the lookback window",
     )
     parser.add_argument(
@@ -118,25 +107,21 @@ def parse_args():
 
 
 def main():
-    """Main training function."""
     # Parse command line arguments
     args = parse_args()
     # Convert paths to absolute paths relative to project root
-    data_fn = Path(args.data_fn).resolve()
+    data_dir = Path(args.data_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
-    log_dir = Path(args.log_dir).resolve()
+    log_file = Path(args.log_file).resolve()
+    # Set up logging
+    setup_logging(log_file, args.log_level)
     window_size = args.window_size
 
-    # Set up logging
-    print(f"Log dir: {log_dir}")
-    logger = setup_logging(log_dir, args.log_level)
-
     try:
-        # Log configuration
-        logger.info("Starting creating training features with configuration:")
-        logger.info(f"  Data fn: {data_fn}")
+        logger.info("Starting")
+        logger.info(f"Loading data from {data_dir}")
         logger.info(f"  Output dir: {output_dir}")
-        logger.info(f"  Log dir: {log_dir}")
+        logger.info(f"  Log fn: {log_file}")
         logger.info(f"  Window size: {window_size}")
 
         # Load and preprocess data
@@ -146,14 +131,13 @@ def main():
         # df = df[df["store_item"] == store_item]
 
         create_features(
-            data_fn,
-            window_size=window_size,
-            log_level=args.log_level,
+            data_dir,
+            window_size=args.window_size,
             output_dir=output_dir,
         )
-
+        logger.info("Completed successfully")
     except Exception as e:
-        logger.error(f"Error creating training features: {e}")
+        logger.error(f"Error: {e}")
         raise
 
 

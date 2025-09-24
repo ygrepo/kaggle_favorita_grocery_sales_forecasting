@@ -10,7 +10,7 @@ import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
 import multiprocessing
-from src.utils import save_csv_or_parquet, get_logger
+from src.utils import save_csv_or_parquet, get_logger, read_csv_or_parquet
 from concurrent.futures import ProcessPoolExecutor
 
 import torch
@@ -395,6 +395,7 @@ def generate_aligned_windows(
     df: pd.DataFrame,
     window_size: int,
     *,
+    date_col: str = "start_date",
     calendar_aligned: bool = False,
 ) -> list[list[pd.Timestamp]]:
     """
@@ -427,12 +428,12 @@ def generate_aligned_windows(
     if window_size <= 0:
         raise ValueError("`window_size` must be a positive integer.")
 
-    df["date"] = pd.to_datetime(df["date"])
+    df[date_col] = pd.to_datetime(df[date_col])
 
     if calendar_aligned:
         # --- back‑to‑front, gap‑free windows ---
-        last_date = df["date"].max().normalize()  # ensure time == 00:00
-        first_date = df["date"].min().normalize()
+        last_date = df[date_col].max().normalize()  # ensure time == 00:00
+        first_date = df[date_col].min().normalize()
 
         starts = []
         current = last_date
@@ -449,7 +450,7 @@ def generate_aligned_windows(
 
     else:
         # --- forward, data‑aligned windows (may be shorter at the tail) ---
-        unique_dates = sorted(pd.to_datetime(df["date"].unique()))
+        unique_dates = sorted(pd.to_datetime(df[date_col].unique()))
         # logger.debug(f"Unique dates: {unique_dates}")
         return [
             unique_dates[i : i + window_size]
@@ -551,7 +552,7 @@ def generate_cyclical_features(
         )
 
         for i, window_dates in enumerate(windows):
-            window_df = group[group["date"].isin(window_dates)]
+            window_df = group[group["start_date"].isin(window_dates)]
             if window_df.empty:
                 continue
 
@@ -1193,183 +1194,166 @@ def generate_sales_features(
     window_size: int = 1,
     *,
     calendar_aligned: bool = True,
-    log_level: str = "INFO",
+    date_col: str = "start_date",
+    sales_col: str = "sales_day_1",
+    sale_col_prefix: str = "sales_day_",
     output_path: Optional[Path] = None,
     epsilon: float = 1e-3,
 ) -> pd.DataFrame:
+    # Expected input columns:
+    # 'start_date', 'store_item', 'store', 'item', 'weight' (optional), 'sales_day_1',
+    # 'onpromotion_day_1', 'growth_rate_1', 'block_id', 'block_id_median'
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
 
-    df["date"] = pd.to_datetime(df["date"])
-    assert "store_cluster" in df.columns, "Missing 'store_cluster' column"
-    assert "item_cluster" in df.columns, "Missing 'item_cluster' column"
-    assert "store_cluster_median" in df.columns, "Missing 'store_cluster_median' column"
-    assert "item_cluster_median" in df.columns, "Missing 'item_cluster_median' column"
+    assert "block_id" in df.columns, "Missing 'block_id' column"
+    assert "block_id_median" in df.columns, "Missing 'block_id_median' column"
     assert (
-        df[["store", "item", "date"]].duplicated().sum() == 0
+        df[["store", "item", date_col]].duplicated().sum() == 0
     ), "Duplicate store-item-date rows"
 
     logger.info(f"Total rows: {len(df)}")
 
-    store_item_to_clusters = (
-        df.drop_duplicates(["store", "item"])[
-            ["store", "item", "store_cluster", "item_cluster"]
-        ]
-        .set_index(["store", "item"])
-        .to_dict("index")
-    )
-
-    logger.debug(f"Unique store_clusters: {df['store_cluster'].unique()}")
-    logger.debug(f"Unique item_clusters: {df['item_cluster'].unique()}")
+    # Helpful debug cross-tab
+    logger.debug(f"Unique block_ids: {df['block_id'].nunique()}")
     logger.debug(
-        f"Store vs. Item cluster crosstab:\n{pd.crosstab(df['store_cluster'], df['item_cluster'])}"
+        "Block_id vs. Block_id_median crosstab:\n%s",
+        pd.crosstab(df["block_id"], df["block_id_median"]),
     )
 
-    logger.debug("Generating rolling windows")
-    windows = generate_aligned_windows(
-        df, window_size, calendar_aligned=calendar_aligned
+    # Precompute a (store,item) -> {block_id, block_id_median, weight?} lookup
+    # Use first occurrence per (store,item) (dates are aligned later per window)
+    lookup_cols = ["block_id", "block_id_median"]
+    if "weight" in df.columns:
+        lookup_cols.append("weight")
+
+    base_lookup = (
+        df.sort_values(date_col)
+        .drop_duplicates(["store", "item"])[["store", "item"] + lookup_cols]
+        .set_index(["store", "item"])
     )
+
+    # Build date windows
+    windows = generate_aligned_windows(
+        df, window_size, calendar_aligned=calendar_aligned, date_col=date_col
+    )
+
     records: List[dict] = []
 
     for window_dates in windows:
-        logger.info(f"Processing window: {window_dates[0]} to {window_dates[-1]}")
-        w_df = df[df["date"].isin(window_dates)].copy()
+        start_d, end_d = window_dates[0], window_dates[-1]
+        logger.info(f"Processing window: {start_d} to {end_d}")
+        w_df = df[df[date_col].isin(window_dates)].copy()
 
+        # Pivot sales and per-day block_id_median for each (store,item)
         sales = w_df.pivot_table(
             index=["store", "item"],
-            columns="date",
-            values="unit_sales",
+            columns=date_col,
+            values=sales_col,
             aggfunc="sum",
             fill_value=0,
         )
 
-        store_meds = w_df.pivot_table(
+        meds = w_df.pivot_table(
             index=["store", "item"],
-            columns="date",
-            values="store_cluster_median",
+            columns=date_col,
+            values="block_id_median",
             aggfunc="first",
             fill_value=np.nan,
         )
 
-        item_meds = w_df.pivot_table(
-            index=["store", "item"],
-            columns="date",
-            values="item_cluster_median",
-            aggfunc="first",
-            fill_value=np.nan,
-        )
+        # Join static info (block_id, block_id_median base, weight)
+        static = base_lookup.loc[sales.index]  # aligned to (store,item) index
 
         iterator = sales.iterrows()
         if logger.level == logging.DEBUG:
             iterator = tqdm(
                 iterator,
                 total=sales.shape[0],
-                desc=f"Window {window_dates[0].strftime('%Y-%m-%d')}",
+                desc=f"Window {start_d.strftime('%Y-%m-%d')}",
             )
 
         for (store, item), sales_vals in iterator:
-            cluster_info = store_item_to_clusters.get((store, item), {})
-            s_cl = cluster_info.get("store_cluster", "ALL_STORES")
-            i_cl = cluster_info.get("item_cluster", "ALL_ITEMS")
+            # Static info for this (store,item)
+            stat = static.loc[(store, item)]
+            bid = stat["block_id"]
+            bid_med_base = stat["block_id_median"]
+            weight_val = stat["weight"] if "weight" in stat.index else None
 
             row = {
-                "start_date": window_dates[0],
+                date_col: start_d,
                 "store_item": f"{store}_{item}",
                 "store": store,
                 "item": item,
-                "store_cluster": s_cl,
-                "item_cluster": i_cl,
+                "block_id": bid,
+                "block_id_median": bid_med_base,
             }
-
             if "weight" in df.columns:
-                try:
-                    weight_val = (
-                        df.loc[(df["store"] == store) & (df["item"] == item), "weight"]
-                        .dropna()
-                        .iloc[0]
-                    )
-                except IndexError:
-                    weight_val = np.nan
                 row["weight"] = weight_val
 
+            # Per-day fields within the window
             for i in range(1, window_size + 1):
                 d = window_dates[i - 1] if i - 1 < len(window_dates) else None
                 if d is None:
                     continue
 
-                sales_val = sales_vals.get(d, 0)
-                store_med_val = store_meds.loc[(store, item)].get(d, np.nan)
-                # logger.debug(f"Store med: {store_med_val}")
-                item_med_val = item_meds.loc[(store, item)].get(d, np.nan)
-                # logger.debug(f"Item med: {item_med_val}")
+                sales_val = float(sales_vals.get(d, 0.0))
+                med_val = float(meds.loc[(store, item)].get(d, np.nan))
 
-                row[f"sales_day_{i}"] = sales_val
-                row[f"store_med_day_{i}"] = store_med_val
-                row[f"item_med_day_{i}"] = item_med_val
+                row[f"{sale_col_prefix}{i}"] = sales_val
+                row[f"block_id_median_day_{i}"] = med_val
 
-                smv = (
-                    store_med_val
-                    if pd.notna(store_med_val) and store_med_val > 0
-                    else epsilon
-                )
-                imv = (
-                    item_med_val
-                    if pd.notna(item_med_val) and item_med_val > 0
-                    else epsilon
-                )
-
-                row[f"store_med_change_{i}"] = sales_val / smv
-                row[f"item_med_change_{i}"] = sales_val / imv
-                row[f"store_med_logpct_change_{i}"] = np.log(
-                    max(sales_val / smv, epsilon)
-                )
-                row[f"item_med_logpct_change_{i}"] = np.log(
-                    max(sales_val / imv, epsilon)
-                )
+                denom = med_val if np.isfinite(med_val) and med_val > 0 else epsilon
+                ratio = sales_val / denom
+                row[f"block_id_med_change_{i}"] = ratio
+                row[f"block_id_med_logpct_change_{i}"] = np.log(max(ratio, epsilon))
 
             records.append(row)
 
-        del sales, store_meds, item_meds
+        del sales, meds  # free memory for next window
 
+    # Assemble final DataFrame
+    out_df = pd.DataFrame(records)
+
+    # Construct column order dynamically (only include 'weight' if present)
     cols = [
-        "start_date",
+        date_col,
         "store_item",
         "store",
         "item",
-        "store_cluster",
-        "item_cluster",
-        "weight",
+        "block_id",
+        "block_id_median",
     ]
-    cols += [
-        f"{prefix}{i}"
-        for prefix in (
-            "store_med_day_",
-            "item_med_day_",
-            "store_med_change_",
-            "item_med_change_",
-            "store_med_logpct_change_",
-            "item_med_logpct_change_",
-            "sales_day_",
+    if "weight" in df.columns:
+        cols.append("weight")
+
+    per_day_cols = []
+    for i in range(1, window_size + 1):
+        per_day_cols.extend(
+            [
+                f"block_id_median_day_{i}",
+                f"block_id_med_change_{i}",
+                f"block_id_med_logpct_change_{i}",
+                f"{sale_col_prefix}{i}",
+            ]
         )
-        for i in range(1, window_size + 1)
-    ]
+    cols.extend(per_day_cols)
 
-    df = pd.DataFrame(records)
-    if df.empty:
-        df = pd.DataFrame(columns=cols)
+    if out_df.empty:
+        out_df = pd.DataFrame(columns=cols)
     else:
-        df = df[cols]
+        # Ensure missing per-day columns exist if some windows were shorter, etc.
+        for c in cols:
+            if c not in out_df.columns:
+                out_df[c] = np.nan
+        out_df = out_df[cols]
 
-    if output_path is not None:
-        logger.info(f"Saving sales features to {output_path}")
-        if output_path.suffix == ".parquet":
-            df.to_parquet(output_path)
-        else:
-            df.to_csv(output_path, index=False)
+    logger.info("Final sales features shape: %s", out_df.shape)
+    logger.debug("Head:\n%s", out_df.head())
 
-        debug_fn = output_path.with_name("debug_subset.csv")
-        df.head(50).to_csv(debug_fn, index=False)
-        logger.info(f"Saved debug sample to {debug_fn}")
+    save_csv_or_parquet(out_df, output_path)
 
-    return df
+    return out_df
 
 
 def create_y_targets_from_shift(
@@ -1484,10 +1468,9 @@ def create_y_targets_from_shift(
 def create_sale_features(
     df,
     *,
-    window_size=16,
+    window_size: int = 1,
     calendar_aligned: bool = True,
     fn: Optional[Path] = None,
-    log_level: str = "INFO",
 ) -> pd.DataFrame:
 
     if "store_item" not in df.columns:
@@ -1496,17 +1479,13 @@ def create_sale_features(
     if fn is not None:
         if fn.exists():
             logger.info(f"Loading sales features from {fn}")
-            if fn.suffix == ".parquet":
-                df = pd.read_parquet(fn)
-            else:
-                df = pd.read_csv(fn)
+            df = read_csv_or_parquet(fn)
         else:
             logger.info(f"Generating sales features to {fn}")
             df = generate_sales_features(
                 df,
                 window_size,
                 calendar_aligned=calendar_aligned,
-                log_level=log_level,
                 output_path=fn,
             )
     else:
@@ -1515,7 +1494,6 @@ def create_sale_features(
             df,
             window_size,
             calendar_aligned=calendar_aligned,
-            log_level=log_level,
         )
     df["start_date"] = pd.to_datetime(df["start_date"])
     return df

@@ -86,7 +86,11 @@ def set_seed(seed: int = 42):
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def save_csv_or_parquet(df: pd.DataFrame, fn: Path) -> None:
+def save_csv_or_parquet(df: pd.DataFrame, fn: Path | None) -> None:
+    if fn is None:
+        logger.warning("No output file specified. Not saving.")
+        return
+    logger.info(f"Saving df to {fn}")
     if fn.suffix == ".parquet":
         df.to_parquet(fn)
     else:
@@ -94,6 +98,7 @@ def save_csv_or_parquet(df: pd.DataFrame, fn: Path) -> None:
 
 
 def read_csv_or_parquet(fn: Path) -> pd.DataFrame:
+    logger.info(f"Loading df from {fn}")
     if fn.suffix == ".parquet":
         return pd.read_parquet(fn)
     else:
