@@ -1151,7 +1151,7 @@ def generate_growth_rate_store_sku_feature(
 
     # Efficient final DataFrame construction
     base_cols = ["date", "store_item", "store", "item", weight_col]
-    if window_size >= 1:
+    if window_size > 1:
         sales_cols = [f"unit_sales_{i}" for i in range(1, window_size + 1)]
         growth_cols = [f"growth_rate_{i}" for i in range(1, window_size + 1)]
         promo_cols = [f"{promo_col}_day_{i}" for i in range(1, window_size + 1)]
@@ -1165,7 +1165,7 @@ def generate_growth_rate_store_sku_feature(
 
     # Fast DataFrame construction from records
     result_df = pd.DataFrame(all_records)
-    result_df = result_df[cols]
+    result_df.columns = cols
     logger.debug(f"Result DataFrame: {result_df.head()}")
 
     # Optimize final DataFrame data types
@@ -1877,7 +1877,7 @@ def normalize_data(
     df: pd.DataFrame,
     # freq="W",
     *,
-    column_name="growth_rate_1",
+    column_name="growth_rate",
     median_transform=True,
     mean_transform=False,
     log_transform=False,

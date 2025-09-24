@@ -1238,7 +1238,7 @@ def cluster_data_and_explain_blocks(
 
     norm_data = normalize_data(
         df,
-        column_name="growth_rate_1",
+        column_name="growth_rate",
         log_transform=False,
         median_transform=True,
         mean_transform=False,
