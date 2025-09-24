@@ -15,9 +15,11 @@ DATA_FN="${DATA_DIR}/20250707_train.csv"
 WEIGHTS_FN="${DATA_DIR}/items.csv"
 
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
+mkdir -p "$OUTPUT_DATA_DIR"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.parquet"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
+mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/preprocess_$(date +"%Y%m%d_%H%M%S").log"
 
 LOG_LEVEL="DEBUG"
