@@ -43,12 +43,6 @@ def parse_args():
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
-        "--log_dir",
-        type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
-    )
-    parser.add_argument(
         "--log_fn",
         type=str,
         default="",
@@ -114,16 +108,6 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
 
         df = load_data(data_fn)
-        df.rename(
-            columns={
-                "sales_day_1": "sales",
-                "growth_rate_1": "growth_rate",
-                "onpromotion_day_1": "onpromotion",
-                "block_id": "cluster_id",
-                "start_date": "date",
-            },
-            inplace=True,
-        )
         med_df = compute_cluster_medians(
             df, date_col="date", cluster_col="cluster_id", value_col="growth_rate"
         )
