@@ -814,6 +814,12 @@ def _process_single_rc_pair(
 
         # --- PVE ---
         Xhat = est.reconstruct()
+
+        # Defensive check for min_keep
+        if min_keep is None:
+            logger.warning(f"min_keep is None for R={R}, C={C}, using 0")
+            min_keep = 0
+
         if min_keep > 0:
             logger.info(f"Computing cell mask for R={R}, C={C}")
             mask = make_gap_cellmask(min_keep=min_keep)(est)
@@ -823,6 +829,12 @@ def _process_single_rc_pair(
 
         N_all = X.size
         N_obs = _obs_count(mask, X)
+
+        # Defensive checks for N_obs
+        if N_obs is None:
+            logger.warning(f"N_obs is None for R={R}, C={C}, using 0")
+            N_obs = 0
+
         mask_coverage = N_obs / N_all if N_all > 0 else np.nan
 
         # --- Assignments (for WCV/BCV and coverage) ---
@@ -875,7 +887,7 @@ def _process_single_rc_pair(
         # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
         per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
 
-        base = _baseline_array(X, mask)
+        base = _baseline_array(X, loss_name, mask)
         baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
 
         # Ensure baseline_loss is a valid number for comparison
@@ -960,6 +972,11 @@ def _process_rc_batch(args):
             results.append(row)
         except Exception as e:
             logger.error(f"Error processing R={R}, C={C}: {e}")
+            # Add detailed traceback for debugging
+            import traceback
+
+            logger.error(f"Full traceback for R={R}, C={C}:")
+            logger.error(traceback.format_exc())
             # Add a row with NaN values to maintain structure
             results.append(
                 {
