@@ -16,11 +16,11 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate.parquet"
 
-TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
-SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
-BLOCK_ID_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
-FIGURE_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_figure.tiff"
-OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
+TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
+SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
+BLOCK_ID_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
+FIGURE_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_figure.tiff"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
 
 
 
