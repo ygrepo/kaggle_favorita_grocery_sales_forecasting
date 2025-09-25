@@ -1185,6 +1185,25 @@ def generate_growth_rate_store_sku_feature(
     # Apply data type optimizations in batch
     for col, dtype in dtype_map.items():
         if col in result_df.columns:
+            # Handle NaN values before type conversion
+            if result_df[col].isnull().any():
+                if dtype in ["int32", "int8"]:
+                    if col in ["store", "item"]:
+                        # Critical columns: drop rows with NaN
+                        logger.warning(
+                            f"Dropping rows with NaN values in critical column '{col}'"
+                        )
+                        result_df = result_df.dropna(subset=[col])
+                    elif col.startswith(promo_col):
+                        # Promotion columns: fill NaN with 0 (no promotion)
+                        result_df[col] = result_df[col].fillna(0)
+                        logger.info(f"Filled {col} NaN values with 0 (no promotion)")
+                    else:
+                        # Other integer columns: fill with 0
+                        result_df[col] = result_df[col].fillna(0)
+                        logger.warning(f"Filled {col} NaN values with 0")
+                # Float columns can keep NaN values
+
             result_df[col] = result_df[col].astype(dtype)
     return result_df
 

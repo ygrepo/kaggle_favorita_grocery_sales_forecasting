@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 from src.data_utils import (
     load_raw_data,
     generate_growth_rate_features,
+    save_csv_or_parquet,
 )
 from src.utils import setup_logging, get_logger
 
@@ -102,12 +103,15 @@ def main():
             df.drop(columns=["id"], inplace=True)
 
         output_fn = Path(args.output_fn).resolve()
-        generate_growth_rate_features(
-            df,
-            output_fn=output_fn,
-            n_jobs=args.n_jobs,
-            batch_size=args.batch_size,
-        )
+        df["unit_sales"] = df["unit_sales"].astype(float)
+        df["growth_rate"] = df["unit_sales"].pct_change()
+        save_csv_or_parquet(df, output_fn)
+        # generate_growth_rate_features(
+        #     df,
+        #     output_fn=output_fn,
+        #     n_jobs=args.n_jobs,
+        #     batch_size=args.batch_size,
+        # )
         logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error Generating growth rate data: {e}")
