@@ -457,30 +457,47 @@ def generate_aligned_windows(
 
 
 # --- Fast ARIMA(0,0,1) forecasts ---
-def expanding_arima001(series: pd.Series) -> pd.Series:
+def arima001_forecast(
+    series: pd.Series,
+    *,
+    min_history: int = 7,  # wait for enough points before fitting
+    enforce_stationarity: bool = False,
+    enforce_invertibility: bool = False,
+) -> pd.Series:
     """
-    Leakage-free one-step-ahead forecasts:
-    for each t, fit ARIMA(0,0,1) on series[:t] and forecast t.
-    Returns a Series aligned to the original index with NaN for the first two points.
+    Leakage-free one-step-ahead forecasts with ARIMA(0,0,1).
+    Fits on series[:i] to forecast series[i], for i >= min_history.
+    Returns a Series aligned to the input index (NaN before min_history).
     """
     s = pd.to_numeric(series, errors="coerce").astype(float)
     s = s.copy()
     n = len(s)
     fc = pd.Series(np.nan, index=s.index)
-    if n < 3:
+    if n < max(3, min_history):
         return fc
 
-    # iterate over target positions t (forecast for index i using data up to i-1)
-    for i in range(2, n):
-        sub = s.iloc[:i]  # past only
+    # Optional: ensure strictly increasing index order outside
+    # (we assume caller sorted per-group by date)
+
+    for i in range(min_history, n):
+        sub = s.iloc[:i]
+        # guard against all-constant or all-nan windows
+        if sub.isna().any() or sub.nunique(dropna=True) < 2:
+            continue
         try:
-            res = ARIMA(sub, order=(0, 0, 1), trend="c").fit()
-            # one-step-ahead forecast for point i
+            res = ARIMA(
+                sub,
+                order=(0, 0, 1),
+                trend="c",
+                enforce_stationarity=enforce_stationarity,
+                enforce_invertibility=enforce_invertibility,
+            ).fit(method_kwargs={"warn_convergence": False})
             pred = res.get_forecast(steps=1)
-            fc.iloc[i] = float(pred.predicted_mean)
+            # avoid FutureWarning by indexing the scalar
+            fc.iloc[i] = float(pred.predicted_mean.iloc[0])
         except Exception as e:
-            # keep NaN on failure; optionally log
-            logger.debug(f"ARIMA expanding fit failed at i={i}: {e}")
+            # keep NaN and optionally log
+            logger.debug(f"ARIMA(0,0,1) fit failed at i={i}: {e}")
     return fc
 
 
@@ -594,16 +611,17 @@ def create_cyclical_features(
     logger.info("Adding leakage-free ARIMA(0,0,1) per store_item")
     df["unit_sales_arima"] = df.groupby("store_item", group_keys=False)[
         "unit_sales"
-    ].apply(expanding_arima001)
+    ].apply(lambda s: arima001_forecast(s, min_history=7, enforce_stationarity=True))
+
     df["growth_rate_arima"] = df.groupby("store_item", group_keys=False)[
         "growth_rate"
-    ].apply(expanding_arima001)
+    ].apply(lambda s: arima001_forecast(s, min_history=7, enforce_stationarity=True))
 
     # ---- Block-level ARIMA (aggregate by date -> ARIMA -> merge back) ----
     # 1) Build block-level daily series (choose agg: sum/mean/median)
     block_daily = (
         df.groupby(["block_id", "date"], as_index=False)
-        .agg(unit_sales_block=("unit_sales", "median"))
+        .agg(unit_sales_block=("unit_sales", "sum"))
         .sort_values(["block_id", "date"], kind="mergesort")
     )
 
@@ -614,10 +632,14 @@ def create_cyclical_features(
     # 2) ARIMA on block-level series (walk-forward, no leakage)
     block_daily["bid_unit_sales_arima"] = block_daily.groupby(
         "block_id", group_keys=False
-    )["unit_sales_block"].apply(expanding_arima001)
+    )["unit_sales_block"].apply(
+        lambda s: arima001_forecast(s, enforce_stationarity=True)
+    )
     block_daily["bid_growth_rate_arima"] = block_daily.groupby(
         "block_id", group_keys=False
-    )["growth_rate_block"].apply(expanding_arima001)
+    )["growth_rate_block"].apply(
+        lambda s: arima001_forecast(s, enforce_stationarity=True)
+    )
 
     # 3) Join back by (block_id, date)
     df = df.merge(
