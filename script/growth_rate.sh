@@ -14,7 +14,7 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}2014_January_top_53_store_2000_item_growth_rate.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate.parquet"
 
 N_JOBS=-1
 BATCH_SIZE=10

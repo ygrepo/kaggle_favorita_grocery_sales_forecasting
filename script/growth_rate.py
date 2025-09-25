@@ -104,7 +104,7 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-        df["growth_rate"] = df["unit_sales"].pct_change()
+        df["growth_rate"] = df["unit_sales"].pct_change(fill_method=None)
         save_csv_or_parquet(df, output_fn)
         # generate_growth_rate_features(
         #     df,
