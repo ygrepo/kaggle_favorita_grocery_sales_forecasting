@@ -109,19 +109,19 @@ def main():
 
         df = load_data(data_fn)
         med_df = compute_cluster_medians(
-            df, date_col="date", cluster_col="cluster_id", value_col="growth_rate"
+            df, date_col="date", cluster_col="block_id", value_col="growth_rate"
         )
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
-        df = df.merge(med_df, on=["cluster_id", "date"], how="left")
+        df = df.merge(med_df, on=["block_id", "date"], how="left")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         med_df = compute_cluster_medians(
-            df, date_col="date", cluster_col="cluster_id", value_col="sales"
+            df, date_col="date", cluster_col="block_id", value_col="sales"
         )
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
-        df = df.merge(med_df, on=["cluster_id", "date"], how="left")
+        df = df.merge(med_df, on=["block_id", "date"], how="left")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         save_csv_or_parquet(df, output_fn)
