@@ -499,7 +499,6 @@ def _baseline_array(X: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
     """
     Constant-mean baseline:
       - Gaussian: baseline = mean(X[mask])
-      - Poisson : baseline = mean-rate μ = mean(X[mask])
     """
     obs = X if mask is None else X[mask]
 
@@ -887,7 +886,7 @@ def _process_single_rc_pair(
         # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
         per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
 
-        base = _baseline_array(X, loss_name, mask)
+        base = _baseline_array(X, mask)
         baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
 
         # Ensure baseline_loss is a valid number for comparison
