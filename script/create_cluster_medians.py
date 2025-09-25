@@ -82,7 +82,7 @@ def load_data(
                 low_memory=False,
             )
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-        df.sort_values(["store_item", "start_date"], inplace=True)
+        df.sort_values(["store_item", "date"], inplace=True)
         logger.info(f"Loaded data with shape {df.shape}")
         return df
     except Exception as e:
