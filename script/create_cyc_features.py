@@ -8,74 +8,18 @@ This script handles the complete training pipeline including:
 """
 
 import sys
-import logging
 import argparse
 from pathlib import Path
+
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data_utils import load_raw_data, create_cyc_features
-from src.utils import setup_logging
+from src.utils import setup_logging, get_logger, save_csv_or_parquet
+from src.data_utils import compute_cluster_medians
 
-
-def create_features(
-    data_fn: Path,
-    window_size: int,
-    *,
-    output_dir: Path,
-    prefix: str = "cyc_features",
-    log_level: str = "INFO",
-):
-    """
-    Process each Parquet file in a directory, apply feature creation,
-    and save the output with a prefix.
-
-    Parameters
-    ----------
-    data_fn : Path
-        Path to a directory containing parquet files or a single parquet file.
-    window_size : int
-        Rolling window size for feature creation.
-    log_level : str
-        Logging level (e.g., "INFO", "DEBUG").
-    prefix : str
-        Prefix to use when saving processed files.
-    """
-    logger = logging.getLogger(__name__)
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-    if data_fn.is_file() and data_fn.suffix == ".parquet":
-        files = [data_fn]
-    else:
-        files = list(data_fn.glob("*.parquet"))
-
-    logger.info(f"Processing {len(files)} Parquet files...")
-
-    for file_path in files:
-        logger.info(f"Processing {file_path.name}")
-        df = load_raw_data(Path(file_path))
-        store_cluster = df["store_cluster"].unique()
-        item_cluster = df["item_cluster"].unique()
-
-        if len(store_cluster) == 1 and len(item_cluster) == 1:
-            logger.info(
-                f"Store Cluster: {store_cluster[0]}, SKU Cluster: {item_cluster[0]}"
-            )
-        else:
-            logger.warning(
-                f"Multiple clusters found: Store Clusters {store_cluster}, SKU Clusters {item_cluster}"
-            )
-
-        out_path = output_dir / f"{prefix}_{file_path.stem}.parquet"
-        create_cyc_features(
-            df,
-            window_size=window_size,
-            calendar_aligned=True,
-            fn=out_path,
-            log_level=log_level,
-        )
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -87,13 +31,13 @@ def parse_args():
         "--data_fn",
         type=str,
         default="",
-        help="Path to clustered data directory (relative to project root)",
+        help="Path to data file (relative to project root)",
     )
     parser.add_argument(
-        "--output_dir",
+        "--output_fn",
         type=str,
         default="",
-        help="Path to cyc files directory (relative to project root)",
+        help="Path to output file (relative to project root)",
     )
     parser.add_argument(
         "--window_size",
@@ -102,10 +46,10 @@ def parse_args():
         help="Size of the lookback window",
     )
     parser.add_argument(
-        "--log_dir",
+        "--log_fn",
         type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
+        default="",
+        help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
         "--log_level",
@@ -123,8 +67,8 @@ def main():
     args = parse_args()
     # Convert paths to absolute paths relative to project root
     data_fn = Path(args.data_fn).resolve()
-    output_dir = Path(args.output_dir).resolve()
-    log_dir = Path(args.log_dir).resolve()
+    output_fn = Path(args.output_fn).resolve()
+    log_fn = Path(args.log_fn).resolve()
     window_size = args.window_size
 
     # Set up logging

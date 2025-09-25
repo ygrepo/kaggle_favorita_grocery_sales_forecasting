@@ -17,54 +17,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import setup_logging, get_logger
-from src.data_utils import create_sale_features, load_raw_data
+from src.utils import setup_logging, get_logger, save_csv_or_parquet
+from src.data_utils import create_cyclical_features, load_raw_data
 
 logger = get_logger(__name__)
-
-
-def create_features(
-    data_dir: Path,
-    window_size: int,
-    *,
-    output_dir: Path,
-):
-    """
-    Process each Parquet file in a directory, apply feature creation,
-    and save the output with a prefix.
-
-    Parameters
-    ----------
-    data_dir : Path
-        Path to a directory containing parquet files or a single parquet file.
-    window_size : int
-        Rolling window size for feature creation.
-    log_level : str
-        Logging level (e.g., "INFO", "DEBUG").
-    prefix : str
-        Prefix to use when saving processed files.
-    """
-    files = list(data_dir.glob("*.parquet"))
-
-    logger.info(f"Processing {len(files)} Parquet files...")
-
-    for file_path in files:
-        logger.info(f"Processing {file_path.name}")
-        df = load_raw_data(Path(file_path))
-        bid = df["block_id"].unique()
-
-        if len(bid) == 1:
-            logger.info(f"Block ID: {bid[0]}")
-        else:
-            logger.warning(f"Multiple block IDs found: {bid}")
-
-        out_path = output_dir / f"{bid[0]}_sale_features.parquet"
-        create_sale_features(
-            df,
-            window_size=window_size,
-            calendar_aligned=True,
-            fn=out_path,
-        )
 
 
 def parse_args():
@@ -73,10 +29,16 @@ def parse_args():
         description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--data_dir",
+        "--data_fn",
         type=str,
         default="",
-        help="Path to training data directory (relative to project root)",
+        help="Path to data file (relative to project root)",
+    )
+    parser.add_argument(
+        "--output_fn",
+        type=str,
+        default="",
+        help="Path to output file (relative to project root)",
     )
     parser.add_argument(
         "--window_size",
@@ -85,7 +47,7 @@ def parse_args():
         help="Size of the lookback window",
     )
     parser.add_argument(
-        "--log_file",
+        "--log_fn",
         type=str,
         default="",
         help="Path to save script outputs (relative to project root)",
@@ -101,32 +63,25 @@ def parse_args():
 
 
 def main():
+    """Main training function."""
     # Parse command line arguments
     args = parse_args()
     # Convert paths to absolute paths relative to project root
-    data_dir = Path(args.data_dir).resolve()
-    log_file = Path(args.log_file).resolve()
+    data_fn = Path(args.data_fn).resolve()
+    output_fn = Path(args.output_fn).resolve()
+    log_fn = Path(args.log_fn).resolve()
     # Set up logging
-    setup_logging(log_file, args.log_level)
-    window_size = args.window_size
-
+    setup_logging(log_fn, args.log_level)
     try:
-        logger.info("Starting")
-        logger.info(f"Loading data from {data_dir}")
-        logger.info(f"  data dir: {data_dir}")
-        logger.info(f"  Log fn: {log_file}")
-        logger.info(f"  Window size: {window_size}")
+        # Log configuration
+        logger.info("Starting:")
+        logger.info(f"  Data fn: {data_fn}")
+        logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Log fn: {log_fn}")
 
-        # Load and preprocess data
-        # df = load_raw_data(data_fn)
-        # store_item = "44_1503844"
-        # logger.info(f"Selected store_item: {store_item}")
-        # df = df[df["store_item"] == store_item]
-
-        create_features(
-            data_dir,
-            window_size=args.window_size,
-            output_dir=data_dir,
+        df = load_raw_data(data_fn)
+        create_cyclical_features(
+            df, window_size=args.window_size, output_path=output_fn
         )
         logger.info("Completed successfully")
     except Exception as e:
