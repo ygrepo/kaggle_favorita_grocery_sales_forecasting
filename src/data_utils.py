@@ -9,7 +9,7 @@ from pathlib import Path
 import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
-from src.utils import save_csv_or_parquet, get_logger, read_csv_or_parquet
+from src.utils import save_csv_or_parquet, get_logger
 
 import torch
 
@@ -484,7 +484,7 @@ def expanding_arima001(series: pd.Series) -> pd.Series:
     return fc
 
 
-def c_cyclical_features(
+def create_cyclical_features(
     df: pd.DataFrame,
     window_size: int = 7,
     *,

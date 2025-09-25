@@ -8,7 +8,6 @@ This script handles the complete training pipeline including:
 """
 
 import sys
-import logging
 import argparse
 from pathlib import Path
 
