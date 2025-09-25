@@ -11,10 +11,18 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
+
+DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_GROWTH_RATE_DIR="${OUTPUT_DATA_DIR}/growth_rate_2014_January_top_53_store_2000_item"
-DATA_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item.parquet"
-#DATA_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_growth_rate.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate.parquet"
+
+TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
+SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
+BLOCK_ID_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
+FIGURE_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_figure.tiff"
+OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
+
+
 
 ROW_RANGE=90
 COL_RANGE=230
@@ -35,15 +43,6 @@ K_ROW=0
 K_COL=0
 KEEP_STRATEGY="TopK"
 
-TOP_RANK_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_top_rank.csv"
-SUMMARY_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_summary.csv"
-BLOCK_ID_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_block_id.npy"
-FIGURE_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt_figure.tiff"
-OUTPUT_FN="${DATA_GROWTH_RATE_DIR}/growth_rate_2014_January_top_53_store_2000_item_cluster_bt.parquet"
-# TOP_RANK_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_top_rank.csv"
-# SUMMARY_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_summary.csv"
-# FIGURE_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt_figure.png"
-# OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item_cluster_bt.parquet"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
