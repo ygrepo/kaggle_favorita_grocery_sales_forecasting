@@ -117,7 +117,7 @@ def main():
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
         med_df = compute_cluster_medians(
-            df, date_col="date", cluster_col="block_id", value_col="sales"
+            df, date_col="date", cluster_col="block_id", value_col="unit_sales"
         )
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique items: {df['item'].nunique()}")
