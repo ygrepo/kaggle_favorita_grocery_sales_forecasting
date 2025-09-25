@@ -17,7 +17,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import setup_logging, get_logger, save_csv_or_parquet
+from src.utils import setup_logging, get_logger
 from src.data_utils import create_cyclical_features, load_raw_data
 
 logger = get_logger(__name__)

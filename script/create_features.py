@@ -8,83 +8,18 @@ This script handles the complete training pipeline including:
 """
 
 import sys
-import logging
 import argparse
 from pathlib import Path
+
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data_utils import create_features
-from src.utils import setup_logging, str2bool
+from src.utils import setup_logging, get_logger
+from src.data_utils import create_cyclical_features, load_raw_data
 
-
-def create_sale_cyc_features(
-    sales_dir: Path,
-    cyc_dir: Path,
-    window_size: int,
-    *,
-    output_dir: Path,
-    add_y_targets: bool = False,
-    prefix: str = "sale_cyc_features",
-    log_level: str = "INFO",
-):
-    """
-    Process each Parquet file in a directory, apply feature creation,
-    and save the output with a prefix.
-
-    Parameters
-    ----------
-    sales_dir : Path
-        Path to a directory containing parquet files or a single parquet file.
-    cyc_dir : Path
-        Path to a directory containing parquet files or a single parquet file.
-    window_size : int
-        Rolling window size for feature creation.
-    log_level : str
-        Logging level (e.g., "INFO", "DEBUG").
-    prefix : str
-        Prefix to use when saving processed files.
-    """
-    logger = logging.getLogger(__name__)
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-    if sales_dir.is_file() and sales_dir.suffix == ".parquet":
-        files = [sales_dir]
-    else:
-        files = list(sales_dir.glob("*.parquet"))
-
-    logger.info(
-        f"Processing sales (store cluster, SKU cluster) {len(files)} Parquet files..."
-    )
-
-    for file_path in files:
-        logger.info(f"Processing {file_path.name}")
-        parts = file_path.stem.split("_")
-        store_cluster = int(parts[-2])
-        item_cluster = int(parts[-1])
-        logger.info(f"Store cluster: {store_cluster}")
-        logger.info(f"Item cluster: {item_cluster}")
-        sales_fn = (
-            sales_dir / f"sale_features_cluster_{store_cluster}_{item_cluster}.parquet"
-        )
-        cyc_fn = (
-            cyc_dir / f"cyc_features_cluster_{store_cluster}_{item_cluster}.parquet"
-        )
-        output_path = output_dir / f"{prefix}_{store_cluster}_{item_cluster}.parquet"
-        logger.info(f"Sales fn: {sales_fn}")
-        logger.info(f"Cyc fn: {cyc_fn}")
-        logger.info(f"Output path: {output_path}")
-        create_features(
-            window_size=window_size,
-            add_y_targets=add_y_targets,
-            sales_fn=sales_fn,
-            cyc_fn=cyc_fn,
-            log_level=log_level,
-            output_fn=output_path,
-        )
-    logger.info("Features created successfully")
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -93,40 +28,28 @@ def parse_args():
         description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
-        "--sales_dir",
+        "--data_fn",
         type=str,
         default="",
-        help="Path to sales directory (relative to project root)",
+        help="Path to data file (relative to project root)",
     )
     parser.add_argument(
-        "--cyc_dir",
+        "--output_fn",
         type=str,
         default="",
-        help="Path to cyc directory (relative to project root)",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="",
-        help="Path to output directory (relative to project root)",
+        help="Path to output file (relative to project root)",
     )
     parser.add_argument(
         "--window_size",
         type=int,
-        default=16,
+        default=1,
         help="Size of the lookback window",
     )
     parser.add_argument(
-        "--add_y_targets",
-        type=str2bool,
-        default=False,
-        help="Add y targets to the features",
-    )
-    parser.add_argument(
-        "--log_dir",
+        "--log_fn",
         type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
+        default="",
+        help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
         "--log_level",
@@ -142,37 +65,26 @@ def main():
     """Main training function."""
     # Parse command line arguments
     args = parse_args()
-    sales_dir = Path(args.sales_dir).resolve()
-    cyc_dir = Path(args.cyc_dir).resolve()
-    output_dir = Path(args.output_dir).resolve()
-    log_dir = Path(args.log_dir).resolve()
-    window_size = args.window_size
-    add_y_targets = str2bool(args.add_y_targets)
-
+    # Convert paths to absolute paths relative to project root
+    data_fn = Path(args.data_fn).resolve()
+    output_fn = Path(args.output_fn).resolve()
+    log_fn = Path(args.log_fn).resolve()
     # Set up logging
-    logger = setup_logging(log_dir, args.log_level)
-    logger.info(f"Log dir: {log_dir}")
-
+    setup_logging(log_fn, args.log_level)
     try:
         # Log configuration
-        logger.info("Starting creating training features with configuration:")
-        logger.info(f"  Sales dir: {sales_dir}")
-        logger.info(f"  Cyc dir: {cyc_dir}")
-        logger.info(f"  Output dir: {output_dir}")
-        logger.info(f"  Window size: {window_size}")
-        logger.info(f"  Add y targets: {add_y_targets}")
+        logger.info("Starting:")
+        logger.info(f"  Data fn: {data_fn}")
+        logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Log fn: {log_fn}")
 
-        create_sale_cyc_features(
-            window_size=window_size,
-            add_y_targets=add_y_targets,
-            log_level=args.log_level,
-            sales_dir=sales_dir,
-            cyc_dir=cyc_dir,
-            output_dir=output_dir,
+        df = load_raw_data(data_fn)
+        create_cyclical_features(
+            df, window_size=args.window_size, output_path=output_fn
         )
-
+        logger.info("Completed successfully")
     except Exception as e:
-        logger.error(f"Error creating training features: {e}")
+        logger.error(f"Error: {e}")
         raise
 
 

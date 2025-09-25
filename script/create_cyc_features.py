@@ -8,6 +8,7 @@ This script handles the complete training pipeline including:
 """
 
 import sys
+import logging
 import argparse
 from pathlib import Path
 
@@ -16,8 +17,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils import setup_logging, get_logger, save_csv_or_parquet
-from src.data_utils import compute_cluster_medians
+from src.utils import setup_logging, get_logger
+from src.data_utils import create_cyclical_features, load_raw_data
 
 logger = get_logger(__name__)
 
@@ -42,7 +43,7 @@ def parse_args():
     parser.add_argument(
         "--window_size",
         type=int,
-        default=16,
+        default=1,
         help="Size of the lookback window",
     )
     parser.add_argument(
@@ -69,35 +70,22 @@ def main():
     data_fn = Path(args.data_fn).resolve()
     output_fn = Path(args.output_fn).resolve()
     log_fn = Path(args.log_fn).resolve()
-    window_size = args.window_size
-
     # Set up logging
-    logger = setup_logging(log_dir, args.log_level)
-    logger.info(f"Log dir: {log_dir}")
-
+    setup_logging(log_fn, args.log_level)
     try:
         # Log configuration
-        logger.info("Starting creating training features with configuration:")
+        logger.info("Starting:")
         logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Output dir: {output_dir}")
-        logger.info(f"  Log dir: {log_dir}")
-        logger.info(f"  Window size: {window_size}")
+        logger.info(f"  Output fn: {output_fn}")
+        logger.info(f"  Log fn: {log_fn}")
 
-        # Load and preprocess data
-        # df = load_raw_data(data_fn)
-        # store_item = "44_1503844"
-        # logger.info(f"Selected store_item: {store_item}")
-        # df = df[df["store_item"] == store_item]
-
-        create_features(
-            data_fn,
-            window_size=window_size,
-            log_level=args.log_level,
-            output_dir=output_dir,
+        df = load_raw_data(data_fn)
+        create_cyclical_features(
+            df, window_size=args.window_size, output_path=output_fn
         )
-
+        logger.info("Completed successfully")
     except Exception as e:
-        logger.error(f"Error creating cyc features: {e}")
+        logger.error(f"Error: {e}")
         raise
 
 
