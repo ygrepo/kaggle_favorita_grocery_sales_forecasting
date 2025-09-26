@@ -187,8 +187,7 @@ def main():
         )
         model_dir = Path(args.model_dir)
         model_filename = (
-            model_dir
-            / f"{model_name.replace(' ', '_')}_{args.embedding}_{args.dataset}_{args.splitmode}_model_regression.pkl"
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(rf_model, model_name, model_filename)
 
@@ -209,8 +208,7 @@ def main():
             y_test,
         )
         model_filename = (
-            model_dir
-            / f"{model_name.replace(' ', '_')}_{args.embedding}_{args.dataset}_{args.splitmode}_model_regression.pkl"
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(svr_model, model_name, model_filename)
 
@@ -233,8 +231,7 @@ def main():
             y_test,
         )
         model_filename = (
-            model_dir
-            / f"{model_name.replace(' ', '_')}_{args.embedding}_{args.dataset}_{args.splitmode}_model_regression.pkl"
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(gbm_model, model_name, model_filename)
 
@@ -255,8 +252,7 @@ def main():
             y_test,
         )
         model_filename = (
-            model_dir
-            / f"{model_name.replace(' ', '_')}_{args.embedding}_{args.dataset}_{args.splitmode}_model_regression.pkl"
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(lin_reg_model, model_name, model_filename)
 
@@ -282,8 +278,7 @@ def main():
             y_test,
         )
         model_filename = (
-            model_dir
-            / f"{model_name.replace(' ', '_')}_{args.embedding}_{args.dataset}_{args.splitmode}_model_regression.pkl"
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(mlp_model, model_name, model_filename)
 
@@ -304,19 +299,15 @@ def main():
             y_test,
         )
         model_filename = (
-            model_dir
-            / f"{model_name.replace(' ', '_')}_{args.embedding}_{args.dataset}_{args.splitmode}_model_regression.pkl"
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(xgb_model, model_name, model_filename)
 
         logger.info("Done!")
 
-        output_dir = Path(args.output_dir)
+        log_dir = Path(args.log_dir)
         datestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_csv = (
-            output_dir
-            / f"{datestamp}_ML_metrics_{args.embedding}_{args.dataset}_{args.splitmode}.csv"
-        )
+        result_csv = log_dir / f"{datestamp}_ML_metrics.csv"
 
         logger.info(f"Saving metrics to {result_csv}")
         # Save metrics_df to CSV
