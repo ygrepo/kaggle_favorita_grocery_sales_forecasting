@@ -150,8 +150,10 @@ def main():
         logger.info(f"Data fn: {args.data_fn}")
         logger.info(f"Model dir: {args.model_dir}")
         logger.info(f"data_fn: {args.data_fn}")
+        data_fn = Path(args.data_fn).resolve()
+        log_dir = Path(args.log_dir).resolve()
 
-        df = load_raw_data(args.data_fn)
+        df = load_raw_data(data_fn)
         X_train, X_val, X_test, y_train, y_val, y_test = create_X_y_dataset(df)
 
         logger.info("Running models...")
@@ -305,7 +307,6 @@ def main():
 
         logger.info("Done!")
 
-        log_dir = Path(args.log_dir)
         datestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         result_csv = log_dir / f"{datestamp}_ML_metrics.csv"
 
