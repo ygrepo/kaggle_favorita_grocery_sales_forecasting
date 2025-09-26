@@ -38,15 +38,9 @@ from src.data_utils import (
     get_y_idx,
     WEIGHT_COLUMN,
     META_FEATURES,
-    X_SALE_FEATURES,
     X_CYCLICAL_FEATURES,
     X_FEATURES,
-    X_TO_LOG_FEATURES,
-    X_LOG_FEATURES,
-    LABELS,
-    Y_LOG_FEATURES,
-    Y_TO_LOG_FEATURES,
-    ALL_FEATURES,
+    Y_FEATURES,
 )
 
 # Set up logger
@@ -115,16 +109,36 @@ class StoreItemDataset(Dataset):
 # ─────────────────────────────────────────────────────────────────────
 
 
-def create_X_y_dataset(df: pd.DataFrame, val_horizon: int = 30):
+def create_X_y_dataset(
+    df: pd.DataFrame, val_horizon: int = 30
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # --- Compute global cutoff date ---
     cutoff_date = df["date"].max() - pd.Timedelta(days=val_horizon - 1)
 
     # --- Split masks ---
-    df.sort()
     train_mask = df["date"] < cutoff_date
     val_mask = df["date"] >= cutoff_date
 
-    pass
+    features = build_feature_and_label_cols()
+
+    # --- Features & labels ---
+    X = df[features[X_FEATURES]].fillna(0).values.astype(np.float32)
+    Y = df[features[Y_FEATURES]].fillna(0).values.astype(np.float32)
+    W = df[[WEIGHT_COLUMN]].values.astype(np.float32)
+
+    X_train, X_val = X[train_mask], X[val_mask]
+    Y_train, Y_val = Y[train_mask], Y[val_mask]
+    W_train, W_val = W[train_mask], W[val_mask]
+
+    X_scaler = MinMaxScaler().fit(X_train)
+    X_val = X_scaler.transform(X_val)
+    Y_scaler = MinMaxScaler().fit(Y_train)
+    Y_val = Y_scaler.transform(Y_val)
+
+    X_train = X_scaler.transform(X_train)
+    Y_train = Y_scaler.transform(Y_train)
+
+    return X_train, X_val, Y_train, Y_val, W_train, W_val
 
 
 def generate_loaders(

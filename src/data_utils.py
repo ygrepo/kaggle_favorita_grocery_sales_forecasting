@@ -9,21 +9,36 @@ from statsmodels.tsa.arima.model import ARIMA
 import logging
 from src.utils import save_csv_or_parquet, get_logger
 
-import torch
-
 logger = get_logger(__name__)
 
-SALE_FEATURES = [
-    "store_med_day",
-    "item_med_day",
-    "store_med_change",
-    "item_med_change",
-    "sales_day",
-    "store_med_logpct_change",
-    "item_med_logpct_change",
+META_COLS = [
+    "date",
+    "store_item",
+    "store",
+    "item",
+    "block_id",
 ]
 
-CYCLICAL_FEATURES = [
+SALE_COLS = [
+    "unit_sales",
+    "onpromotion",
+    "growth_rate",
+    "cluster_growth_rate_median",
+    "cluster_unit_sales_median",
+    "unit_sales_rolling_median",
+    "unit_sales_ewm_decay",
+    "growth_rate_rolling_median",
+    "growth_rate_ewm_decay",
+    "unit_sales_arima",
+    "growth_rate_arima",
+    "unit_sales_block",
+    "bid_unit_sales_arima",
+    "growth_rate_block",
+    "bid_growth_rate_arima",
+]
+
+
+CYCLICAL_PREFIX_COLS = [
     "dayofweek",
     "weekofmonth",
     "monthofyear",
@@ -33,90 +48,36 @@ CYCLICAL_FEATURES = [
 TRIGS = ["sin", "cos"]
 
 WEIGHT_COLUMN = "weight"
-UNIT_SALES = "unit_sales"
+
 META_FEATURES = "META_FEATURES"
 X_SALE_FEATURES = "X_SALE_FEATURES"
 X_CYCLICAL_FEATURES = "X_CYCLICAL_FEATURES"
 X_FEATURES = "X_FEATURES"
-X_TO_LOG_FEATURES = "X_TO_LOG_FEATURES"
-X_LOG_FEATURES = "X_LOG_FEATURES"
-LABELS = "LABELS"
-Y_LOG_FEATURES = "Y_LOG_FEATURES"
-Y_TO_LOG_FEATURES = "Y_TO_LOG_FEATURES"
+Y_FEATURES = "Y_FEATURES"
 ALL_FEATURES = "ALL_FEATURES"
-UNIT_SALE_IDX = "UNIT_SALE_IDX"
 
 
-def polar_engine():
-    return "gpu" if torch.cuda.is_available() else "rust"
-
-
-def build_feature_and_label_cols(
-    window_size: int,
-) -> dict[str, list[str]]:
+def build_feature_and_label_cols() -> dict[str, list[str]]:
     """Return feature and label column names for a given window size."""
-    meta_cols = [
-        "start_date",
-        # "id",
-        "store_item",
-        "store_cluster",
-        "item_cluster",
-    ]
+
     x_cyclical_features = [
-        f"{feat}_{trig}_{i}"
-        for feat in CYCLICAL_FEATURES
-        for trig in TRIGS
-        for i in range(1, window_size + 1)
+        f"{feat}_{trig}" for feat in CYCLICAL_PREFIX_COLS for trig in TRIGS
     ]
 
-    x_sales_features = [
-        f"{name}_{i}" for name in SALE_FEATURES for i in range(1, window_size + 1)
-    ]
+    x_feature_cols = META_COLS + SALE_COLS + x_cyclical_features
+    y_feature_col = ["y"]
 
-    x_to_log_features = [
-        f"{name}_{i}"
-        for name in SALE_FEATURES
-        for i in range(1, window_size + 1)
-        if name not in ["store_med_logpct_change", "item_med_logpct_change"]
-    ]
-    x_log_features = [
-        f"{name}_{i}"
-        for name in SALE_FEATURES
-        for i in range(1, window_size + 1)
-        if name in ["store_med_logpct_change", "item_med_logpct_change"]
-    ]
+    all_features = x_feature_cols + y_feature_col
 
-    x_feature_cols = x_to_log_features + x_log_features + x_cyclical_features
-    assert x_feature_cols == x_sales_features + x_cyclical_features
-
-    y_to_log_features = [f"y_sales_day_{i}" for i in range(1, window_size + 1)]
-    y_log_features = [
-        f"y_store_med_logpct_change_{i}" for i in range(1, window_size + 1)
-    ] + [f"y_item_med_logpct_change_{i}" for i in range(1, window_size + 1)]
-    label_cols = y_to_log_features + y_log_features
-    assert label_cols == y_to_log_features + y_log_features
-
-    unit_sales = get_X_unit_sales(window_size)
-
-    all_features = meta_cols + x_feature_cols + label_cols
     features = dict(
-        META_FEATURES=meta_cols,
-        UNIT_SALES=unit_sales,
-        X_SALE_FEATURES=x_sales_features,
+        META_FEATURES=META_COLS,
+        X_SALE_FEATURES=SALE_COLS,
         X_CYCLICAL_FEATURES=x_cyclical_features,
         X_FEATURES=x_feature_cols,
-        X_TO_LOG_FEATURES=x_to_log_features,
-        X_LOG_FEATURES=x_log_features,
-        LABELS=label_cols,
-        Y_LOG_FEATURES=y_log_features,
-        Y_TO_LOG_FEATURES=y_to_log_features,
+        Y_FEATURES=y_feature_col,
         ALL_FEATURES=all_features,
     )
     return features
-
-
-def get_X_unit_sales(window_size: int = 16) -> list[str]:
-    return [f"sales_day_{i}" for i in range(1, window_size + 1)]
 
 
 def get_X_feature_idx(window_size: int = 1) -> dict[str, list[int]]:
@@ -148,9 +109,7 @@ def get_y_idx(window_size: int = 1) -> dict[str, list[int]]:
     return idx_features
 
 
-def sort_df(
-    df: pd.DataFrame, window_size: int = 1, flag_duplicates: bool = True
-) -> pd.DataFrame:
+def sort_df(df: pd.DataFrame, *, flag_duplicates: bool = True) -> pd.DataFrame:
     # --- Assert uniqueness of rows ---
     if flag_duplicates:
         if df.duplicated(subset=["date", "store_item"]).any():
@@ -159,7 +118,7 @@ def sort_df(
                 f"Duplicate rows detected for date/store_item:\n{dups[['date', 'store_item']]}"
             )
     df = df.sort_values(["store_item", "date"], inplace=False).reset_index(drop=True)
-    features = build_feature_and_label_cols(window_size)
+    features = build_feature_and_label_cols()
     df = df[features[ALL_FEATURES]]
     return df
 
