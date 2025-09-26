@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
-from typing import List, Optional, Iterator
+from typing import Optional, Iterator
 from tqdm import tqdm
 from pathlib import Path
-import gc
 from statsmodels.tsa.arima.model import ARIMA
 import logging
 from src.utils import save_csv_or_parquet, get_logger
@@ -155,14 +153,12 @@ def sort_df(
 ) -> pd.DataFrame:
     # --- Assert uniqueness of rows ---
     if flag_duplicates:
-        if df.duplicated(subset=["start_date", "store_item"]).any():
-            dups = df[df.duplicated(subset=["start_date", "store_item"], keep=False)]
+        if df.duplicated(subset=["date", "store_item"]).any():
+            dups = df[df.duplicated(subset=["date", "store_item"], keep=False)]
             raise ValueError(
-                f"Duplicate rows detected for date/store_item:\n{dups[['start_date', 'store_item']]}"
+                f"Duplicate rows detected for date/store_item:\n{dups[['date', 'store_item']]}"
             )
-    df = df.sort_values(["store_item", "start_date"], inplace=False).reset_index(
-        drop=True
-    )
+    df = df.sort_values(["store_item", "date"], inplace=False).reset_index(drop=True)
     features = build_feature_and_label_cols(window_size)
     df = df[features[ALL_FEATURES]]
     return df
@@ -491,8 +487,8 @@ def arima001_forecast(
                 pred.predicted_mean.iloc[0]
             )  # .iloc[0] avoids FutureWarning
         except Exception as e:
-            # logger.debug(f"expanding_arima001 failed at i={i}: {e}")
-            pass
+            logger.warning(f"failed at i={i}: {e}")
+
     return fc
 
 
@@ -700,23 +696,6 @@ def create_y_targets_from_shift(
             date_diff = (next_group["start_date"] - group["start_date"]).dt.days
             valid = date_diff == window_size
 
-            if logger.isEnabledFor(logging.DEBUG):
-                group_dates = group["start_date"].dt.strftime("%Y-%m-%d")
-                next_dates = next_group["start_date"].dt.strftime("%Y-%m-%d")
-
-                if len(group_dates) <= 10:
-                    logger.debug(f"Group {store_item} dates: {group_dates.tolist()}")
-                    logger.debug(f"Next dates: {next_dates.tolist()}")
-                    logger.debug(f"Date diffs: {date_diff.tolist()}")
-                else:
-                    logger.debug(
-                        f"Group {store_item}: {group_dates.iloc[0]} to {group_dates.iloc[-1]}"
-                    )
-                    logger.debug(f"Next: {next_dates.iloc[0]} to {next_dates.iloc[-1]}")
-                    logger.debug(
-                        f"Min/Max date diff: {date_diff.min()} / {date_diff.max()}"
-                    )
-
             matched = group.loc[valid].copy()
             if matched.empty:
                 logger.debug(f"No valid window for store_item {store_item}")
@@ -765,257 +744,6 @@ def create_y_targets_from_shift(
     df = df.sort_values(["store_item", "start_date"]).reset_index(drop=True)
 
     return df
-
-
-# def create_sale_features(
-#     df,
-#     *,
-#     window_size: int = 1,
-#     calendar_aligned: bool = True,
-#     fn: Optional[Path] = None,
-# ) -> pd.DataFrame:
-
-#     if "store_item" not in df.columns:
-#         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
-#     if fn is not None:
-#         if fn.exists():
-#             logger.info(f"Loading sales features from {fn}")
-#             df = read_csv_or_parquet(fn)
-#         else:
-#             logger.info(f"Generating sales features to {fn}")
-#             df = generate_sales_features(
-#                 df,
-#                 window_size,
-#                 calendar_aligned=calendar_aligned,
-#                 output_path=fn,
-#             )
-#     else:
-#         logger.info("Generating sales features")
-#         df = generate_sales_features(
-#             df,
-#             window_size,
-#             calendar_aligned=calendar_aligned,
-#         )
-#     df["start_date"] = pd.to_datetime(df["start_date"])
-#     return df
-
-
-# def create_cyc_features(
-#     df,
-#     *,
-#     window_size=16,
-#     calendar_aligned: bool = True,
-#     fn: Optional[Path] = None,
-#     log_level: str = "INFO",
-# ) -> pd.DataFrame:
-
-#     if "store_item" not in df.columns:
-#         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
-#     if fn is not None:
-#         if fn.exists():
-#             if fn.suffix == ".parquet":
-#                 df = pd.read_parquet(fn)
-#             else:
-#                 df = pd.read_csv(fn)
-#             logger.info(f"Loading cyclical features from {fn}")
-#         else:
-#             logger.info(f"Generating cyclical features to {fn}")
-#             df = generate_cyclical_features(
-#                 df,
-#                 window_size,
-#                 calendar_aligned=calendar_aligned,
-#                 log_level=log_level,
-#                 output_path=fn,
-#             )
-#     else:
-#         logger.info("Generating cyclical features")
-#         df = generate_cyclical_features(
-#             df,
-#             window_size,
-#             calendar_aligned=calendar_aligned,
-#             log_level=log_level,
-#         )
-#     df["start_date"] = pd.to_datetime(df["start_date"])
-#     return df
-
-
-def create_features(
-    add_y_targets: bool = False,
-    sales_fn: Optional[Path] = None,
-    cyc_fn: Optional[Path] = None,
-    window_size: int = 16,
-    log_level: str = "INFO",
-    output_fn: Optional[Path] = None,
-) -> pd.DataFrame:
-    logger.info("Loading sales features")
-    if sales_fn.exists():
-        logger.info(f"Loading sales features from {sales_fn}")
-        if sales_fn.suffix == ".parquet":
-            sales_df = pd.read_parquet(sales_fn)
-        else:
-            sales_df = pd.read_csv(sales_fn)
-    else:
-        logger.warning(f"Sales features not found at {sales_fn}")
-        sales_df = pd.DataFrame()
-    logger.info(f"sales_df.shape: {sales_df.shape}")
-
-    logger.info("Loading cyclical features")
-    if cyc_fn.exists():
-        logger.info(f"Loading cyclical features from {cyc_fn}")
-        if cyc_fn.suffix == ".parquet":
-            cyc_df = pd.read_parquet(cyc_fn)
-        else:
-            cyc_df = pd.read_csv(cyc_fn)
-    else:
-        logger.warning(f"Cyclical features not found at {cyc_fn}")
-        cyc_df = pd.DataFrame()
-    logger.info(f"cyc_df.shape: {cyc_df.shape}")
-
-    logger.info("Merging sales and cyclical features")
-    df = pd.merge(
-        sales_df,
-        cyc_df,
-        on=["start_date", "store_item"],
-    )
-    logger.info(f"df.shape: {df.shape}")
-
-    if add_y_targets:
-        df = create_y_targets_from_shift(
-            df, window_size, feature_prefixes=["sales_day_"]
-        )
-        logger.info(f"df.shape: {df.shape}")
-        (
-            meta_cols,
-            _,
-            _,
-            x_feature_cols,
-            _,
-            _,
-            label_cols,
-            _,
-            _,
-            _,
-        ) = build_feature_and_label_cols(window_size=window_size)
-        df = df[meta_cols + x_feature_cols + label_cols]
-    else:
-        logger.info("Not adding y targets")
-
-        (
-            meta_cols,
-            _,
-            _,
-            x_feature_cols,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-        ) = build_feature_and_label_cols(window_size=window_size)
-        df = df[meta_cols + x_feature_cols]
-    if output_fn is not None:
-        logger.info(f"Saving features to {output_fn}")
-        if output_fn.suffix == ".parquet":
-            df.to_parquet(output_fn)
-        else:
-            df.to_csv(output_fn, index=False)
-
-    return df
-
-
-def prepare_training_data_from_raw_df(
-    df,
-    *,
-    window_size=16,
-    calendar_aligned: bool = True,
-    add_y_targets: bool = True,
-    sales_fn: Optional[Path] = None,
-    cyc_fn: Optional[Path] = None,
-    log_level: str = "INFO",
-) -> pd.DataFrame:
-
-    if "store_item" not in df.columns:
-        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-
-    sales_df = create_sale_features(
-        df,
-        window_size=window_size,
-        calendar_aligned=calendar_aligned,
-        sales_fn=sales_fn,
-        log_level=log_level,
-    )
-    cyc_df = create_cyc_features(
-        df,
-        window_size=window_size,
-        calendar_aligned=calendar_aligned,
-        cyc_fn=cyc_fn,
-        log_level=log_level,
-    )
-    del df
-    gc.collect()
-
-    logger.info(f"Merging sales and cyclical features")
-    merged_df = pd.merge(
-        sales_df,
-        cyc_df,
-        on=["start_date", "store_item"],
-    )
-
-    logger.info(f"merged_df.shape: {merged_df.shape}")
-    if add_y_targets:
-        merged_df = create_y_targets_from_shift(
-            merged_df,
-            window_size=window_size,
-            feature_prefixes=["sales_day_"],
-            log_level=log_level,
-        )
-        logger.info(f"merged_df.shape: {merged_df.shape}")
-
-    return merged_df
-
-
-def preprocess_sales_matrix(
-    df: pd.DataFrame, log_transform=True, smooth_window=7, zscore_rows=True
-):
-    """
-    Preprocesses a pivoted sales matrix for GDKM:
-    1. Optionally applies log1p transform
-    2. Applies rolling mean smoothing
-    3. Drops rows with zero variance
-    4. Z-score normalization per row (optional)
-
-    Parameters:
-    - pivot_df: DataFrame of shape (store_item, date)
-    - log_transform: whether to apply log1p to unit_sales
-    - smooth_window: window size for rolling mean smoothing
-    - zscore_rows: whether to z-score normalize each row
-
-    Returns:
-    - X: np.ndarray, processed matrix
-    - pivot_df_filtered: filtered version of the input DataFrame
-    """
-    df = df.copy()
-
-    # Apply rolling mean to smooth spikes
-    df = df.rolling(window=smooth_window, axis=1, min_periods=1).mean()
-
-    # Drop rows with no variance (flat after smoothing)
-    df = df[df.var(axis=1) > 0]
-
-    # Apply log(1 + x) to reduce spike influence
-    if log_transform:
-        df = np.log1p(df)
-
-    # Normalize each row and columns (Z-score)
-    if zscore_rows:
-        X = MinMaxScaler().fit_transform(df)
-        # X = MinMaxScaler().fit_transform(X.T).T
-    else:
-        X = df.values
-
-    return X, df
 
 
 def zscore_with_axis(

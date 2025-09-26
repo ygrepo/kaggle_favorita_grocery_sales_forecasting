@@ -49,17 +49,6 @@ from src.data_utils import (
     ALL_FEATURES,
 )
 
-# ds_config.py (as a Python dict you can import)
-# ds_config = {
-#     "train_micro_batch_size_per_gpu": 16,
-#     "zero_optimization": {
-#         "stage": 2,
-#         "overlap_comm": True,
-#         "contiguous_gradients": True,
-#     },
-#     "bf16": {"enabled": True},
-# }
-
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -124,6 +113,20 @@ class StoreItemDataset(Dataset):
 # ─────────────────────────────────────────────────────────────────────
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
+
+
+def create_X_y_dataset(df: pd.DataFrame, val_horizon: int = 30):
+    # --- Compute global cutoff date ---
+    cutoff_date = df["date"].max() - pd.Timedelta(days=val_horizon - 1)
+
+    # --- Split masks ---
+    df.sort()
+    train_mask = df["date"] < cutoff_date
+    val_mask = df["date"] >= cutoff_date
+
+    pass
+
+
 def generate_loaders(
     df: pd.DataFrame,
     window_size: int,

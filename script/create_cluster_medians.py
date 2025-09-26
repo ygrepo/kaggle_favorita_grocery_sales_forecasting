@@ -8,19 +8,15 @@ This script handles the complete create cluster medians pipeline including:
 """
 
 import sys
-import logging
 import argparse
 from pathlib import Path
-
-import pandas as pd
-
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils import setup_logging, get_logger, save_csv_or_parquet
-from src.data_utils import compute_cluster_medians
+from src.data_utils import compute_cluster_medians, load_raw_data
 
 logger = get_logger(__name__)
 
@@ -58,38 +54,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_data(
-    data_fn: Path,
-) -> pd.DataFrame:
-    """Load and preprocess training data.
-
-    Args:
-        data_fn: Path to the training data file
-
-    Returns:
-        Preprocessed DataFrame
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Loading data from {data_fn}")
-
-    try:
-        if data_fn.suffix == ".parquet":
-            df = pd.read_parquet(data_fn)
-        else:
-            logger.info("Loading")
-            df = pd.read_csv(
-                data_fn,
-                low_memory=False,
-            )
-        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
-        df.sort_values(["store_item", "date"], inplace=True)
-        logger.info(f"Loaded data with shape {df.shape}")
-        return df
-    except Exception as e:
-        logger.error(f"Error loading data: {e}")
-        raise
-
-
 def main():
     """Main training function."""
     # Parse command line arguments
@@ -107,7 +71,7 @@ def main():
         logger.info(f"  Output fn: {output_fn}")
         logger.info(f"  Log fn: {log_fn}")
 
-        df = load_data(data_fn)
+        df = load_raw_data(data_fn)
         med_df = compute_cluster_medians(
             df, date_col="date", cluster_col="block_id", value_col="growth_rate"
         )
