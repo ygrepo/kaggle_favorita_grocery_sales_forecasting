@@ -14,7 +14,8 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_medians_cyc_X_y_features.parquet"
-
+MODEL_DIR="${PROJECT_ROOT}/output/models"
+mkdir -p "$MODEL_DIR"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -26,6 +27,7 @@ LOG_LEVEL="INFO"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
+    --model_dir) MODEL_DIR="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -48,6 +50,7 @@ echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/ML_benchmark.py" \
   --data_fn "$DATA_FN" \
+  --model_dir "$MODEL_DIR" \
   --log_dir "$LOG_DIR" \
   --log_fn "LOG_FILE" \
   --log_level "$LOG_LEVEL" \
