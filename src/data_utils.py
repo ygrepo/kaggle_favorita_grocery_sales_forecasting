@@ -64,10 +64,10 @@ def build_feature_and_label_cols() -> dict[str, list[str]]:
         f"{feat}_{trig}" for feat in CYCLICAL_PREFIX_COLS for trig in TRIGS
     ]
 
-    x_feature_cols = META_COLS + SALE_COLS + x_cyclical_features
+    x_feature_cols = SALE_COLS + x_cyclical_features
     y_feature_col = ["y"]
 
-    all_features = x_feature_cols + y_feature_col
+    all_features = META_COLS + x_feature_cols + y_feature_col
 
     features = dict(
         META_FEATURES=META_COLS,
