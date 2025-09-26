@@ -122,9 +122,9 @@ def create_X_y_dataset(
     features = build_feature_and_label_cols()
 
     # --- Features & labels ---
-    X = df[features[X_FEATURES]]
-    Y = df[features[Y_FEATURES]]
-    W = df[[WEIGHT_COLUMN]]
+    X = df[features[X_FEATURES]].fillna(0).values.astype(np.float32)
+    Y = df[features[Y_FEATURES]].fillna(0).values.astype(np.float32)
+    W = df[[WEIGHT_COLUMN]].fillna(1).values.astype(np.float32)
 
     X_train, X_val = X[train_mask], X[val_mask]
     Y_train, Y_val = Y[train_mask], Y[val_mask]
