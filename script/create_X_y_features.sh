@@ -36,7 +36,6 @@ done
 
 # Create output directories if they don't exist
 mkdir -p "$LOG_DIR"
-mkdir -p "$OUTPUT_DIR"
 
 # Set up log file with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
