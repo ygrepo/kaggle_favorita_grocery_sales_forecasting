@@ -29,7 +29,7 @@ from scipy.stats import pearsonr
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 from src.utils import setup_logging, get_logger
-from src.data_utils import load_raw_data
+from src.data_utils import load_raw_data, sort_df
 from src.model_utils import create_X_y_dataset
 
 logger = get_logger(__name__)
@@ -154,6 +154,8 @@ def main():
         log_dir = Path(args.log_dir).resolve()
 
         df = load_raw_data(data_fn)
+        df = sort_df(df)
+
         X_train, X_val, X_test, y_train, y_val, y_test, W_train, W_val, W_test = (
             create_X_y_dataset(df, val_horizon=7, test_horizon=7)
         )
@@ -163,7 +165,7 @@ def main():
         logger.info("Random Forest")
         # Random Forest
         rf_model = RandomForestRegressor(n_estimators=100, random_state=SEED)
-        rf_model.fit(X_train, y_train)
+        rf_model.fit(X_train, y_train.ravel())
         metrics_df = pd.DataFrame(
             columns=[
                 "Model",
@@ -198,7 +200,7 @@ def main():
         logger.info("SVR")
         # SVR
         svr_model = SVR(kernel="rbf")
-        svr_model.fit(X_train, y_train)
+        svr_model.fit(X_train, y_train.ravel())
         model_name = "SVR"
         metrics_df = evaluate_model(
             metrics_df,
@@ -221,7 +223,7 @@ def main():
         gbm_model = GradientBoostingRegressor(
             n_estimators=100, learning_rate=0.1, random_state=SEED
         )
-        gbm_model.fit(X_train, y_train)
+        gbm_model.fit(X_train, y_train.ravel())
         model_name = "GBM"
         metrics_df = evaluate_model(
             metrics_df,
@@ -242,7 +244,7 @@ def main():
         logger.info("Linear Regression")
         # Linear Regression
         lin_reg_model = LinearRegression()
-        lin_reg_model.fit(X_train, y_train)
+        lin_reg_model.fit(X_train, y_train.ravel())
         model_name = "Linear Regression"
         metrics_df = evaluate_model(
             metrics_df,
@@ -268,7 +270,7 @@ def main():
             max_iter=200,
             random_state=SEED,
         )
-        mlp_model.fit(X_train, y_train)
+        mlp_model.fit(X_train, y_train.ravel())
         model_name = "MLP"
         metrics_df = evaluate_model(
             metrics_df,
@@ -289,7 +291,7 @@ def main():
         logger.info("XGBoost")
         # XGBoost
         xgb_model = XGBRegressor(random_state=SEED, eval_metric="rmse")
-        xgb_model.fit(X_train, y_train)
+        xgb_model.fit(X_train, y_train.ravel())
         model_name = "XGBoost"
         metrics_df = evaluate_model(
             metrics_df,
