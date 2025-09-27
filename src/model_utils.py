@@ -147,7 +147,7 @@ def create_X_y_dataset(
 
     # ---- Work in pandas until after splitting (keeps indices aligned) ----
     X_df = df.loc[:, x_cols].fillna(0.0)
-    y_s = df.loc[:, y_col].astype(float)  # Series
+    y_s = df.loc[:, y_col].astype(float).fillna(0.0)  # Series
     w_s = (
         df.loc[:, weight_col].fillna(1.0)
         if weight_col in df
