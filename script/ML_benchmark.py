@@ -154,7 +154,9 @@ def main():
         log_dir = Path(args.log_dir).resolve()
 
         df = load_raw_data(data_fn)
-        X_train, X_val, X_test, y_train, y_val, y_test = create_X_y_dataset(df)
+        X_train, X_val, X_test, y_train, y_val, y_test = create_X_y_dataset(
+            df, val_horizon=7
+        )
 
         logger.info("Running models...")
 
