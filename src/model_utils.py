@@ -119,10 +119,8 @@ def create_X_y_dataset(
 
     # --- Split masks ---
     train_mask = df["date"] < cutoff_date - pd.Timedelta(days=val_horizon - 1)
-    val_mask = (
-        df["date"]
-        >= cutoff_date - pd.Timedelta(days=val_horizon - 1) & df["date"]
-        < cutoff_date
+    val_mask = (df["date"] >= cutoff_date - pd.Timedelta(days=val_horizon - 1)) & (
+        df["date"] < cutoff_date
     )
     test_mask = df["date"] >= cutoff_date
 
@@ -150,9 +148,10 @@ def create_X_y_dataset(
     logger.info(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
     logger.info(f"X_val: {X_val.shape}, Y_val: {Y_val.shape}")
     logger.info(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
-    logger.info(f"W_train: {W_train.shape}, W_val: {W_val.shape}, W_test: {W_test.shape}")
-    logger.info(f"Train rows: {train_mask.sum()}, Val rows: {val_mask.sum()}, Test rows: {test_mask.sum()}")
-    
+    logger.info(
+        f"W_train: {W_train.shape}, W_val: {W_val.shape}, W_test: {W_test.shape}"
+    )
+
     return X_train, X_val, X_test, Y_train, Y_val, Y_test, W_train, W_val, W_test
 
 
