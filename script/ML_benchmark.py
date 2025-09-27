@@ -155,7 +155,7 @@ def main():
 
         df = load_raw_data(data_fn)
         X_train, X_val, X_test, y_train, y_val, y_test, W_train, W_val, W_test = (
-            create_X_y_dataset(df, val_horizon=7)
+            create_X_y_dataset(df, val_horizon=7, test_horizon=7)
         )
 
         logger.info("Running models...")
