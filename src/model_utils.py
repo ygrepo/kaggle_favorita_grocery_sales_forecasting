@@ -165,6 +165,12 @@ def create_X_y_dataset(
 
     # ---- Split BEFORE scaling; then fit scalers on train only ----
     X_train_df, X_val_df, X_test_df = X_df[train_mask], X_df[val_mask], X_df[test_mask]
+
+    med = X_train_df.median(numeric_only=True)
+    X_train_df = X_train_df.fillna(med)
+    X_val_df = X_val_df.fillna(med)
+    X_test_df = X_test_df.fillna(med)
+
     y_train_s, y_val_s, y_test_s = (
         y_clipped[train_mask],
         y_clipped[val_mask],
