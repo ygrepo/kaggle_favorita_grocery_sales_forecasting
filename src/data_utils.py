@@ -153,7 +153,7 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
             )
         df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
         df["date"] = pd.to_datetime(df["date"])
-        df.sort_values(["store_item", "date"], inplace=True, kind="mergesort")
+        df.sort_values(["date", "store_item"], inplace=True, kind="mergesort")
         logger.info(f"Loaded data with shape {df.shape}")
         return df
     except Exception as e:

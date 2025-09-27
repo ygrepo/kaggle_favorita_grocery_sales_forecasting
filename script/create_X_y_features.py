@@ -65,9 +65,27 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
 
         df = load_raw_data(data_fn)
+
+        # target: growth at t+1 (per series)
         df["y"] = df.groupby("store_item")["growth_rate"].shift(-1)
-        valid = df["y"].notna()
-        df = df.loc[valid].copy()  # avoid fake labels on series ends
+
+        # ARIMA forecasts for t+1, available at end of t
+        df["unit_sales_arima_tplus1"] = df.groupby("store_item")[
+            "unit_sales_arima"
+        ].shift(-1)
+        df["growth_rate_arima_tplus1"] = df.groupby("store_item")[
+            "growth_rate_arima"
+        ].shift(-1)
+        df["bid_unit_sales_arima_tplus1"] = df.groupby("block_id")[
+            "bid_unit_sales_arima"
+        ].shift(-1)
+        df["bid_growth_rate_arima_tplus1"] = df.groupby("block_id")[
+            "bid_growth_rate_arima"
+        ].shift(-1)
+
+        # drop rows where next-step target doesn't exist
+        df = df[df["y"].notna()].copy()
+
         logger.info(f"After valid observations shape: {df.shape}")
         save_csv_or_parquet(df, output_fn)
 
