@@ -11,8 +11,6 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVR
 from sklearn.linear_model import LinearRegression
 from sklearn.neural_network import MLPRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import sys
 from xgboost import XGBRegressor
 from sklearn.metrics import (
     mean_squared_error,
@@ -29,17 +27,42 @@ from scipy.stats import pearsonr
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 from src.utils import setup_logging, get_logger
-from src.data_utils import load_raw_data, sort_df
+from src.data_utils import (
+    load_raw_data,
+    sort_df,
+    build_feature_and_label_cols,
+    X_FEATURES,
+)
 from src.model_utils import create_X_y_dataset
 
 logger = get_logger(__name__)
 
 SEED = 42
 
+import numpy as np
+
+
+def smape(y_true: np.ndarray, y_pred: np.ndarray, epsilon=1e-8) -> float:
+    """
+    Compute Symmetric Mean Absolute Percentage Error (SMAPE).
+
+    Args:
+        y_true (array-like): ground truth values
+        y_pred (array-like): predicted values
+        epsilon (float): small value to avoid division by zero
+
+    Returns:
+        float: SMAPE value in percentage
+    """
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    numerator = np.abs(y_pred - y_true)
+    denominator = (np.abs(y_true) + np.abs(y_pred) + epsilon) / 2.0
+    return float(np.mean(numerator / denominator) * 100)
+
 
 def calculate_metrics(
     y_true: np.ndarray, y_pred: np.ndarray
-) -> tuple[float, float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float, float]:
     """
     Calculate regression metrics including RMSE, MAE, MSE, R2, Pearson correlation,
     Median Absolute Error, and Explained Variance.
@@ -62,7 +85,18 @@ def calculate_metrics(
     # Calculate Explained Variance Score
     explained_variance = explained_variance_score(y_true, y_pred)
 
-    return rmse, mae, mse, r2, pearson_corr, median_ae, explained_variance
+    smape_val = smape(y_true, y_pred)
+    # Convert all values to Python float type
+    return (
+        float(np.asarray(rmse).item()),
+        float(np.asarray(mse).item()),
+        float(np.asarray(r2).item()),
+        float(np.asarray(pearson_corr).item()),
+        float(np.asarray(mae).item()),
+        float(np.asarray(median_ae).item()),
+        smape_val,
+        float(np.asarray(explained_variance).item()),
+    )
 
 
 def evaluate_model(
@@ -103,17 +137,27 @@ def evaluate_model(
     metrics = [train_metrics, val_metrics, test_metrics]
     rows = []
     for dataset, metric in zip(datasets, metrics):
-        rmse, mae, mse, r2, pearson_corr, median_ae, explained_variance = metric
+        (
+            rmse,
+            mae,
+            mse,
+            r2,
+            pearson_corr,
+            median_ae,
+            smape_val,
+            explained_variance,
+        ) = metric
         rows.append(
             {
                 "Model": model_name,
                 "Dataset": dataset,
                 "RMSE": rmse,
-                "MAE": mae,
                 "MSE": mse,
                 "R2": r2,
                 "Pearson": pearson_corr,
+                "MAE": mae,
                 "Median_AE": median_ae,
+                "SMAPE": smape_val,
                 "Explained_Variance": explained_variance,
             }
         )
@@ -160,8 +204,28 @@ def main():
         df = load_raw_data(data_fn)
         df = sort_df(df)
 
-        X_train, X_val, X_test, y_train, y_val, y_test, W_train, W_val, W_test = (
-            create_X_y_dataset(df, val_horizon=7, test_horizon=7)
+        features = build_feature_and_label_cols()
+
+        (
+            X_train,
+            X_val,
+            X_test,
+            y_train,
+            y_val,
+            y_test,
+            w_train,
+            w_val,
+            w_test,
+            x_scaler,
+            y_scaler,
+            (y_clip_lower, y_clip_upper),
+        ) = create_X_y_dataset(
+            df,
+            val_horizon=7,
+            test_horizon=7,
+            y_col="y",
+            weight_col="weight",
+            x_cols=features["X_FEATURES"],
         )
 
         logger.info("Running models...")

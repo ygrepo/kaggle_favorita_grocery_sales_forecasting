@@ -1,25 +1,21 @@
 import os
 import torch
-from torch import nn
 from torch.utils.data import TensorDataset, Dataset, DataLoader
 from sklearn.preprocessing import MinMaxScaler
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
 import logging
 from lightning.pytorch.callbacks import (
-    ModelCheckpoint,
     EarlyStopping,
     LearningRateMonitor,
 )
 from lightning.pytorch.strategies import DeepSpeedStrategy
-
+from sklearn.preprocessing import RobustScaler
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict
 import pickle
 from pathlib import Path
-from enum import Enum
-from tqdm import tqdm
 from collections import defaultdict
 import re
 from typing import Optional, Union
@@ -107,57 +103,107 @@ class StoreItemDataset(Dataset):
 # ─────────────────────────────────────────────────────────────────────
 # Loaders
 # ─────────────────────────────────────────────────────────────────────
-
-
 def create_X_y_dataset(
     df: pd.DataFrame,
+    *,
     val_horizon: int = 30,
     test_horizon: int = 30,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    # --- Compute global cutoff date ---
-    cutoff_date = df["date"].max() - pd.Timedelta(days=test_horizon - 1)
+    y_col: str = "y",
+    weight_col: str = "weight",
+    x_cols: list[str] = None,
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    MinMaxScaler,
+    RobustScaler,
+    tuple[float, float],
+]:
+    """
+    Returns:
+      X_train, X_val, X_test,
+      y_train, y_val, y_test,
+      w_train, w_val, w_test,
+      x_scaler, y_scaler, (y_clip_lower, y_clip_upper)
+    """
 
-    # --- Split masks ---
-    train_mask = df["date"] < cutoff_date - pd.Timedelta(days=val_horizon - 1)
-    val_mask = (df["date"] >= cutoff_date - pd.Timedelta(days=val_horizon - 1)) & (
-        df["date"] < cutoff_date
+    assert "date" in df.columns, "`df` must have a 'date' column (datetime64)"
+    if x_cols is None:
+        raise ValueError("Provide x_cols (list of feature column names).")
+
+    # ---- Cutoffs (inclusive test span, inclusive val span) ----
+    cutoff_test = df["date"].max() - pd.Timedelta(days=test_horizon - 1)
+    cutoff_val = cutoff_test - pd.Timedelta(days=val_horizon)
+
+    train_mask = df["date"] < cutoff_val
+    val_mask = (df["date"] >= cutoff_val) & (df["date"] < cutoff_test)
+    test_mask = df["date"] >= cutoff_test
+
+    # ---- Work in pandas until after splitting (keeps indices aligned) ----
+    X_df = df.loc[:, x_cols].fillna(0.0)
+    y_s = df.loc[:, y_col].astype(float)  # Series
+    w_s = (
+        df.loc[:, weight_col].fillna(1.0)
+        if weight_col in df
+        else pd.Series(1.0, index=df.index)
     )
-    test_mask = df["date"] >= cutoff_date
 
-    features = build_feature_and_label_cols()
+    # ---- Compute clip bounds on *training only* (avoid leakage) ----
+    q_low, q_high = y_s[train_mask].quantile([0.01, 0.99])
+    y_clip_lower, y_clip_upper = float(np.floor(q_low)), float(np.ceil(q_high))
 
-    # --- Features & labels ---
-    X = df[features[X_FEATURES]].fillna(0).values.astype(np.float32)
-    Y = df[features[Y_FEATURES]].fillna(0).values.astype(np.float32)
-    W = df[[WEIGHT_COLUMN]].fillna(1).values.astype(np.float32)
+    y_clipped = y_s.clip(lower=y_clip_lower, upper=y_clip_upper)
 
-    X_train, X_val, X_test = X[train_mask], X[val_mask], X[test_mask]
-    Y_train, Y_val, Y_test = Y[train_mask], Y[val_mask], Y[test_mask]
-    W_train, W_val, W_test = W[train_mask], W[val_mask], W[test_mask]
-    # Log transform
-    Y_train = np.log1p(Y_train)
-    Y_val = np.log1p(Y_val)
-    Y_test = np.log1p(Y_test)
+    # ---- Split BEFORE scaling; then fit scalers on train only ----
+    X_train_df, X_val_df, X_test_df = X_df[train_mask], X_df[val_mask], X_df[test_mask]
+    y_train_s, y_val_s, y_test_s = (
+        y_clipped[train_mask],
+        y_clipped[val_mask],
+        y_clipped[test_mask],
+    )
+    w_train_s, w_val_s, w_test_s = w_s[train_mask], w_s[val_mask], w_s[test_mask]
 
-    # --- Scale ---
-    X_scaler = MinMaxScaler().fit(X_train)
-    X_val = X_scaler.transform(X_val)
-    X_test = X_scaler.transform(X_test)
-    Y_scaler = MinMaxScaler().fit(Y_train)
-    Y_val = Y_scaler.transform(Y_val)
-    Y_test = Y_scaler.transform(Y_test)
+    # ---- Feature scaler ----
+    x_scaler = MinMaxScaler().fit(X_train_df.values)
+    X_train = x_scaler.transform(X_train_df.values).astype(np.float32)
+    X_val = x_scaler.transform(X_val_df.values).astype(np.float32)
+    X_test = x_scaler.transform(X_test_df.values).astype(np.float32)
 
-    X_train = X_scaler.transform(X_train)
-    Y_train = Y_scaler.transform(Y_train)
-
-    logger.info(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
-    logger.info(f"X_val: {X_val.shape}, Y_val: {Y_val.shape}")
-    logger.info(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
-    logger.info(
-        f"W_train: {W_train.shape}, W_val: {W_val.shape}, W_test: {W_test.shape}"
+    # ---- Target scaler (Robust) — fit on train only; keep 2D shape ----
+    y_scaler = RobustScaler().fit(y_train_s.values.reshape(-1, 1))
+    y_train = (
+        y_scaler.transform(y_train_s.values.reshape(-1, 1)).astype(np.float32).ravel()
+    )
+    y_val = y_scaler.transform(y_val_s.values.reshape(-1, 1)).astype(np.float32).ravel()
+    y_test = (
+        y_scaler.transform(y_test_s.values.reshape(-1, 1)).astype(np.float32).ravel()
     )
 
-    return X_train, X_val, X_test, Y_train, Y_val, Y_test, W_train, W_val, W_test
+    # ---- Weights ----
+    w_train = w_train_s.values.astype(np.float32)
+    w_val = w_val_s.values.astype(np.float32)
+    w_test = w_test_s.values.astype(np.float32)
+
+    return (
+        X_train,
+        X_val,
+        X_test,
+        y_train,
+        y_val,
+        y_test,
+        w_train,
+        w_val,
+        w_test,
+        x_scaler,
+        y_scaler,
+        (y_clip_lower, y_clip_upper),
+    )
 
 
 def generate_loaders(

@@ -25,6 +25,10 @@ umap-learn = "^0.5.7"
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"
 
+[tool.black]
+line-length = 79
+target-version = ['py310']
+
 [build-system]
 build-backend = "poetry.core.masonry.api"
 package-mode = "false"

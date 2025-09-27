@@ -6,6 +6,13 @@
     "python.testing.pytestEnabled": true,
     "editor.formatOnSave": true,
     "editor.rulers": [
-        70
-    ]
+        79
+    ],
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length=79"
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    }
 }
