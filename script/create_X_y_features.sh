@@ -52,7 +52,7 @@ echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/create_X_y_features.py" \
   --data_fn "$DATA_FN" \
   --output_fn "$OUTPUT_FN" \
-  --log_fn "LOG_FILE" \
+  --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
 
