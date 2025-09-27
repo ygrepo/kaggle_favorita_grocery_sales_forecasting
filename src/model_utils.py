@@ -110,14 +110,21 @@ class StoreItemDataset(Dataset):
 
 
 def create_X_y_dataset(
-    df: pd.DataFrame, val_horizon: int = 30
+    df: pd.DataFrame,
+    val_horizon: int = 30,
+    test_horizon: int = 30,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # --- Compute global cutoff date ---
-    cutoff_date = df["date"].max() - pd.Timedelta(days=val_horizon - 1)
+    cutoff_date = df["date"].max() - pd.Timedelta(days=test_horizon - 1)
 
     # --- Split masks ---
-    train_mask = df["date"] < cutoff_date
-    val_mask = df["date"] >= cutoff_date
+    train_mask = df["date"] < cutoff_date - pd.Timedelta(days=val_horizon - 1)
+    val_mask = (
+        df["date"]
+        >= cutoff_date - pd.Timedelta(days=val_horizon - 1) & df["date"]
+        < cutoff_date
+    )
+    test_mask = df["date"] >= cutoff_date
 
     features = build_feature_and_label_cols()
 
@@ -126,19 +133,27 @@ def create_X_y_dataset(
     Y = df[features[Y_FEATURES]].fillna(0).values.astype(np.float32)
     W = df[[WEIGHT_COLUMN]].fillna(1).values.astype(np.float32)
 
-    X_train, X_val = X[train_mask], X[val_mask]
-    Y_train, Y_val = Y[train_mask], Y[val_mask]
-    W_train, W_val = W[train_mask], W[val_mask]
+    X_train, X_val, X_test = X[train_mask], X[val_mask], X[test_mask]
+    Y_train, Y_val, Y_test = Y[train_mask], Y[val_mask], Y[test_mask]
+    W_train, W_val, W_test = W[train_mask], W[val_mask], W[test_mask]
 
     X_scaler = MinMaxScaler().fit(X_train)
     X_val = X_scaler.transform(X_val)
+    X_test = X_scaler.transform(X_test)
     Y_scaler = MinMaxScaler().fit(Y_train)
     Y_val = Y_scaler.transform(Y_val)
+    Y_test = Y_scaler.transform(Y_test)
 
     X_train = X_scaler.transform(X_train)
     Y_train = Y_scaler.transform(Y_train)
 
-    return X_train, X_val, Y_train, Y_val, W_train, W_val
+    logger.info(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
+    logger.info(f"X_val: {X_val.shape}, Y_val: {Y_val.shape}")
+    logger.info(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
+    logger.info(f"W_train: {W_train.shape}, W_val: {W_val.shape}, W_test: {W_test.shape}")
+    logger.info(f"Train rows: {train_mask.sum()}, Val rows: {val_mask.sum()}, Test rows: {test_mask.sum()}")
+    
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test, W_train, W_val, W_test
 
 
 def generate_loaders(
