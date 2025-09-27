@@ -65,7 +65,10 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
 
         df = load_raw_data(data_fn)
-        df["y"] = df["growth_rate"].shift(-1)
+        df["y"] = df.groupby("store_item")["growth_rate"].shift(-1)
+        valid = df["y"].notna()
+        df = df.loc[valid].copy()  # avoid fake labels on series ends
+        logger.info(f"After valid observations shape: {df.shape}")
         save_csv_or_parquet(df, output_fn)
 
     except Exception as e:
