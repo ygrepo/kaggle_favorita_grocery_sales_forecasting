@@ -20,7 +20,7 @@ META_COLS = [
 ]
 
 SALE_COLS = [
-    "onpromotion",
+    # "onpromotion",
     "unit_sales",
     "growth_rate",
     "unit_sales_rolling_median",
