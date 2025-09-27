@@ -44,6 +44,10 @@ def calculate_metrics(
     Calculate regression metrics including RMSE, MAE, MSE, R2, Pearson correlation,
     Median Absolute Error, and Explained Variance.
     """
+    # Ensure both arrays have the same shape (flatten to 1D)
+    y_true = np.asarray(y_true).ravel()
+    y_pred = np.asarray(y_pred).ravel()
+
     mse = mean_squared_error(y_true, y_pred)
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(y_true, y_pred)
