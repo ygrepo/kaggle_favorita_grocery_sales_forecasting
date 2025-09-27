@@ -54,6 +54,7 @@ X_SALE_FEATURES = "X_SALE_FEATURES"
 X_CYCLICAL_FEATURES = "X_CYCLICAL_FEATURES"
 X_FEATURES = "X_FEATURES"
 Y_FEATURES = "Y_FEATURES"
+WEIGHT_COLUMN = "weight"
 ALL_FEATURES = "ALL_FEATURES"
 
 
@@ -67,7 +68,7 @@ def build_feature_and_label_cols() -> dict[str, list[str]]:
     x_feature_cols = SALE_COLS + x_cyclical_features
     y_feature_col = ["y"]
 
-    all_features = META_COLS + x_feature_cols + y_feature_col
+    all_features = META_COLS + x_feature_cols + [WEIGHT_COLUMN] + y_feature_col
 
     features = dict(
         META_FEATURES=META_COLS,
