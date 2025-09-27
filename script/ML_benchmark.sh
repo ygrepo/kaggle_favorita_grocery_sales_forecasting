@@ -52,7 +52,7 @@ python "${SCRIPT_DIR}/ML_benchmark.py" \
   --data_fn "$DATA_FN" \
   --model_dir "$MODEL_DIR" \
   --log_dir "$LOG_DIR" \
-  --log_fn "LOG_FILE" \
+  --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
 
