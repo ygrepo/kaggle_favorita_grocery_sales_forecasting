@@ -20,23 +20,22 @@ META_COLS = [
 ]
 
 SALE_COLS = [
-    "unit_sales",
     "onpromotion",
+    "unit_sales",
     "growth_rate",
-    "cluster_growth_rate_median",
-    "cluster_unit_sales_median",
     "unit_sales_rolling_median",
     "unit_sales_ewm_decay",
     "growth_rate_rolling_median",
     "growth_rate_ewm_decay",
-    "unit_sales_arima",
-    "growth_rate_arima",
     "unit_sales_block",
-    "bid_unit_sales_arima",
     "growth_rate_block",
-    "bid_growth_rate_arima",
+    "cluster_growth_rate_median",
+    "cluster_unit_sales_median",
+    "unit_sales_arima_tplus1",
+    "growth_rate_arima_tplus1",
+    "bid_unit_sales_arima_tplus1",
+    "bid_growth_rate_arima_tplus1",
 ]
-
 
 CYCLICAL_PREFIX_COLS = [
     "dayofweek",

@@ -36,7 +36,6 @@ from src.data_utils import (
     META_FEATURES,
     X_CYCLICAL_FEATURES,
     X_FEATURES,
-    Y_FEATURES,
 )
 
 # Set up logger
@@ -144,9 +143,13 @@ def create_X_y_dataset(
     train_mask = df["date"] < cutoff_val
     val_mask = (df["date"] >= cutoff_val) & (df["date"] < cutoff_test)
     test_mask = df["date"] >= cutoff_test
+    valid = df[y_col].notna()
+    train_mask &= valid
+    val_mask &= valid
+    test_mask &= valid
 
     # ---- Work in pandas until after splitting (keeps indices aligned) ----
-    X_df = df.loc[:, x_cols].fillna(0.0)
+    X_df = df.loc[:, x_cols]
     y_s = df.loc[:, y_col].astype(float)  # Series
     w_s = (
         df.loc[:, weight_col].fillna(1.0)
@@ -189,6 +192,13 @@ def create_X_y_dataset(
     w_train = w_train_s.values.astype(np.float32)
     w_val = w_val_s.values.astype(np.float32)
     w_test = w_test_s.values.astype(np.float32)
+
+    assert (
+        np.isfinite(y_train).all()
+        and np.isfinite(y_val).all()
+        and np.isfinite(y_test).all()
+    )
+    assert X_train.shape[0] == y_train.shape[0] == w_train.shape[0]
 
     return (
         X_train,
