@@ -134,7 +134,12 @@ def create_X_y_dataset(
     X_train, X_val, X_test = X[train_mask], X[val_mask], X[test_mask]
     Y_train, Y_val, Y_test = Y[train_mask], Y[val_mask], Y[test_mask]
     W_train, W_val, W_test = W[train_mask], W[val_mask], W[test_mask]
+    # Log transform
+    Y_train = np.log1p(Y_train)
+    Y_val = np.log1p(Y_val)
+    Y_test = np.log1p(Y_test)
 
+    # --- Scale ---
     X_scaler = MinMaxScaler().fit(X_train)
     X_val = X_scaler.transform(X_val)
     X_test = X_scaler.transform(X_test)
