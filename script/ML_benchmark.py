@@ -265,7 +265,7 @@ def main():
         )
         save_model(rf_model, model_name, model_filename)
 
-        logger.info("SVR")
+        # logger.info("SVR")
         # # SVR
         # svr_model = SVR(kernel="rbf")
         # svr_model.fit(X_train, y_train.ravel())
