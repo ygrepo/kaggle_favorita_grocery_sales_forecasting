@@ -377,7 +377,7 @@ def main():
             X_train,
             y_train_raveled,
             step=100,
-            desc="RF fit (OOB ES)",
+            desc="RF fit (OOB EST)",
             patience=3,
             min_delta=1e-4,
             time_budget_s=None,

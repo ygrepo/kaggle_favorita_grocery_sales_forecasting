@@ -144,12 +144,12 @@ def fit_rf_with_tqdm(
     X,
     y,
     *,
-    step: int = 50,
-    desc: str = "RandomForest",
-    patience: int = 2,
-    min_delta: float = 1e-4,
-    time_budget_s: float | None = None,
-    leave: bool = False,
+    step=50,
+    desc="RandomForest",
+    patience=2,
+    min_delta=1e-4,
+    time_budget_s=None,
+    leave=False,
     sample_weight=None,
 ):
     """
@@ -159,39 +159,32 @@ def fit_rf_with_tqdm(
     - Only increases n_estimators; uses warm_start to add trees in chunks.
     - Early-stops when OOB R^2 stops improving by > min_delta for 'patience' chunks.
     """
-    # Preconditions
+    # ensure bootstrap/OOB/warm_start
     if not getattr(model, "bootstrap", True):
         model.set_params(bootstrap=True)
     if not getattr(model, "oob_score", False):
         model.set_params(oob_score=True)
     model.set_params(warm_start=True)
 
-    n_cap = int(getattr(model, "n_estimators", 0))
-    if n_cap <= 0:
-        n_cap = 600  # sensible default cap if 0
-        model.set_params(n_estimators=0)
+    # target cap = current n_estimators (or default), then start from 0
+    target_n = int(getattr(model, "n_estimators", 0)) or 600
+    model.set_params(n_estimators=0)
+    n_now = 0
 
-    pbar = tqdm(total=n_cap, desc=desc, leave=leave)
-    start_time = time.time()
+    pbar = tqdm(total=target_n, desc=desc, leave=leave)
+    start = time.time()
+    best_oob, best_n, bad = -np.inf, 0, 0
 
-    n_now = int(getattr(model, "n_estimators", 0))
-    best_oob = -np.inf
-    best_n = n_now
-    bad = 0
-
-    while n_now < n_cap:
-        n_next = min(n_now + step, n_cap)
+    while n_now < target_n:
+        n_next = min(n_now + step, target_n)
         model.set_params(n_estimators=n_next)
 
-        # fit adds only the new trees
         if sample_weight is not None:
             model.fit(X, y, sample_weight=sample_weight)
         else:
             model.fit(X, y)
 
-        # OOB after this chunk
         curr_oob = getattr(model, "oob_score_", None)
-
         pbar.update(n_next - n_now)
         if curr_oob is not None and np.isfinite(curr_oob):
             pbar.set_postfix(
@@ -200,18 +193,15 @@ def fit_rf_with_tqdm(
 
         n_now = n_next
 
-        # Early-stopping logic
         if curr_oob is not None and np.isfinite(curr_oob):
             if curr_oob > best_oob + min_delta:
-                best_oob = curr_oob
-                best_n = n_now
-                bad = 0
+                best_oob, best_n, bad = curr_oob, n_now, 0
             else:
                 bad += 1
 
         if (
             time_budget_s is not None
-            and (time.time() - start_time) >= time_budget_s
+            and (time.time() - start) >= time_budget_s
         ):
             break
         if bad >= patience:
@@ -219,8 +209,8 @@ def fit_rf_with_tqdm(
 
     pbar.close()
 
-    # Trim to best_n trees (no refit)
-    if hasattr(model, "estimators_") and best_n < n_now:
+    # trim back to best_n trees (optional)
+    if hasattr(model, "estimators_") and best_n and best_n < n_now:
         model.estimators_ = model.estimators_[:best_n]
         model.n_estimators = best_n
 
