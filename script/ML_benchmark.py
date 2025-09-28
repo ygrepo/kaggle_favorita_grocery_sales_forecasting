@@ -675,13 +675,11 @@ def main():
             n_jobs=n_jobs,
             random_state=SEED,
         )
-        nrounds = model.get_params().get("n_estimators", 0)
         model.fit(
             X_train,
             y_train_raveled,
             eval_set=[(X_val, y_val.ravel())],
-            callbacks=[XGBoostTQDMCallback(total=nrounds, desc="XGBoost fit")],
-            verbose=False,
+            verbose=True,
             early_stopping_rounds=100,
         )
         metrics_df = evaluate_model(
