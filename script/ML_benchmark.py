@@ -616,49 +616,49 @@ def main():
         )
         save_model(model, model_name, model_filename)
 
-        model_name = "MLP"
-        logger.info(f"Model:{model_name}")
-        # MLP
-        model = MLPRegressor(
-            hidden_layer_sizes=(512, 256),
-            activation="relu",
-            max_iter=200,
-            random_state=SEED,
-        )
-        with spinner("MLP fit"):
-            model.fit(X_train, y_train_raveled)
-        metrics_df = evaluate_model(
-            metrics_df,
-            model_name,
-            model,
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            X_test,
-            y_test,
-            y_scaler,
-            "scaled",
-            calibrate=None,
-        )
-        metrics_df = evaluate_model(
-            metrics_df,
-            model_name,
-            model,
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            X_test,
-            y_test,
-            y_scaler,
-            "original",
-            calibrate="isotonic",
-        )
-        model_filename = (
-            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
-        )
-        save_model(model, model_name, model_filename)
+        # model_name = "MLP"
+        # logger.info(f"Model:{model_name}")
+        # # MLP
+        # model = MLPRegressor(
+        #     hidden_layer_sizes=(512, 256),
+        #     activation="relu",
+        #     max_iter=200,
+        #     random_state=SEED,
+        # )
+        # with spinner("MLP fit"):
+        #     model.fit(X_train, y_train_raveled)
+        # metrics_df = evaluate_model(
+        #     metrics_df,
+        #     model_name,
+        #     model,
+        #     X_train,
+        #     y_train,
+        #     X_val,
+        #     y_val,
+        #     X_test,
+        #     y_test,
+        #     y_scaler,
+        #     "scaled",
+        #     calibrate=None,
+        # )
+        # metrics_df = evaluate_model(
+        #     metrics_df,
+        #     model_name,
+        #     model,
+        #     X_train,
+        #     y_train,
+        #     X_val,
+        #     y_val,
+        #     X_test,
+        #     y_test,
+        #     y_scaler,
+        #     "original",
+        #     calibrate="isotonic",
+        # )
+        # model_filename = (
+        #     model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
+        # )
+        # save_model(model, model_name, model_filename)
 
         model_name = "XGBoost"
         logger.info(f"Model:{model_name}")
@@ -672,6 +672,7 @@ def main():
             reg_lambda=1.0,  # L2
             reg_alpha=0.0,  # L1 if you want it
             objective="reg:squarederror",
+            n_jobs=n_jobs,
             random_state=SEED,
         )
         nrounds = model.get_params().get("n_estimators", 0)
@@ -727,7 +728,7 @@ def main():
         logger.info("Metrics saved!")
 
     except Exception as e:
-        logger.exception("Script failed: %s", e)  # or this
+        logger.exception("Script failed: %s", e)
         sys.exit(1)
 
 
