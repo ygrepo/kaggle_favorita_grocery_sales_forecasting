@@ -267,7 +267,9 @@ def spinner(desc="fitting"):
 
 
 class XGBoostTQDMCallback(TrainingCallback):
-    def __init__(self, total, desc="XGBoost", leave=False):
+    def __init__(
+        self, total: int, desc: str = "XGB train", leave: bool = False
+    ):
         self.total = total
         self.desc = desc
         self.leave = leave
@@ -277,9 +279,15 @@ class XGBoostTQDMCallback(TrainingCallback):
         self.pbar = tqdm(total=self.total, desc=self.desc, leave=self.leave)
         return model
 
-    def after_iteration(self, model, epoch, evals_log):
-        self.pbar.update(1)  # one boosting round done
-        return False  # don't stop
+    def after_iteration(self, model, epoch: int, evals_log):
+        # Optionally show last RMSE on val if present
+        try:
+            rmse = evals_log["val"]["rmse"][-1]
+            self.pbar.set_postfix(val_rmse=f"{rmse:.4f}", it=epoch + 1)
+        except Exception:
+            pass
+        self.pbar.update(1)
+        return False  # don't stop training
 
     def after_training(self, model):
         if self.pbar is not None:

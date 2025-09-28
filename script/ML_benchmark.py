@@ -15,6 +15,7 @@ from sklearn.ensemble import (
 from sklearn.svm import SVR
 from sklearn.linear_model import LinearRegression
 from sklearn.neural_network import MLPRegressor
+import xgboost as xgb
 from xgboost import XGBRegressor
 from sklearn.metrics import (
     mean_squared_error,
@@ -168,6 +169,15 @@ def _apply(m, x: np.ndarray):
         if hasattr(m, "transform")
         else m.predict(x.reshape(-1, 1))
     )
+
+
+# Small wrapper so your evaluate_model() can still call .predict(X)
+class BoosterWrapper:
+    def __init__(self, booster):
+        self.booster = booster
+
+    def predict(self, X):
+        return self.booster.predict(xgb.DMatrix(X))
 
 
 def evaluate_model(
@@ -662,26 +672,60 @@ def main():
 
         model_name = "XGBoost"
         logger.info(f"Model:{model_name}")
-        model = XGBRegressor(
-            n_estimators=1000,
-            learning_rate=0.03,
-            max_depth=6,  # shallower trees
-            min_child_weight=10,  # stronger leaf mins
+
+        params = dict(
+            objective="reg:squarederror",
+            eta=0.03,  # or learning_rate=0.03 (pick one)
+            max_depth=6,
+            min_child_weight=10,
             subsample=0.7,
             colsample_bytree=0.7,
             reg_lambda=1.0,  # L2
-            reg_alpha=0.0,  # L1 if you want it
-            objective="reg:squarederror",
-            n_jobs=n_jobs,
-            random_state=SEED,
+            reg_alpha=0.0,  # L1
+            tree_method="hist",
+            nthread=n_jobs,  # threads for native API
+            seed=SEED,
+            eval_metric="rmse",
         )
-        model.fit(
-            X_train,
-            y_train_raveled,
-            eval_set=[(X_val, y_val.ravel())],
-            verbose=True,
+
+        num_round = 1000
+        dtrain = xgb.DMatrix(X_train, label=y_train_raveled)
+        dval = xgb.DMatrix(X_val, label=y_val.ravel())
+
+        booster = xgb.train(
+            params,
+            dtrain,
+            num_boost_round=num_round,
+            evals=[
+                (dtrain, "train"),
+                (dval, "val"),
+            ],  # ES monitors last entry ("val")
             early_stopping_rounds=100,
+            callbacks=[XGBoostTQDMCallback(total=num_round)],  # progress bar
+            verbose_eval=False,  # print every 50 iters
         )
+        model = BoosterWrapper(booster)
+
+        # model = XGBRegressor(
+        #     n_estimators=1000,
+        #     learning_rate=0.03,
+        #     max_depth=6,  # shallower trees
+        #     min_child_weight=10,  # stronger leaf mins
+        #     subsample=0.7,
+        #     colsample_bytree=0.7,
+        #     reg_lambda=1.0,  # L2
+        #     reg_alpha=0.0,  # L1 if you want it
+        #     objective="reg:squarederror",
+        #     n_jobs=n_jobs,
+        #     random_state=SEED,
+        # )
+        # model.fit(
+        #     X_train,
+        #     y_train_raveled,
+        #     eval_set=[(X_val, y_val.ravel())],
+        #     verbose=True,
+        #     early_stopping_rounds=100,
+        # )
         metrics_df = evaluate_model(
             metrics_df,
             model_name,

@@ -49,7 +49,11 @@ echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
 echo "  Data fn: ${DATA_FN}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
-python "${SCRIPT_DIR}/ML_benchmark.py" \
+PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
+PYTHON="$PYENV_ROOT/versions/retail/bin/python"   # or versions/3.12.9/envs/retail/bin/python
+
+
+$PYTHON "${SCRIPT_DIR}/ML_benchmark.py" \
   --data_fn "$DATA_FN" \
   --model_dir "$MODEL_DIR" \
   --log_dir "$LOG_DIR" \
