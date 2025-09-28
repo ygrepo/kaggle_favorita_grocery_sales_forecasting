@@ -266,25 +266,25 @@ def main():
         save_model(rf_model, model_name, model_filename)
 
         logger.info("SVR")
-        # SVR
-        svr_model = SVR(kernel="rbf")
-        svr_model.fit(X_train, y_train.ravel())
-        model_name = "SVR"
-        metrics_df = evaluate_model(
-            metrics_df,
-            model_name,
-            svr_model,
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            X_test,
-            y_test,
-        )
-        model_filename = (
-            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
-        )
-        save_model(svr_model, model_name, model_filename)
+        # # SVR
+        # svr_model = SVR(kernel="rbf")
+        # svr_model.fit(X_train, y_train.ravel())
+        # model_name = "SVR"
+        # metrics_df = evaluate_model(
+        #     metrics_df,
+        #     model_name,
+        #     svr_model,
+        #     X_train,
+        #     y_train,
+        #     X_val,
+        #     y_val,
+        #     X_test,
+        #     y_test,
+        # )
+        # model_filename = (
+        #     model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
+        # )
+        # save_model(svr_model, model_name, model_filename)
 
         logger.info("GBM")
         # GBM
