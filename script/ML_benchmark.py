@@ -3,11 +3,15 @@ import sys
 from pathlib import Path
 import argparse
 import os
-
+from typing import Optional
 from datetime import datetime
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import (
+    RandomForestRegressor,
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+)
 from sklearn.svm import SVR
 from sklearn.linear_model import LinearRegression
 from sklearn.neural_network import MLPRegressor
@@ -19,6 +23,8 @@ from sklearn.metrics import (
     median_absolute_error,
     explained_variance_score,
 )
+from sklearn.isotonic import IsotonicRegression
+
 import pickle
 
 from scipy.stats import pearsonr
@@ -33,30 +39,30 @@ from src.data_utils import (
     build_feature_and_label_cols,
     X_FEATURES,
 )
-from src.model_utils import create_X_y_dataset
+from src.model_utils import create_X_y_dataset, InverseTransformer, _inverse
 
 logger = get_logger(__name__)
 
 SEED = 42
 
-import numpy as np
 
-
-def smape(y_true: np.ndarray, y_pred: np.ndarray, epsilon=1e-8) -> float:
+def smape(y_true: np.ndarray, y_pred: np.ndarray, denom_floor=1e-8) -> float:
     """
     Compute Symmetric Mean Absolute Percentage Error (SMAPE).
 
     Args:
         y_true (array-like): ground truth values
         y_pred (array-like): predicted values
-        epsilon (float): small value to avoid division by zero
+        denom_floor (float): to cap the denominator
 
     Returns:
         float: SMAPE value in percentage
     """
     y_true, y_pred = np.array(y_true), np.array(y_pred)
     numerator = np.abs(y_pred - y_true)
-    denominator = (np.abs(y_true) + np.abs(y_pred) + epsilon) / 2.0
+    denominator = np.maximum(
+        (np.abs(y_true) + np.abs(y_pred)) / 2.0, denom_floor
+    )
     return float(np.mean(numerator / denominator) * 100)
 
 
@@ -99,58 +105,40 @@ def calculate_metrics(
     )
 
 
-def evaluate_model(
-    metrics_df: pd.DataFrame,
+# ---- Helper to append one set of metrics ----
+def _append_rows(
+    tag: str,
     model_name: str,
-    model,
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
-) -> pd.DataFrame:
-    """
-    Train and evaluate a model, and save metrics to a global DataFrame.
-
-    Parameters:
-      - model_name: Name of the model.
-      - model: The regression model object with a .predict() method.
-      - X_train, y_train: Training features and labels.
-      - X_val, y_val: Validation features and labels.
-      - X_test, y_test: Test features and labels.
-      - data_dir: Directory to save the model file.
-    """
-
-    # Get predictions and calculate metrics for each split.
-    train_pred = model.predict(X_train)
-    train_metrics = calculate_metrics(y_train, train_pred)
-
-    val_pred = model.predict(X_val)
-    val_metrics = calculate_metrics(y_val, val_pred)
-
-    test_pred = model.predict(X_test)
-    test_metrics = calculate_metrics(y_test, test_pred)
-
-    # Prepare a list of datasets and corresponding metrics.
-    datasets = ["Training", "Validation", "Test"]
-    metrics = [train_metrics, val_metrics, test_metrics]
-    rows = []
-    for dataset, metric in zip(datasets, metrics):
+    units: str,
+    rows: list[dict],
+    ytr: np.ndarray,
+    yva: np.ndarray,
+    yte: np.ndarray,
+    ptr: np.ndarray,
+    pva: np.ndarray,
+    pte: np.ndarray,
+):
+    for dataset, yt, yp in (
+        ("Training", ytr, ptr),
+        ("Validation", yva, pva),
+        ("Test", yte, pte),
+    ):
         (
             rmse,
-            mae,
             mse,
             r2,
             pearson_corr,
+            mae,
             median_ae,
             smape_val,
             explained_variance,
-        ) = metric
+        ) = calculate_metrics(yt, yp)
         rows.append(
             {
                 "Model": model_name,
                 "Dataset": dataset,
+                "Units": units,  # "scaled" or "original"
+                "Calibrated": tag,  # "raw" or "calibrated"
                 "RMSE": rmse,
                 "MSE": mse,
                 "R2": r2,
@@ -162,9 +150,136 @@ def evaluate_model(
             }
         )
 
-    # Update the global metrics DataFrame
-    metrics_df = pd.concat([metrics_df, pd.DataFrame(rows)], ignore_index=True)
-    return metrics_df
+
+# Apply mapping to val/test preds
+def _apply(m, x: np.ndarray):
+    x = np.asarray(x).ravel()
+    return (
+        m.transform(x)
+        if hasattr(m, "transform")
+        else m.predict(x.reshape(-1, 1))
+    )
+
+
+def evaluate_model(
+    metrics_df: pd.DataFrame,
+    model_name: str,
+    model,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    y_scaler: Optional[
+        "InverseTransformer"
+    ] = None,  # Protocol you defined earlier
+    units: str = "scaled",  # "scaled" or "original"
+    calibrate: Optional[str] = None,  # None | "isotonic" | "linear"
+) -> pd.DataFrame:
+    """
+    Evaluate a trained model and append rows to metrics_df.
+    - If units == "original" and y_scaler is provided, predictions & targets are inverse-transformed.
+    - If calibrate is set, a post-hoc mapping is fit on (val_pred, y_val) and applied to val/test preds.
+      Calibration is reported in separate rows with Calibrated=True.
+    """
+
+    # ---- Raw predictions (model is already fitted outside) ----
+    train_pred = model.predict(X_train)
+    val_pred = model.predict(X_val)
+    test_pred = model.predict(X_test)
+
+    # ---- Work in chosen units ----
+    if y_scaler is not None and units == "original":
+        y_train_eval = _inverse(y_train, y_scaler)
+        y_val_eval = _inverse(y_val, y_scaler)
+        y_test_eval = _inverse(y_test, y_scaler)
+        train_pred = _inverse(train_pred, y_scaler)
+        val_pred = _inverse(val_pred, y_scaler)
+        test_pred = _inverse(test_pred, y_scaler)
+    else:
+        y_train_eval, y_val_eval, y_test_eval = y_train, y_val, y_test
+
+    rows = []
+
+    # ---- Raw metrics ----
+    _append_rows(
+        "raw",
+        model_name,
+        units,
+        rows,
+        y_train_eval,
+        y_val_eval,
+        y_test_eval,
+        train_pred,
+        val_pred,
+        test_pred,
+    )
+
+    # ---- Optional calibration on validation ----
+    if calibrate is not None:
+        cal = None
+        val_x = np.asarray(val_pred).ravel()
+        val_y = np.asarray(y_val_eval).ravel()
+
+        # Need at least 2 distinct prediction values to calibrate meaningfully
+        can_calibrate = (
+            np.isfinite(val_x).all()
+            and np.isfinite(val_y).all()
+            and (np.unique(val_x).size > 1)
+        )
+
+        if can_calibrate:
+            if calibrate.lower() == "isotonic":
+
+                cal = IsotonicRegression(out_of_bounds="clip")
+                cal.fit(val_x, val_y)
+            elif calibrate.lower() == "linear":
+
+                cal = LinearRegression()
+                cal.fit(val_x.reshape(-1, 1), val_y)
+            else:
+                raise ValueError(
+                    "calibrate must be None, 'isotonic', or 'linear'."
+                )
+
+            train_pred_cal = _apply(cal, train_pred)
+            val_pred_cal = _apply(cal, val_pred)
+            test_pred_cal = _apply(cal, test_pred)
+
+            _append_rows(
+                "calibrated",
+                model_name,
+                units,
+                rows,
+                y_train_eval,
+                y_val_eval,
+                y_test_eval,
+                train_pred_cal,
+                val_pred_cal,
+                test_pred_cal,
+            )
+        else:
+            # Append an empty row
+            rows.append(
+                {
+                    "Model": model_name,
+                    "Dataset": "Validation",
+                    "Units": units,
+                    "Calibrated": "calibration_skipped",
+                    "RMSE": np.nan,
+                    "MSE": np.nan,
+                    "R2": np.nan,
+                    "Pearson": np.nan,
+                    "MAE": np.nan,
+                    "Median_AE": np.nan,
+                    "SMAPE": np.nan,
+                    "Explained_Variance": np.nan,
+                }
+            )
+
+    # ---- Concat into metrics_df ----
+    return pd.concat([metrics_df, pd.DataFrame(rows)], ignore_index=True)
 
 
 def save_model(model, model_name, model_filename: Path):
@@ -213,12 +328,12 @@ def main():
             y_train,
             y_val,
             y_test,
-            w_train,
-            w_val,
-            w_test,
-            x_scaler,
+            _,
+            _,
+            _,
+            _,
             y_scaler,
-            (y_clip_lower, y_clip_upper),
+            _,
         ) = create_X_y_dataset(
             df,
             val_horizon=7,
@@ -230,24 +345,38 @@ def main():
 
         logger.info("Running models...")
 
-        logger.info("Random Forest")
-        # Random Forest
-        rf_model = RandomForestRegressor(n_estimators=100, random_state=SEED)
-        rf_model.fit(X_train, y_train.ravel())
+        model_name = "Random Forest"
+        logger.info(f"Model:{model_name}")
+        y_train_raveled = y_train.ravel()
+        rf_model = RandomForestRegressor(
+            n_estimators=600,
+            max_depth=12,  # shallower
+            min_samples_leaf=50,  # bigger leaves
+            min_samples_split=100,
+            max_features=0.6,  # feature subsampling
+            bootstrap=True,
+            n_jobs=-1,
+            random_state=SEED,
+        ).fit(X_train, y_train_raveled)
+        # Optional pruning:
+        # rf_model = RandomForestRegressor(..., ccp_alpha=1e-4)
+
         metrics_df = pd.DataFrame(
             columns=[
                 "Model",
                 "Dataset",
+                "Units",
+                "Calibrated",
                 "RMSE",
-                "MAE",
                 "MSE",
                 "R2",
                 "Pearson",
+                "MAE",
                 "Median_AE",
+                "SMAPE",
                 "Explained_Variance",
             ]
         )
-        model_name = "Random Forest"
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
@@ -258,6 +387,23 @@ def main():
             y_val,
             X_test,
             y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            rf_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
         )
         model_dir = Path(args.model_dir)
         model_filename = (
@@ -265,55 +411,141 @@ def main():
         )
         save_model(rf_model, model_name, model_filename)
 
-        # logger.info("SVR")
-        # # SVR
-        # svr_model = SVR(kernel="rbf")
-        # svr_model.fit(X_train, y_train.ravel())
-        # model_name = "SVR"
-        # metrics_df = evaluate_model(
-        #     metrics_df,
-        #     model_name,
-        #     svr_model,
-        #     X_train,
-        #     y_train,
-        #     X_val,
-        #     y_val,
-        #     X_test,
-        #     y_test,
-        # )
-        # model_filename = (
-        #     model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
-        # )
-        # save_model(svr_model, model_name, model_filename)
-
-        logger.info("GBM")
-        # GBM
-        gbm_model = GradientBoostingRegressor(
-            n_estimators=100, learning_rate=0.1, random_state=SEED
-        )
-        gbm_model.fit(X_train, y_train.ravel())
-        model_name = "GBM"
+        model_name = "SVR"
+        logger.info(f"Model:{model_name}")
+        svr_model = SVR(kernel="rbf")
+        svr_model.fit(X_train, y_train_raveled)
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            gbm_model,
+            svr_model,
             X_train,
             y_train,
             X_val,
             y_val,
             X_test,
             y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            svr_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
         )
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(gbm_model, model_name, model_filename)
+        save_model(svr_model, model_name, model_filename)
+        model_name = "HistGBM"
+        logger.info(f"Model:{model_name}")
 
-        logger.info("Linear Regression")
-        # Linear Regression
-        lin_reg_model = LinearRegression()
-        lin_reg_model.fit(X_train, y_train.ravel())
+        hgb_model = HistGradientBoostingRegressor(
+            loss="squared_error",  # or "absolute_error" for L1-like robustness
+            learning_rate=0.05,
+            max_iter=600,
+            max_leaf_nodes=31,  # tree size control (analogous to depth)
+            min_samples_leaf=50,  # combats overfit; tune
+            l2_regularization=1.0,
+            max_bins=255,  # more precise splits
+            early_stopping=True,
+            validation_fraction=0.1,
+            n_iter_no_change=30,
+            random_state=SEED,
+        ).fit(X_train, y_train_raveled)
+
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            hgb_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            hgb_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
+        )
+
+        model_filename = (
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
+        )
+        save_model(hgb_model, model_name, model_filename)
+
+        model_name = "HuberLossGBM"
+        logger.info(f"Model:{model_name}")
+        gbm_huber = GradientBoostingRegressor(
+            loss="huber",  # robust to outliers
+            alpha=0.9,  # Huber quantile
+            n_estimators=600,
+            learning_rate=0.03,
+            max_depth=3,
+            subsample=0.8,
+            random_state=SEED,
+        ).fit(X_train, y_train_raveled)
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            gbm_huber,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            gbm_huber,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
+        )
+        model_filename = (
+            model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
+        )
+        save_model(gbm_huber, model_name, model_filename)
+
         model_name = "Linear Regression"
+        logger.info(f"Model:{model_name}")
+        lin_reg_model = LinearRegression()
+        lin_reg_model.fit(X_train, y_train_raveled)
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
@@ -324,13 +556,31 @@ def main():
             y_val,
             X_test,
             y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            lin_reg_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
         )
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(lin_reg_model, model_name, model_filename)
 
-        logger.info("MLP")
+        model_name = "MLP"
+        logger.info(f"Model:{model_name}")
         # MLP
         mlp_model = MLPRegressor(
             hidden_layer_sizes=(512, 256),
@@ -338,8 +588,7 @@ def main():
             max_iter=200,
             random_state=SEED,
         )
-        mlp_model.fit(X_train, y_train.ravel())
-        model_name = "MLP"
+        mlp_model.fit(X_train, y_train_raveled)
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
@@ -350,17 +599,50 @@ def main():
             y_val,
             X_test,
             y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            mlp_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
         )
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
         save_model(mlp_model, model_name, model_filename)
 
-        logger.info("XGBoost")
-        # XGBoost
-        xgb_model = XGBRegressor(random_state=SEED, eval_metric="rmse")
-        xgb_model.fit(X_train, y_train.ravel())
         model_name = "XGBoost"
+        logger.info(f"Model:{model_name}")
+        xgb_model = XGBRegressor(
+            n_estimators=1000,
+            learning_rate=0.03,
+            max_depth=6,  # shallower trees
+            min_child_weight=10,  # stronger leaf mins
+            subsample=0.7,
+            colsample_bytree=0.7,
+            reg_lambda=1.0,  # L2
+            reg_alpha=0.0,  # L1 if you want it
+            objective="reg:squarederror",
+            random_state=SEED,
+        )
+        xgb_model.fit(
+            X_train,
+            y_train_raveled,
+            eval_set=[(X_val, y_val.ravel())],
+            verbose=False,
+            early_stopping_rounds=100,
+        )
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
@@ -371,6 +653,23 @@ def main():
             y_val,
             X_test,
             y_test,
+            y_scaler,
+            "scaled",
+            calibrate=None,
+        )
+        metrics_df = evaluate_model(
+            metrics_df,
+            model_name,
+            xgb_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            y_scaler,
+            "original",
+            calibrate="isotonic",
         )
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"

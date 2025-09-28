@@ -108,7 +108,6 @@ def get_y_idx(window_size: int = 1) -> dict[str, list[int]]:
     )
     return idx_features
 
-
 def sort_df(df: pd.DataFrame, *, flag_duplicates: bool = True) -> pd.DataFrame:
     # --- Assert uniqueness of rows ---
     if flag_duplicates:

@@ -12,13 +12,13 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.strategies import DeepSpeedStrategy
 from sklearn.preprocessing import RobustScaler
 import numpy as np
+from numpy.typing import ArrayLike
 import pandas as pd
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Protocol, runtime_checkable
 import pickle
 from pathlib import Path
 from collections import defaultdict
 import re
-from typing import Optional, Union
 
 from lightning.pytorch.loggers import CSVLogger
 from src.model import LightningWrapper, ModelType
@@ -53,7 +53,11 @@ def get_device():
 def select_device(pref: str) -> torch.device:
     pref = (pref or "auto").lower()
     if pref.startswith("cuda"):
-        return torch.device(pref) if torch.cuda.is_available() else torch.device("cpu")
+        return (
+            torch.device(pref)
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
     if pref == "mps":
         return (
             torch.device("mps")
@@ -66,12 +70,17 @@ def select_device(pref: str) -> torch.device:
     # auto
     if torch.cuda.is_available():
         return torch.device("cuda")
-    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None)
+        and torch.backends.mps.is_available()
+    ):
         return torch.device("mps")
     return torch.device("cpu")
 
 
-def _device_or_default(device: Optional[Union[str, torch.device]]) -> torch.device:
+def _device_or_default(
+    device: Optional[Union[str, torch.device]],
+) -> torch.device:
     if device is None:
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(device)
@@ -82,9 +91,15 @@ def is_gpu_available():
 
 
 class StoreItemDataset(Dataset):
-    def __init__(self, df, store_item_id, feature_cols, target_col, weight_col):
-        self.store_df = df[df["store_item"] == store_item_id].reset_index(drop=True)
-        self.X = torch.tensor(self.store_df[feature_cols].values, dtype=torch.float32)
+    def __init__(
+        self, df, store_item_id, feature_cols, target_col, weight_col
+    ):
+        self.store_df = df[df["store_item"] == store_item_id].reset_index(
+            drop=True
+        )
+        self.X = torch.tensor(
+            self.store_df[feature_cols].values, dtype=torch.float32
+        )
         self.y = torch.tensor(
             self.store_df[target_col].values, dtype=torch.float32
         ).unsqueeze(1)
@@ -97,6 +112,16 @@ class StoreItemDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx], self.w[idx]
+
+
+@runtime_checkable
+class InverseTransformer(Protocol):
+    def inverse_transform(self, X: ArrayLike, /) -> np.ndarray: ...
+
+
+def _inverse(arr: ArrayLike, scaler: InverseTransformer) -> np.ndarray:
+    arr = np.asarray(arr).reshape(-1, 1)
+    return scaler.inverse_transform(arr).ravel()
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -164,7 +189,11 @@ def create_X_y_dataset(
     y_clipped = y_s.clip(lower=y_clip_lower, upper=y_clip_upper)
 
     # ---- Split BEFORE scaling; then fit scalers on train only ----
-    X_train_df, X_val_df, X_test_df = X_df[train_mask], X_df[val_mask], X_df[test_mask]
+    X_train_df, X_val_df, X_test_df = (
+        X_df[train_mask],
+        X_df[val_mask],
+        X_df[test_mask],
+    )
 
     med = X_train_df.median(numeric_only=True)
     X_train_df = X_train_df.fillna(med)
@@ -176,7 +205,11 @@ def create_X_y_dataset(
         y_clipped[val_mask],
         y_clipped[test_mask],
     )
-    w_train_s, w_val_s, w_test_s = w_s[train_mask], w_s[val_mask], w_s[test_mask]
+    w_train_s, w_val_s, w_test_s = (
+        w_s[train_mask],
+        w_s[val_mask],
+        w_s[test_mask],
+    )
 
     # ---- Feature scaler ----
     x_scaler = MinMaxScaler().fit(X_train_df.values)
@@ -187,11 +220,19 @@ def create_X_y_dataset(
     # ---- Target scaler (Robust) — fit on train only; keep 2D shape ----
     y_scaler = RobustScaler().fit(y_train_s.values.reshape(-1, 1))
     y_train = (
-        y_scaler.transform(y_train_s.values.reshape(-1, 1)).astype(np.float32).ravel()
+        y_scaler.transform(y_train_s.values.reshape(-1, 1))
+        .astype(np.float32)
+        .ravel()
     )
-    y_val = y_scaler.transform(y_val_s.values.reshape(-1, 1)).astype(np.float32).ravel()
+    y_val = (
+        y_scaler.transform(y_val_s.values.reshape(-1, 1))
+        .astype(np.float32)
+        .ravel()
+    )
     y_test = (
-        y_scaler.transform(y_test_s.values.reshape(-1, 1)).astype(np.float32).ravel()
+        y_scaler.transform(y_test_s.values.reshape(-1, 1))
+        .astype(np.float32)
+        .ravel()
     )
 
     # ---- Weights ----
@@ -253,7 +294,9 @@ def generate_loaders(
     cluster_key = f"{store_cluster}_{item_cluster}"
 
     logger.info(f"Unique store items: {df['store_item'].nunique()}")
-    logger.info(f"Preparing loaders for cluster {cluster_key} with {len(df)} rows")
+    logger.info(
+        f"Preparing loaders for cluster {cluster_key} with {len(df)} rows"
+    )
 
     if WEIGHT_COLUMN not in df.columns:
         df[WEIGHT_COLUMN] = 1.0
@@ -273,16 +316,24 @@ def generate_loaders(
     # --- Early exit if no valid samples ---
     if train_mask.sum() == 0 or val_mask.sum() == 0:
         logger.warning("No valid samples for train/val split")
-        empty = torch.empty((0, len(features[X_FEATURES])), dtype=torch.float32)
+        empty = torch.empty(
+            (0, len(features[X_FEATURES])), dtype=torch.float32
+        )
         empty_y = torch.empty((0, len(features[LABELS])), dtype=torch.float32)
         empty_w = torch.empty((0, 1), dtype=torch.float32)
         loader = DataLoader(
-            TensorDataset(empty, empty_y, empty_w), batch_size=batch_size, num_workers=0
+            TensorDataset(empty, empty_y, empty_w),
+            batch_size=batch_size,
+            num_workers=0,
         )
         meta_df = pd.DataFrame(columns=features[META_FEATURES])
         for split in ["train", "val"]:
-            torch.save(loader, dataloader_dir / f"{cluster_key}_{split}_loader.pt")
-            meta_df.to_parquet(dataloader_dir / f"{cluster_key}_{split}_meta.parquet")
+            torch.save(
+                loader, dataloader_dir / f"{cluster_key}_{split}_loader.pt"
+            )
+            meta_df.to_parquet(
+                dataloader_dir / f"{cluster_key}_{split}_meta.parquet"
+            )
         return loader, loader
 
     # --- Features & labels ---
@@ -294,20 +345,30 @@ def generate_loaders(
     Y_train, Y_val = Y[train_mask], Y[val_mask]
     W_train, W_val = W[train_mask], W[val_mask]
 
-    meta_train_df = df.loc[train_mask, features[META_FEATURES]].reset_index(drop=True)
-    meta_val_df = df.loc[val_mask, features[META_FEATURES]].reset_index(drop=True)
+    meta_train_df = df.loc[train_mask, features[META_FEATURES]].reset_index(
+        drop=True
+    )
+    meta_val_df = df.loc[val_mask, features[META_FEATURES]].reset_index(
+        drop=True
+    )
 
     # --- Transform & Scale ---
     idx_features = get_X_feature_idx(window_size)
     idy_features = get_y_idx(window_size)
 
     def _transform_xy(X_data, Y_data):
-        x_log1p = np.log1p(np.clip(X_data[:, idx_features[X_TO_LOG_FEATURES]], 0, None))
+        x_log1p = np.log1p(
+            np.clip(X_data[:, idx_features[X_TO_LOG_FEATURES]], 0, None)
+        )
         x_log_raw = X_data[:, idx_features[X_LOG_FEATURES]]
         x_cyc = X_data[:, idx_features[X_CYCLICAL_FEATURES]]
         y_transformed = np.hstack(
             [
-                np.log1p(np.clip(Y_data[:, idy_features[Y_TO_LOG_FEATURES]], 0, None)),
+                np.log1p(
+                    np.clip(
+                        Y_data[:, idy_features[Y_TO_LOG_FEATURES]], 0, None
+                    )
+                ),
                 Y_data[:, idy_features[Y_LOG_FEATURES]],
             ]
         )
@@ -328,9 +389,15 @@ def generate_loaders(
         X_scaled = np.zeros(
             (x_log1p.shape[0], len(idx_features[X_FEATURES])), dtype=np.float32
         )
-        X_scaled[:, idx_features[X_TO_LOG_FEATURES]] = scaler_log1p.transform(x_log1p)
-        X_scaled[:, idx_features[X_LOG_FEATURES]] = scaler_log_raw.transform(x_log_raw)
-        X_scaled[:, idx_features[X_CYCLICAL_FEATURES]] = scaler_cyc.transform(x_cyc)
+        X_scaled[:, idx_features[X_TO_LOG_FEATURES]] = scaler_log1p.transform(
+            x_log1p
+        )
+        X_scaled[:, idx_features[X_LOG_FEATURES]] = scaler_log_raw.transform(
+            x_log_raw
+        )
+        X_scaled[:, idx_features[X_CYCLICAL_FEATURES]] = scaler_cyc.transform(
+            x_cyc
+        )
         return X_scaled
 
     X_train_scaled = scale_x(x_log1p_train, x_log_raw_train, x_cyc_train)
@@ -352,7 +419,9 @@ def generate_loaders(
     persistent = num_workers > 0
     train_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_train_scaled), torch.tensor(Y_train), torch.tensor(W_train)
+            torch.tensor(X_train_scaled),
+            torch.tensor(Y_train),
+            torch.tensor(W_train),
         ),
         batch_size=batch_size,
         shuffle=False,
@@ -361,7 +430,9 @@ def generate_loaders(
     )
     val_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_val_scaled), torch.tensor(Y_val), torch.tensor(W_val)
+            torch.tensor(X_val_scaled),
+            torch.tensor(Y_val),
+            torch.tensor(W_val),
         ),
         batch_size=batch_size,
         shuffle=False,
@@ -375,11 +446,14 @@ def generate_loaders(
         ("val", val_loader, meta_val_df),
     ]:
         torch.save(loader, dataloader_dir / f"{cluster_key}_{split}_loader.pt")
-        meta_df.to_parquet(dataloader_dir / f"{cluster_key}_{split}_meta.parquet")
+        meta_df.to_parquet(
+            dataloader_dir / f"{cluster_key}_{split}_meta.parquet"
+        )
 
     # --- Save scalers ---
     for scaler, name in zip(
-        [scaler_log1p, scaler_log_raw, scaler_cyc], ["x_log1p", "x_log_raw", "x_cyc"]
+        [scaler_log1p, scaler_log_raw, scaler_cyc],
+        ["x_log1p", "x_log_raw", "x_cyc"],
     ):
         fn = scalers_dir / f"{cluster_key}_{name}_scaler.pkl"
         with open(fn, "wb") as f:
@@ -441,7 +515,9 @@ def dataloader_to_dataframe(
     x_log_orig = x_log_raw_scaler.inverse_transform(x_log_scaled)
     x_cyc_orig = x_cyc_scaler.inverse_transform(x_cyc_scaled)
 
-    X_orig = np.zeros((X.shape[0], len(idx_features[X_FEATURES])), dtype=np.float32)
+    X_orig = np.zeros(
+        (X.shape[0], len(idx_features[X_FEATURES])), dtype=np.float32
+    )
     for i, idx in enumerate(idx_features[X_TO_LOG_FEATURES]):
         X_orig[:, idx] = x_tolog_orig[:, i]
     for i, idx in enumerate(idx_features[X_LOG_FEATURES]):
@@ -454,7 +530,9 @@ def dataloader_to_dataframe(
         np.clip(Y[:, : len(idy_features[Y_TO_LOG_FEATURES])], 0, None)
     )
     y_log_orig = Y[:, len(idy_features[Y_TO_LOG_FEATURES]) :]
-    Y_orig = np.zeros((Y.shape[0], len(idy_features[LABELS])), dtype=np.float32)
+    Y_orig = np.zeros(
+        (Y.shape[0], len(idy_features[LABELS])), dtype=np.float32
+    )
     for i, idx in enumerate(idy_features[Y_TO_LOG_FEATURES]):
         Y_orig[:, idx] = y_tolog_orig[:, i]
     for i, idx in enumerate(idy_features[Y_LOG_FEATURES]):
@@ -523,7 +601,9 @@ def combine_loaders_to_dataframe(
     assert (store_cluster is None) != (
         item_cluster is None
     ), "Provide only one of store_cluster or item_cluster"
-    pattern = re.compile(r"(\d+)_(\d+)_" + re.escape(loader_type) + r"_loader\.pt")
+    pattern = re.compile(
+        r"(\d+)_(\d+)_" + re.escape(loader_type) + r"_loader\.pt"
+    )
     logger.info(f"Loading {dataloader_dir}")
     logger.info(f"Loader type: {loader_type}")
     logger.info(f"Store cluster: {store_cluster}")
@@ -536,7 +616,9 @@ def combine_loaders_to_dataframe(
             continue
 
         sc, ic = int(match.group(1)), int(match.group(2))
-        logger.info(f"Loading {file.name} (store_cluster={sc}, item_cluster={ic})")
+        logger.info(
+            f"Loading {file.name} (store_cluster={sc}, item_cluster={ic})"
+        )
         if store_cluster is not None and sc != store_cluster:
             logger.warning(f"Skipping {file.name} (store_cluster={sc})")
             continue
@@ -545,13 +627,16 @@ def combine_loaders_to_dataframe(
             continue
 
         logger.info(f"Loading {file.name}")
-        df = dataloader_to_dataframe(file, x_feature_cols, label_cols, "weight")
+        df = dataloader_to_dataframe(
+            file, x_feature_cols, label_cols, "weight"
+        )
         meta_path = dataloader_dir / f"{sc}_{ic}_{loader_type}_meta.parquet"
         logger.info(f"Loading {meta_path}")
         if meta_path.exists():
             meta_df = pd.read_parquet(meta_path)
             df = pd.concat(
-                [meta_df.reset_index(drop=True), df.reset_index(drop=True)], axis=1
+                [meta_df.reset_index(drop=True), df.reset_index(drop=True)],
+                axis=1,
             )
         else:
             logger.warning(f"Meta file not found for {file.name}")
@@ -658,7 +743,9 @@ def train(
     train_meta_fn = (
         dataloader_dir / f"{store_cluster}_{item_cluster}_train_meta.parquet"
     )
-    val_meta_fn = dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+    val_meta_fn = (
+        dataloader_dir / f"{store_cluster}_{item_cluster}_val_meta.parquet"
+    )
     meta_df = pd.read_parquet(train_meta_fn)
     val_meta_df = pd.read_parquet(val_meta_fn)
 
@@ -710,7 +797,9 @@ def train(
     features = build_feature_and_label_cols(window_size)
 
     output_dim = len(features[LABELS])
-    logger.info(f"Input dimension: {input_dim}, Output dimension: {output_dim}")
+    logger.info(
+        f"Input dimension: {input_dim}, Output dimension: {output_dim}"
+    )
 
     # Load scalers
     stem = train_meta_fn.stem
@@ -936,7 +1025,9 @@ def load_latest_models_from_checkpoints(
 
     model_dict = {}
     for (sc, ic), versioned_ckpts in candidates.items():
-        version, best_ckpt, model_name = max(versioned_ckpts, key=lambda x: x[0])
+        version, best_ckpt, model_name = max(
+            versioned_ckpts, key=lambda x: x[0]
+        )
         try:
             model = model_factory_from_str(
                 model_name,
@@ -1008,13 +1099,15 @@ def batch_predict_all_store_items(
             model.to(device)
 
             # Filter rows for this store-item pair
-            rows = input_df.query(f"{store_col} == @store and {item_col} == @item")
+            rows = input_df.query(
+                f"{store_col} == @store and {item_col} == @item"
+            )
             if rows.empty:
                 continue
 
-            X = torch.tensor(rows[input_feature_cols].values, dtype=torch.float32).to(
-                device
-            )
+            X = torch.tensor(
+                rows[input_feature_cols].values, dtype=torch.float32
+            ).to(device)
             with torch.no_grad():
                 preds_log = model(X)
                 preds_log = torch.clamp(preds_log, min=1e-6)
@@ -1060,14 +1153,16 @@ def predict_next_days_for_sid(
         y_scalers[sid].inverse_transform(y_pred_scaled), columns=feature_cols
     )
 
-    sales_day_cols = [col for col in y_pred_df.columns if col.startswith("sales_day_")]
+    sales_day_cols = [
+        col for col in y_pred_df.columns if col.startswith("sales_day_")
+    ]
     sales_pred_df = y_pred_df[sales_day_cols]
     sales_pred_df = np.expm1(sales_pred_df)
 
     meta = input_data.iloc[0][["store_item", "store", "item"]].to_dict()
-    start_date = pd.to_datetime(input_data.iloc[0]["start_date"]) + pd.Timedelta(
-        days=15
-    )
+    start_date = pd.to_datetime(
+        input_data.iloc[0]["start_date"]
+    ) + pd.Timedelta(days=15)
 
     rows = []
     for i, col in enumerate(sales_day_cols[:days_to_predict]):
@@ -1082,7 +1177,10 @@ def predict_next_days_for_sid(
 
 
 def predict_next_days_for_sids(
-    last_date_df: pd.DataFrame, models: dict, y_scalers: dict, days_to_predict: int = 16
+    last_date_df: pd.DataFrame,
+    models: dict,
+    y_scalers: dict,
+    days_to_predict: int = 16,
 ) -> pd.DataFrame:
     """
     Predicts the next `days_to_predict` days for all store_items present in the models dict.
