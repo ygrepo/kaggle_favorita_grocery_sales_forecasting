@@ -27,6 +27,11 @@ import pickle
 from pathlib import Path
 from collections import defaultdict
 import re
+from tqdm.auto import tqdm
+import time
+from contextlib import contextmanager
+from xgboost.callback import TrainingCallback
+
 
 from lightning.pytorch.loggers import CSVLogger
 from src.model import LightningWrapper, ModelType
@@ -127,9 +132,169 @@ class InverseTransformer(Protocol):
     def inverse_transform(self, X: ArrayLike, /) -> np.ndarray: ...
 
 
-def _inverse(arr: ArrayLike, scaler: InverseTransformer) -> np.ndarray:
+def inverse_transform(
+    arr: ArrayLike, scaler: InverseTransformer
+) -> np.ndarray:
     arr = np.asarray(arr).reshape(-1, 1)
     return scaler.inverse_transform(arr).ravel()
+
+
+def fit_rf_with_tqdm(
+    model,
+    X,
+    y,
+    *,
+    step: int = 50,
+    desc: str = "RandomForest",
+    patience: int = 2,
+    min_delta: float = 1e-4,
+    time_budget_s: float | None = None,
+    leave: bool = False,
+    sample_weight=None,
+):
+    """
+    Incrementally grows a RandomForest with a tqdm bar and OOB early stopping.
+
+    - Requires bootstrap=True and oob_score=True.
+    - Only increases n_estimators; uses warm_start to add trees in chunks.
+    - Early-stops when OOB R^2 stops improving by > min_delta for 'patience' chunks.
+    """
+    # Preconditions
+    if not getattr(model, "bootstrap", True):
+        model.set_params(bootstrap=True)
+    if not getattr(model, "oob_score", False):
+        model.set_params(oob_score=True)
+    model.set_params(warm_start=True)
+
+    n_cap = int(getattr(model, "n_estimators", 0))
+    if n_cap <= 0:
+        n_cap = 600  # sensible default cap if 0
+        model.set_params(n_estimators=0)
+
+    pbar = tqdm(total=n_cap, desc=desc, leave=leave)
+    start_time = time.time()
+
+    n_now = int(getattr(model, "n_estimators", 0))
+    best_oob = -np.inf
+    best_n = n_now
+    bad = 0
+
+    while n_now < n_cap:
+        n_next = min(n_now + step, n_cap)
+        model.set_params(n_estimators=n_next)
+
+        # fit adds only the new trees
+        if sample_weight is not None:
+            model.fit(X, y, sample_weight=sample_weight)
+        else:
+            model.fit(X, y)
+
+        # OOB after this chunk
+        curr_oob = getattr(model, "oob_score_", None)
+
+        pbar.update(n_next - n_now)
+        if curr_oob is not None and np.isfinite(curr_oob):
+            pbar.set_postfix(
+                oob=f"{curr_oob:.4f}", best=f"{best_oob:.4f}", trees=n_next
+            )
+
+        n_now = n_next
+
+        # Early-stopping logic
+        if curr_oob is not None and np.isfinite(curr_oob):
+            if curr_oob > best_oob + min_delta:
+                best_oob = curr_oob
+                best_n = n_now
+                bad = 0
+            else:
+                bad += 1
+
+        if (
+            time_budget_s is not None
+            and (time.time() - start_time) >= time_budget_s
+        ):
+            break
+        if bad >= patience:
+            break
+
+    pbar.close()
+
+    # Trim to best_n trees (no refit)
+    if hasattr(model, "estimators_") and best_n < n_now:
+        model.estimators_ = model.estimators_[:best_n]
+        model.n_estimators = best_n
+
+    model.set_params(warm_start=False)
+    return model
+
+
+def fit_gbr_with_tqdm(model, X, y, step=25, desc="GBM"):
+    # GradientBoostingRegressor supports warm_start too
+    assert hasattr(model, "n_estimators")
+    n_final = model.n_estimators
+    model.set_params(warm_start=True)
+
+    pbar = tqdm(total=n_final, desc=desc)
+    n_now = 0
+    while n_now < n_final:
+        n_next = min(n_now + step, n_final)
+        model.set_params(n_estimators=n_next)
+        model.fit(X, y)
+        pbar.update(n_next - n_now)
+        n_now = n_next
+    pbar.close()
+    model.set_params(warm_start=False)
+    return model
+
+
+def fit_hgb_with_tqdm(model, X, y, step=20, desc="HistGBM"):
+    # HistGradientBoostingRegressor grows by max_iter
+    assert hasattr(model, "max_iter")
+    iters = model.max_iter
+    model.set_params(warm_start=True)
+
+    pbar = tqdm(total=iters, desc=desc)
+    n_now = 0
+    while n_now < iters:
+        n_next = min(n_now + step, iters)
+        model.set_params(max_iter=n_next)
+        model.fit(X, y)
+        pbar.update(n_next - n_now)
+        n_now = n_next
+    pbar.close()
+    model.set_params(warm_start=False)
+    return model
+
+
+@contextmanager
+def spinner(desc="fitting"):
+    p = tqdm(total=1, desc=desc)
+    try:
+        yield
+    finally:
+        p.update(1)
+        p.close()
+
+
+class XGBoostTQDMCallback(TrainingCallback):
+    def __init__(self, total, desc="XGBoost", leave=False):
+        self.total = total
+        self.desc = desc
+        self.leave = leave
+        self.pbar = None
+
+    def before_training(self, model):
+        self.pbar = tqdm(total=self.total, desc=self.desc, leave=self.leave)
+        return model
+
+    def after_iteration(self, model, epoch, evals_log):
+        self.pbar.update(1)  # one boosting round done
+        return False  # don't stop
+
+    def after_training(self, model):
+        if self.pbar is not None:
+            self.pbar.close()
+        return model
 
 
 # ─────────────────────────────────────────────────────────────────────

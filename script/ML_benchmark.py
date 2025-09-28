@@ -32,14 +32,23 @@ from scipy.stats import pearsonr
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
-from src.utils import setup_logging, get_logger
+from src.utils import setup_logging, get_logger, get_n_jobs
 from src.data_utils import (
     load_raw_data,
     sort_df,
     build_feature_and_label_cols,
     X_FEATURES,
 )
-from src.model_utils import create_X_y_dataset, InverseTransformer, _inverse
+from src.model_utils import (
+    create_X_y_dataset,
+    InverseTransformer,
+    inverse_transform,
+    fit_rf_with_tqdm,
+    fit_gbr_with_tqdm,
+    fit_hgb_with_tqdm,
+    spinner,
+    XGBoostTQDMCallback,
+)
 
 logger = get_logger(__name__)
 
@@ -171,9 +180,7 @@ def evaluate_model(
     y_val: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-    y_scaler: Optional[
-        "InverseTransformer"
-    ] = None,  # Protocol you defined earlier
+    y_scaler: Optional["InverseTransformer"] = None,
     units: str = "scaled",  # "scaled" or "original"
     calibrate: Optional[str] = None,  # None | "isotonic" | "linear"
 ) -> pd.DataFrame:
@@ -191,12 +198,12 @@ def evaluate_model(
 
     # ---- Work in chosen units ----
     if y_scaler is not None and units == "original":
-        y_train_eval = _inverse(y_train, y_scaler)
-        y_val_eval = _inverse(y_val, y_scaler)
-        y_test_eval = _inverse(y_test, y_scaler)
-        train_pred = _inverse(train_pred, y_scaler)
-        val_pred = _inverse(val_pred, y_scaler)
-        test_pred = _inverse(test_pred, y_scaler)
+        y_train_eval = inverse_transform(y_train, y_scaler)
+        y_val_eval = inverse_transform(y_val, y_scaler)
+        y_test_eval = inverse_transform(y_test, y_scaler)
+        train_pred = inverse_transform(train_pred, y_scaler)
+        val_pred = inverse_transform(val_pred, y_scaler)
+        test_pred = inverse_transform(test_pred, y_scaler)
     else:
         y_train_eval, y_val_eval, y_test_eval = y_train, y_val, y_test
 
@@ -296,6 +303,7 @@ def parse_args():
     p.add_argument("--log_level", type=str, default="INFO")
     p.add_argument("--data_fn", type=str, default="")
     p.add_argument("--model_dir", type=str, default="")
+    p.add_argument("--n_jobs", type=int, default=1)
     return p.parse_args()
 
 
@@ -307,6 +315,9 @@ def main():
     try:
         # Log configuration
         logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"N_jobs: {args.n_jobs}")
+        n_jobs = get_n_jobs(args.n_jobs)
+        logger.info(f"Effective n_jobs: {n_jobs}")
         logger.info(f"Logging to: {args.log_fn}")
         logger.info(f"Log level: {args.log_level}")
         logger.info(f"Log dir: {args.log_dir}")
@@ -348,18 +359,29 @@ def main():
         model_name = "Random Forest"
         logger.info(f"Model:{model_name}")
         y_train_raveled = y_train.ravel()
-        rf_model = RandomForestRegressor(
-            n_estimators=600,
+
+        model = RandomForestRegressor(
+            n_estimators=600,  # cap
             max_depth=12,  # shallower
             min_samples_leaf=50,  # bigger leaves
             min_samples_split=100,
             max_features=0.6,  # feature subsampling
-            bootstrap=True,
-            n_jobs=-1,
+            bootstrap=True,  # required for OOB
+            oob_score=True,  # monitored by early-stop
+            n_jobs=n_jobs,
             random_state=SEED,
-        ).fit(X_train, y_train_raveled)
-        # Optional pruning:
-        # rf_model = RandomForestRegressor(..., ccp_alpha=1e-4)
+        )
+
+        model = fit_rf_with_tqdm(
+            model,
+            X_train,
+            y_train_raveled,
+            step=100,
+            desc="RF fit (OOB ES)",
+            patience=3,
+            min_delta=1e-4,
+            time_budget_s=None,
+        )
 
         metrics_df = pd.DataFrame(
             columns=[
@@ -380,7 +402,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            rf_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -394,7 +416,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            rf_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -409,16 +431,17 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(rf_model, model_name, model_filename)
+        save_model(model, model_name, model_filename)
 
         model_name = "SVR"
         logger.info(f"Model:{model_name}")
-        svr_model = SVR(kernel="rbf")
-        svr_model.fit(X_train, y_train_raveled)
+        model = SVR(kernel="rbf")
+        with spinner("SVR fit"):
+            model.fit(X_train, y_train_raveled)
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            svr_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -432,7 +455,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            svr_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -446,28 +469,32 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(svr_model, model_name, model_filename)
+        save_model(model, model_name, model_filename)
         model_name = "HistGBM"
         logger.info(f"Model:{model_name}")
 
-        hgb_model = HistGradientBoostingRegressor(
+        model = HistGradientBoostingRegressor(
             loss="squared_error",  # or "absolute_error" for L1-like robustness
             learning_rate=0.05,
             max_iter=600,
             max_leaf_nodes=31,  # tree size control (analogous to depth)
             min_samples_leaf=50,  # combats overfit; tune
             l2_regularization=1.0,
-            max_bins=255,  # more precise splits
-            early_stopping=True,
-            validation_fraction=0.1,
-            n_iter_no_change=30,
+            # max_bins=255,  # more precise splits
+            early_stopping=False,
+            # validation_fraction=0.1,
+            # n_iter_no_change=30,
             random_state=SEED,
-        ).fit(X_train, y_train_raveled)
+        )
+
+        model = fit_hgb_with_tqdm(
+            model, X_train, y_train_raveled, step=25, desc="HistGBM fit"
+        )
 
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            hgb_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -481,7 +508,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            hgb_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -496,11 +523,11 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(hgb_model, model_name, model_filename)
+        save_model(model, model_name, model_filename)
 
         model_name = "HuberLossGBM"
         logger.info(f"Model:{model_name}")
-        gbm_huber = GradientBoostingRegressor(
+        model = GradientBoostingRegressor(
             loss="huber",  # robust to outliers
             alpha=0.9,  # Huber quantile
             n_estimators=600,
@@ -508,11 +535,19 @@ def main():
             max_depth=3,
             subsample=0.8,
             random_state=SEED,
-        ).fit(X_train, y_train_raveled)
+        )
+        model = fit_gbr_with_tqdm(
+            model,
+            X_train,
+            y_train_raveled,
+            step=25,
+            desc="HuberLossGBM fit",
+        )
+
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            gbm_huber,
+            model,
             X_train,
             y_train,
             X_val,
@@ -526,7 +561,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            gbm_huber,
+            model,
             X_train,
             y_train,
             X_val,
@@ -540,16 +575,17 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(gbm_huber, model_name, model_filename)
+        save_model(model, model_name, model_filename)
 
         model_name = "Linear Regression"
         logger.info(f"Model:{model_name}")
-        lin_reg_model = LinearRegression()
-        lin_reg_model.fit(X_train, y_train_raveled)
+        model = LinearRegression()
+        with spinner("LR fit"):
+            model.fit(X_train, y_train_raveled)
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            lin_reg_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -563,7 +599,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            lin_reg_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -577,22 +613,23 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(lin_reg_model, model_name, model_filename)
+        save_model(model, model_name, model_filename)
 
         model_name = "MLP"
         logger.info(f"Model:{model_name}")
         # MLP
-        mlp_model = MLPRegressor(
+        model = MLPRegressor(
             hidden_layer_sizes=(512, 256),
             activation="relu",
             max_iter=200,
             random_state=SEED,
         )
-        mlp_model.fit(X_train, y_train_raveled)
+        with spinner("MLP fit"):
+            model.fit(X_train, y_train_raveled)
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            mlp_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -606,7 +643,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            mlp_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -620,11 +657,11 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(mlp_model, model_name, model_filename)
+        save_model(model, model_name, model_filename)
 
         model_name = "XGBoost"
         logger.info(f"Model:{model_name}")
-        xgb_model = XGBRegressor(
+        model = XGBRegressor(
             n_estimators=1000,
             learning_rate=0.03,
             max_depth=6,  # shallower trees
@@ -636,17 +673,19 @@ def main():
             objective="reg:squarederror",
             random_state=SEED,
         )
-        xgb_model.fit(
+        nrounds = model.get_params().get("n_estimators", 0)
+        model.fit(
             X_train,
             y_train_raveled,
             eval_set=[(X_val, y_val.ravel())],
+            callbacks=[XGBoostTQDMCallback(total=nrounds, desc="XGBoost fit")],
             verbose=False,
             early_stopping_rounds=100,
         )
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            xgb_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -660,7 +699,7 @@ def main():
         metrics_df = evaluate_model(
             metrics_df,
             model_name,
-            xgb_model,
+            model,
             X_train,
             y_train,
             X_val,
@@ -674,7 +713,7 @@ def main():
         model_filename = (
             model_dir / f"{model_name.replace(' ', '_')}_model_regression.pkl"
         )
-        save_model(xgb_model, model_name, model_filename)
+        save_model(model, model_name, model_filename)
 
         logger.info("Done!")
 

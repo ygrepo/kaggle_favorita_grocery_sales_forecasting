@@ -8,6 +8,7 @@ import random
 import logging
 import numpy as np
 import pandas as pd
+import multiprocessing
 
 
 def polar_engine():
@@ -20,7 +21,9 @@ BASE_LOGGER = "base_logger"
 _BASE = logging.getLogger(BASE_LOGGER)  # the only logger we configure here
 
 
-def setup_logging(log_path: str | Path | None, level: str = "INFO") -> logging.Logger:
+def setup_logging(
+    log_path: str | Path | None, level: str = "INFO"
+) -> logging.Logger:
     """Configure the base logger once (file + console)."""
     if getattr(_BASE, "_configured", False):
         return _BASE
@@ -51,7 +54,9 @@ def setup_logging(log_path: str | Path | None, level: str = "INFO") -> logging.L
 
 def get_logger(name: str | None = None) -> logging.Logger:
     """Get a child logger that inherits the base handlers."""
-    return logging.getLogger(BASE_LOGGER if not name else f"{BASE_LOGGER}.{name}")
+    return logging.getLogger(
+        BASE_LOGGER if not name else f"{BASE_LOGGER}.{name}"
+    )
 
 
 logger = get_logger(__name__)
@@ -65,7 +70,9 @@ def str2bool(v):
     elif v.lower() in ("no", "false", "f", "0"):
         return False
     else:
-        raise argparse.ArgumentTypeError("Expected a boolean value (true/false)")
+        raise argparse.ArgumentTypeError(
+            "Expected a boolean value (true/false)"
+        )
 
 
 def set_seed(seed: int = 42):
@@ -103,3 +110,12 @@ def read_csv_or_parquet(fn: Path) -> pd.DataFrame:
         return pd.read_parquet(fn)
     else:
         return pd.read_csv(fn)
+
+
+def get_n_jobs(n_jobs: int) -> int:
+    # Determine number of processes
+    if n_jobs == -1:
+        n_jobs = multiprocessing.cpu_count()
+    elif n_jobs <= 1:
+        n_jobs = 1
+    return n_jobs
