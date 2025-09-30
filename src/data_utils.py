@@ -527,7 +527,7 @@ def make_weekly_growth(
     gr = wk["growth_rate_clipped"]
     wk["direction"] = np.select(
         [gr >= tau, gr <= -tau], [1, -1], default=0
-    ).astype("Int8")
+    ).astype("int8")
     wk["growth_up"] = np.where(wk["direction"] == 1, gr, np.nan)
     wk["growth_down"] = np.where(
         wk["direction"] == -1, -gr, np.nan
