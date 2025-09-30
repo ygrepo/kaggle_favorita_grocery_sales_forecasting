@@ -105,7 +105,7 @@ def main():
         # weekly aggregation
         wk = (
             df.set_index("date")
-            .groupby("store_item", group_keys=False)["unit_sales"]
+            .groupby("store_item")["unit_sales"]
             .resample("W-SUN")  # explicit: week ends Sunday
             .sum()
             .rename("sales_wk")
