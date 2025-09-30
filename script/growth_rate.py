@@ -10,6 +10,7 @@ This script handles the complete clustering pipeline including:
 import sys
 import argparse
 from pathlib import Path
+import numpy as np
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -98,8 +99,6 @@ def main():
         data_fn = Path(args.data_fn).resolve()
 
         df = load_raw_data(data_fn)
-        if "id" in df.columns:
-            df.drop(columns=["id"], inplace=True)
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
@@ -107,7 +106,7 @@ def main():
         # ---- weekly aggregation ----
         wk = (
             df.set_index("date")
-            .groupby("store_item", group_keys=False)["unit_sales"]
+            .groupby("store_item")["unit_sales"]
             .resample("W")  # week ends on Sunday by default
             .sum()
             .rename("sales_wk")
