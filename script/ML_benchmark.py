@@ -30,6 +30,7 @@ import pickle
 
 from scipy.stats import pearsonr
 
+# Local imports
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -82,10 +83,18 @@ def calculate_metrics(
     """
     Calculate regression metrics including RMSE, MAE, MSE, R2, Pearson correlation,
     Median Absolute Error, and Explained Variance.
+    Args:
+        y_true (array-like): ground truth values
+        y_pred (array-like): predicted values
+    Returns:
+        tuple: (RMSE, MAE, MSE, R2, Pearson, Median AE, SMAPE, Explained Variance)
     """
     # Ensure both arrays have the same shape (flatten to 1D)
     y_true = np.asarray(y_true).ravel()
     y_pred = np.asarray(y_pred).ravel()
+    assert (
+        y_true.shape == y_pred.shape
+    ), "y_true and y_pred must have the same shape"
 
     mse = mean_squared_error(y_true, y_pred)
     rmse = np.sqrt(mse)
@@ -128,6 +137,21 @@ def _append_rows(
     pva: np.ndarray,
     pte: np.ndarray,
 ):
+    """
+    Append metrics for training, validation, and test sets to the rows list.
+
+    Args:
+        tag (str): _description_
+        model_name (str): _description_
+        units (str): _description_
+        rows (list[dict]): _description_
+        ytr (np.ndarray): _description_
+        yva (np.ndarray): _description_
+        yte (np.ndarray): _description_
+        ptr (np.ndarray): _description_
+        pva (np.ndarray): _description_
+        pte (np.ndarray): _description_
+    """
     for dataset, yt, yp in (
         ("Training", ytr, ptr),
         ("Validation", yva, pva),
@@ -163,6 +187,7 @@ def _append_rows(
 
 # Apply mapping to val/test preds
 def _apply(m, x: np.ndarray):
+    """Helper to apply a mapping to an array."""
     x = np.asarray(x).ravel()
     return (
         m.transform(x)
@@ -171,8 +196,9 @@ def _apply(m, x: np.ndarray):
     )
 
 
-# Small wrapper so your evaluate_model() can still call .predict(X)
 class BoosterWrapper:
+    """Small wrapper so evaluate_model() can still call .predict(X)"""
+
     def __init__(self, booster):
         self.booster = booster
 
@@ -199,6 +225,22 @@ def evaluate_model(
     - If units == "original" and y_scaler is provided, predictions & targets are inverse-transformed.
     - If calibrate is set, a post-hoc mapping is fit on (val_pred, y_val) and applied to val/test preds.
       Calibration is reported in separate rows with Calibrated=True.
+      Calibration is not applied to training preds.
+    Args:
+        metrics_df (pd.DataFrame): _description_
+        model_name (str): _description_
+        model (_type_): _description_
+        X_train (np.ndarray): _description_
+        y_train (np.ndarray): _description_
+        X_val (np.ndarray): _description_
+        y_val (np.ndarray): _description_
+        X_test (np.ndarray): _description_
+        y_test (np.ndarray): _description_
+        y_scaler (Optional[InverseTransformer], optional): _description_. Defaults to None.
+        units (str, optional): _description_. Defaults to "scaled".
+        calibrate (Optional[str], optional): _description_. Defaults to None.
+    Returns:
+        pd.DataFrame: _description_
     """
 
     # ---- Raw predictions (model is already fitted outside) ----
@@ -540,7 +582,7 @@ def main():
         logger.info(f"Model:{model_name}")
         model = GradientBoostingRegressor(
             loss="huber",  # robust to outliers
-            alpha=0.9,  # Huber quantile
+            alpha=0.9,  # Huber quantile: top 10% treated as outliers
             n_estimators=600,
             learning_rate=0.03,
             max_depth=3,
