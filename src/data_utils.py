@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Iterator
+from typing import Optional
 from tqdm import tqdm
 from pathlib import Path
 from statsmodels.tsa.arima.model import ARIMA
+from sklearn.decomposition import PCA
 import logging
 from src.utils import save_csv_or_parquet, get_logger
+
 
 logger = get_logger(__name__)
 
@@ -82,7 +84,9 @@ def build_feature_and_label_cols() -> dict[str, list[str]]:
 
 def get_X_feature_idx(window_size: int = 1) -> dict[str, list[int]]:
     features = build_feature_and_label_cols(window_size)
-    col_x_index_map = {col: idx for idx, col in enumerate(features[X_FEATURES])}
+    col_x_index_map = {
+        col: idx for idx, col in enumerate(features[X_FEATURES])
+    }
     x_to_log_idx = [col_x_index_map[c] for c in features[X_TO_LOG_FEATURES]]
     x_log_idx = [col_x_index_map[c] for c in features[X_LOG_FEATURES]]
     x_cyc_idx = [col_x_index_map[c] for c in features[X_CYCLICAL_FEATURES]]
@@ -108,6 +112,7 @@ def get_y_idx(window_size: int = 1) -> dict[str, list[int]]:
     )
     return idx_features
 
+
 def sort_df(df: pd.DataFrame, *, flag_duplicates: bool = True) -> pd.DataFrame:
     # --- Assert uniqueness of rows ---
     if flag_duplicates:
@@ -116,7 +121,9 @@ def sort_df(df: pd.DataFrame, *, flag_duplicates: bool = True) -> pd.DataFrame:
             raise ValueError(
                 f"Duplicate rows detected for date/store_item:\n{dups[['date', 'store_item']]}"
             )
-    df = df.sort_values(["store_item", "date"], inplace=False).reset_index(drop=True)
+    df = df.sort_values(["store_item", "date"], inplace=False).reset_index(
+        drop=True
+    )
     features = build_feature_and_label_cols()
     df = df[features[ALL_FEATURES]]
     return df
@@ -149,7 +156,9 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
                 data_fn,
                 low_memory=False,
             )
-        df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+        df["store_item"] = (
+            df["store"].astype(str) + "_" + df["item"].astype(str)
+        )
         df["date"] = pd.to_datetime(df["date"])
         df.sort_values(["date", "store_item"], inplace=True, kind="mergesort")
         logger.info(f"Loaded data with shape {df.shape}")
@@ -304,10 +313,18 @@ def create_cyclical_features(
     df["monthofyear"] = months
 
     # Sin/Cos transforms
-    df["dayofweek_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7).astype("float32")
-    df["dayofweek_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7).astype("float32")
-    df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5).astype("float32")
-    df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5).astype("float32")
+    df["dayofweek_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7).astype(
+        "float32"
+    )
+    df["dayofweek_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7).astype(
+        "float32"
+    )
+    df["weekofmonth_sin"] = np.sin(2 * np.pi * df["weekofmonth"] / 5).astype(
+        "float32"
+    )
+    df["weekofmonth_cos"] = np.cos(2 * np.pi * df["weekofmonth"] / 5).astype(
+        "float32"
+    )
     df["monthofyear_sin"] = np.sin(2 * np.pi * months / 12).astype("float32")
     df["monthofyear_cos"] = np.cos(2 * np.pi * months / 12).astype("float32")
 
@@ -316,8 +333,12 @@ def create_cyclical_features(
     # last pay: 15th if day>=15 else previous month-end
     last_pay = pd.to_datetime(
         {
-            "year": np.where(days >= 15, years, np.where(months > 1, years, years - 1)),
-            "month": np.where(days >= 15, months, np.where(months > 1, months - 1, 12)),
+            "year": np.where(
+                days >= 15, years, np.where(months > 1, years, years - 1)
+            ),
+            "month": np.where(
+                days >= 15, months, np.where(months > 1, months - 1, 12)
+            ),
             "day": np.where(days >= 15, 15, 1),
         }
     ) + pd.to_timedelta(
@@ -337,10 +358,15 @@ def create_cyclical_features(
         }
     )
 
-    cycle_len = (next_pay - last_pay).dt.days.replace(0, np.nan).astype("float32")
+    cycle_len = (
+        (next_pay - last_pay).dt.days.replace(0, np.nan).astype("float32")
+    )
     elapsed = (dates - last_pay).dt.days.astype("float32")
     paycycle_ratio = (
-        (elapsed / cycle_len).clip(lower=0, upper=1).fillna(0).astype("float32")
+        (elapsed / cycle_len)
+        .clip(lower=0, upper=1)
+        .fillna(0)
+        .astype("float32")
     )
     df["paycycle_sin"] = np.sin(2 * np.pi * paycycle_ratio).astype("float32")
     df["paycycle_cos"] = np.cos(2 * np.pi * paycycle_ratio).astype("float32")
@@ -371,31 +397,39 @@ def create_cyclical_features(
     df = df.sort_values(["store_item", "date"], kind="mergesort")
 
     # ---- Rolling & EWM per store_item (no cross-series bleed) ----
-    df["unit_sales_rolling_median"] = df.groupby("store_item")["unit_sales"].transform(
-        lambda s: s.rolling(window_size, min_periods=1).median()
-    )
+    df["unit_sales_rolling_median"] = df.groupby("store_item")[
+        "unit_sales"
+    ].transform(lambda s: s.rolling(window_size, min_periods=1).median())
 
-    df["unit_sales_ewm_decay"] = df.groupby("store_item")["unit_sales"].transform(
-        lambda s: s.ewm(span=window_size, adjust=False).mean()
-    )
+    df["unit_sales_ewm_decay"] = df.groupby("store_item")[
+        "unit_sales"
+    ].transform(lambda s: s.ewm(span=window_size, adjust=False).mean())
 
     df["growth_rate_rolling_median"] = df.groupby("store_item")[
         "growth_rate"
     ].transform(lambda s: s.rolling(window_size, min_periods=1).median())
 
-    df["growth_rate_ewm_decay"] = df.groupby("store_item")["growth_rate"].transform(
-        lambda s: s.ewm(span=window_size, adjust=False).mean()
-    )
+    df["growth_rate_ewm_decay"] = df.groupby("store_item")[
+        "growth_rate"
+    ].transform(lambda s: s.ewm(span=window_size, adjust=False).mean())
 
     # ---- ARIMA per store_item (walk-forward) ----
     logger.info("Adding ARIMA(0,0,1) per store_item")
     df["unit_sales_arima"] = df.groupby("store_item", group_keys=False)[
         "unit_sales"
-    ].apply(lambda s: arima001_forecast(s, min_history=7, enforce_stationarity=True))
+    ].apply(
+        lambda s: arima001_forecast(
+            s, min_history=7, enforce_stationarity=True
+        )
+    )
 
     df["growth_rate_arima"] = df.groupby("store_item", group_keys=False)[
         "growth_rate"
-    ].apply(lambda s: arima001_forecast(s, min_history=7, enforce_stationarity=True))
+    ].apply(
+        lambda s: arima001_forecast(
+            s, min_history=7, enforce_stationarity=True
+        )
+    )
 
     # ---- Block-level ARIMA (aggregate by date -> ARIMA -> merge back) ----
     logger.info("Adding ARIMA(0,0,1) per block_id")
@@ -416,12 +450,16 @@ def create_cyclical_features(
     block_daily["bid_unit_sales_arima"] = block_daily.groupby(
         "block_id", group_keys=False
     )["unit_sales_block"].apply(
-        lambda s: arima001_forecast(s, min_history=7, enforce_stationarity=True)
+        lambda s: arima001_forecast(
+            s, min_history=7, enforce_stationarity=True
+        )
     )
     block_daily["bid_growth_rate_arima"] = block_daily.groupby(
         "block_id", group_keys=False
     )["growth_rate_block"].apply(
-        lambda s: arima001_forecast(s, min_history=7, enforce_stationarity=True)
+        lambda s: arima001_forecast(
+            s, min_history=7, enforce_stationarity=True
+        )
     )
 
     df = df.merge(
@@ -441,6 +479,255 @@ def create_cyclical_features(
 
     save_csv_or_parquet(df, output_path)
     return df
+
+
+# -------------------------------
+# 1) Ensure we have a weekly frame with growth columns
+#    (uses your store_item key; swap to ["store","item"] if needed)
+# -------------------------------
+def make_weekly_growth(
+    df: pd.DataFrame,
+    keys=("store_item",),
+    week_rule="W-SUN",
+    clip=(0.01, 0.99),
+    tau=0.01,
+) -> pd.DataFrame:
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+
+    wk = (
+        df.set_index("date")
+        .groupby(list(keys))["unit_sales"]
+        .resample(week_rule)
+        .sum()
+        .rename("sales_wk")
+        .reset_index()
+        .sort_values(list(keys) + ["date"])
+    )
+
+    # pct_change per series
+    wk["growth_rate"] = (
+        wk.groupby(list(keys))["sales_wk"]
+        .pct_change(fill_method=None)
+        .replace([np.inf, -np.inf], np.nan)
+    )
+
+    # winsorize extremes
+    lo, hi = wk["growth_rate"].quantile(list(clip))
+    wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
+
+    # two-part targets
+    prev = wk.groupby(list(keys))["sales_wk"].shift(1)
+    wk["growth_binary"] = (wk["sales_wk"] > prev).astype("Int8")
+    wk["growth_continuous"] = wk["growth_rate_clipped"].where(
+        wk["growth_binary"] == 1
+    )
+
+    # direction with dead-zone τ for richer targets
+    gr = wk["growth_rate_clipped"]
+    wk["direction"] = np.select(
+        [gr >= tau, gr <= -tau], [1, -1], default=0
+    ).astype("Int8")
+    wk["growth_up"] = np.where(wk["direction"] == 1, gr, np.nan)
+    wk["growth_down"] = np.where(
+        wk["direction"] == -1, -gr, np.nan
+    )  # positive mag
+
+    return wk
+
+
+# -------------------------------
+# 2) Helper feature functions
+# -------------------------------
+def _safe_autocorr(x: pd.Series, lag: int) -> float:
+    x = pd.to_numeric(x, errors="coerce").astype(float)
+    if x.isna().sum() > len(x) - 3 or len(x) <= lag + 2:
+        return np.nan
+    a = x.values
+    b = np.roll(a, lag)
+    b[:lag] = np.nan
+    ok = ~np.isnan(a) & ~np.isnan(b)
+    if ok.sum() < 3:
+        return np.nan
+    a0, b0 = a[ok] - a[ok].mean(), b[ok] - b[ok].mean()
+    denom = a0.std(ddof=1) * b0.std(ddof=1)
+    return (a0 * b0).mean() / denom if denom > 0 else np.nan
+
+
+def _trend_slope(y: pd.Series) -> float:
+    y = pd.to_numeric(y, errors="coerce").astype(float)
+    n = len(y)
+    if n < 5 or y.notna().sum() < 5:
+        return np.nan
+    x = np.arange(n, dtype=float)
+    ok = ~y.isna()
+    x, y = x[ok], y[ok]
+    if len(y) < 5:
+        return np.nan
+    x = (x - x.mean()) / (x.std(ddof=1) + 1e-12)
+    y = (y - y.mean()) / (y.std(ddof=1) + 1e-12)
+    return float(
+        (x * y).mean()
+    )  # correlation with time (≈ slope sign/strength)
+
+
+def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
+    # correlate with fundamental seasonal sine/cosine over week index
+    k = np.arange(len(values), dtype=float)
+    s = np.sin(2 * np.pi * k / period)
+    c = np.cos(2 * np.pi * k / period)
+    v = pd.to_numeric(values, errors="coerce").astype(float).values
+    ok = ~np.isnan(v)
+    if ok.sum() < 8:
+        return np.nan
+    v = (v[ok] - np.nanmean(v[ok])) / (np.nanstd(v[ok]) + 1e-12)
+    s = (s[ok] - np.nanmean(s[ok])) / (np.nanstd(s[ok]) + 1e-12)
+    c = (c[ok] - np.nanmean(c[ok])) / (np.nanstd(c[ok]) + 1e-12)
+    # magnitude of projection onto seasonal basis
+    cs = np.nanmean(v * s)
+    cc = np.nanmean(v * c)
+    return float(np.sqrt(cs**2 + cc**2))
+
+
+def build_growth_features_for_clustering(
+    wk: pd.DataFrame,
+    keys=("store_item",),
+    tau=0.01,
+    include_pca_smoothed=True,
+    pca_components=4,
+    smooth_window=4,
+):
+    g = wk.copy()
+    klist = list(keys)
+
+    # base series we’ll summarize
+    series = {
+        "gc": g["growth_continuous"],  # positive growth only
+        "gr": g["growth_rate_clipped"],  # signed, clipped pct_change
+        "up": g["growth_up"],  # positive magnitudes
+        "dn": g["growth_down"],  # negative magnitudes (positive scale)
+    }
+
+    # Summary stats per key
+    feats = (
+        g.assign(
+            gc=series["gc"], gr=series["gr"], up=series["up"], dn=series["dn"]
+        )
+        .groupby(klist)
+        .agg(
+            gc_mean=("gc", "mean"),
+            gc_median=("gc", "median"),
+            gc_std=("gc", "std"),
+            gc_iqr=(
+                "gc",
+                lambda s: np.nanpercentile(s, 75) - np.nanpercentile(s, 25),
+            ),
+            gr_mean=("gr", "mean"),
+            gr_std=("gr", "std"),
+            gr_iqr=(
+                "gr",
+                lambda s: np.nanpercentile(s, 75) - np.nanpercentile(s, 25),
+            ),
+            frac_nonzero=(
+                "gr",
+                lambda s: np.mean(~pd.isna(s) & (np.abs(s) > 0)),
+            ),
+            frac_up=("gr", lambda s: np.mean(s > tau)),
+            frac_down=("gr", lambda s: np.mean(s < -tau)),
+            pos_to_neg_ratio=(
+                "gr",
+                lambda s: (
+                    np.nan
+                    if (np.sum(s < -tau) == 0)
+                    else np.sum(s > tau) / max(1, np.sum(s < -tau))
+                ),
+            ),
+            big_move_rate=(
+                "gr",
+                lambda s: np.mean(np.abs(s) > 0.1),
+            ),  # >10% WoW moves
+        )
+        .reset_index()
+    )
+
+    # Autocorrelations & trend/seasonality
+    ac_rows = []
+    for key_vals, sub in g.groupby(klist, sort=False):
+        sub = sub.sort_values("date", kind="mergesort")
+        gr = sub["growth_rate_clipped"]
+
+        ac1 = _safe_autocorr(gr, 1)
+        ac4 = _safe_autocorr(gr, 4)
+        ac12 = _safe_autocorr(gr, 12)
+        slope = _trend_slope(gr)
+        seas = _seasonal_corr(sub["date"], gr, period=52)
+
+        row = dict(
+            zip(
+                klist, key_vals if isinstance(key_vals, tuple) else (key_vals,)
+            )
+        )
+        row.update(
+            dict(
+                ac_lag1=ac1,
+                ac_lag4=ac4,
+                ac_lag12=ac12,
+                trend_slope=slope,
+                seasonal_strength=seas,
+            )
+        )
+        ac_rows.append(row)
+    ac_df = pd.DataFrame(ac_rows)
+
+    feats = feats.merge(ac_df, on=klist, how="left")
+
+    # Optional: PCA on smoothed trajectories to capture shape
+    if include_pca_smoothed:
+        if PCA is None:
+            # silently skip if sklearn not available
+            pass
+        else:
+            # build a wide matrix of smoothed gr (same length per series by pivot)
+            gg = g.sort_values(klist + ["date"]).copy()
+            gg["gr_sm"] = gg.groupby(klist)["growth_rate_clipped"].transform(
+                lambda s: s.rolling(smooth_window, min_periods=1).mean()
+            )
+            wide = gg.pivot_table(
+                index=klist, columns="date", values="gr_sm", aggfunc="first"
+            )
+            # fill missing with 0 (neutral), then standardize per-column
+            wide = wide.fillna(0.0)
+            if wide.shape[1] >= pca_components + 2:
+                # standardize columns to comparable scale
+                wide_std = (wide - wide.mean(axis=0)) / (
+                    wide.std(axis=0) + 1e-12
+                )
+                pca = PCA(n_components=pca_components, random_state=0)
+                Z = pca.fit_transform(wide_std.values)
+                pca_cols = {i: f"traj_pca_{i+1}" for i in range(Z.shape[1])}
+                Z_df = pd.DataFrame(
+                    Z, index=wide.index, columns=list(pca_cols.values())
+                )
+                Z_df = Z_df.reset_index()
+                feats = feats.merge(Z_df, on=klist, how="left")
+
+    # Ensure finite and non-negative for BTNMF
+    num_cols = [c for c in feats.columns if c not in klist]
+    X = feats[num_cols].astype(float)
+
+    # Replace inf/NaN
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.fillna(X.median(numeric_only=True))
+
+    # Shift to non-negative (BTNMF-friendly) then scale to [0,1]
+    col_min = X.min(axis=0)
+    X_nonneg = X - col_min  # shift
+    col_max = X_nonneg.max(axis=0).replace(0, 1.0)
+    X_scaled = X_nonneg / col_max
+
+    M_btnmf = pd.concat([feats[klist], X_scaled], axis=1)
+
+    return M_btnmf, feats  # scaled (for BTNMF) and raw feature tables
 
 
 def zscore_with_axis(
@@ -555,7 +842,9 @@ def median_mean_transform(
             values=column_name, index="store", columns="item", aggfunc="mean"
         )
     else:
-        raise ValueError("Set either median_transform or mean_transform to True.")
+        raise ValueError(
+            "Set either median_transform or mean_transform to True."
+        )
     df = df.sort_index().sort_index(axis=1)
     return df
 
@@ -661,10 +950,14 @@ def normalize_data(
 
     # Check if imputation worked - if still all NaNs, fill with zeros
     if df.isna().all().all():
-        logger.warning("Imputation failed - all values are NaN. Filling with zeros.")
+        logger.warning(
+            "Imputation failed - all values are NaN. Filling with zeros."
+        )
         df = df.fillna(0)
     elif df.isna().any().any():
-        logger.warning(f"Some NaN values remain after imputation. Filling with zeros.")
+        logger.warning(
+            f"Some NaN values remain after imputation. Filling with zeros."
+        )
         df = df.fillna(0)
 
     if log_transform:
@@ -729,7 +1022,9 @@ def normalize_store_item_data(
     # Create store_item column if it doesn't exist
     if "store_item" not in original_df.columns:
         original_df["store_item"] = (
-            original_df["store"].astype(str) + "_" + original_df["item"].astype(str)
+            original_df["store"].astype(str)
+            + "_"
+            + original_df["item"].astype(str)
         )
 
     # Convert the normalized matrix back to long format and merge with original data
@@ -742,7 +1037,9 @@ def normalize_store_item_data(
 
     # Merge the normalized data back to the original dataframe
     result_df = original_df.merge(
-        norm_long[["store_item", normalized_column_name]], on="store_item", how="left"
+        norm_long[["store_item", normalized_column_name]],
+        on="store_item",
+        how="left",
     )
 
     return result_df
@@ -863,7 +1160,9 @@ def mav_by_cluster(
 
     # Attach cluster labels
     long_df = long_df.merge(
-        df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
+        df[
+            ["store", "item", "store_cluster", "item_cluster"]
+        ].drop_duplicates(),
         on=["store", "item"],
         how="left",
     )
@@ -872,11 +1171,15 @@ def mav_by_cluster(
     # --- 1) MAV per (store, item)
     per_store_item = (
         long_df.groupby(["store", "item"], group_keys=False)["value"]
-        .apply(lambda g: mav(g, is_log1p=is_log1p, include_zeros=include_zeros))
+        .apply(
+            lambda g: mav(g, is_log1p=is_log1p, include_zeros=include_zeros)
+        )
         .reset_index(name=col_mav_name)
     )
     per_store_item = per_store_item.merge(
-        long_df[["store", "item", "store_cluster", "item_cluster"]].drop_duplicates(),
+        long_df[
+            ["store", "item", "store_cluster", "item_cluster"]
+        ].drop_duplicates(),
         on=["store", "item"],
         how="left",
     )
@@ -906,7 +1209,9 @@ def collapse_block_id_by_store_item(df, how="mean"):
     # sanity: block_id must be unique per pair
     bad = df.groupby(["store", "item"])["block_id"].nunique() > 1
     if bad.any():
-        raise ValueError("Some (store,item) pairs have multiple block_id values.")
+        raise ValueError(
+            "Some (store,item) pairs have multiple block_id values."
+        )
 
     agg_fn = {"mean": "mean", "median": "median"}[how]
     return df.groupby(["store", "item"], as_index=False).agg(

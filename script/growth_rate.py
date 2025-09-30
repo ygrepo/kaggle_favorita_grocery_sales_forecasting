@@ -19,6 +19,7 @@ sys.path.insert(0, str(project_root))
 from src.data_utils import (
     load_raw_data,
     save_csv_or_parquet,
+    make_weekly_growth,
 )
 from src.utils import setup_logging, get_logger
 
@@ -102,59 +103,59 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-        # weekly aggregation
-        wk = (
-            df.set_index("date")
-            .groupby("store_item")["unit_sales"]
-            .resample("W-SUN")  # explicit: week ends Sunday
-            .sum()
-            .rename("sales_wk")
-            .reset_index()
-            .sort_values(["store_item", "date"])
-        )
+        df = make_weekly_growth(df)
 
-        # targets (same as you had) ...
-        wk["growth_rate"] = (
-            wk.groupby("store_item")["sales_wk"]
-            .pct_change(fill_method=None)
-            .replace([np.inf, -np.inf], np.nan)
-        )
-        lo, hi = wk["growth_rate"].quantile([0.01, 0.99])
-        wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
-        wk["growth_binary"] = (
-            wk["sales_wk"] > wk.groupby("store_item")["sales_wk"].shift(1)
-        ).astype("Int8")
-        wk["growth_continuous"] = wk["growth_rate_clipped"].where(
-            wk["growth_binary"] == 1
-        )
+        # # weekly aggregation
+        # wk = (
+        #     df.set_index("date")
+        #     .groupby("store_item")["unit_sales"]
+        #     .resample("W-SUN")  # explicit: week ends Sunday
+        #     .sum()
+        #     .rename("sales_wk")
+        #     .reset_index()
+        #     .sort_values(["store_item", "date"])
+        # )
 
-        # --- make matching week keys ---
-        wk = wk.rename(columns={"date": "week_end"})
-        wk["week_end"] = wk["week_end"].dt.normalize()  # -> Sunday 00:00:00
+        # # targets
+        # wk["growth_rate"] = (
+        #     wk.groupby("store_item")["sales_wk"]
+        #     .pct_change(fill_method=None)
+        #     .replace([np.inf, -np.inf], np.nan)
+        # )
+        # lo, hi = wk["growth_rate"].quantile([0.01, 0.99])
+        # wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
+        # wk["growth_binary"] = (
+        #     wk["sales_wk"] > wk.groupby("store_item")["sales_wk"].shift(1)
+        # ).astype("Int8")
+        # wk["growth_continuous"] = wk["growth_rate_clipped"].where(
+        #     wk["growth_binary"] == 1
+        # )
 
-        # This matches resample labels:
-        df["week_end"] = (
-            df["date"].dt.to_period("W-SUN").dt.end_time
-        ).dt.normalize()
-        # alternative (equivalent):
-        # df["week_end"] = (df["date"] + pd.offsets.Week(weekday=6)).dt.normalize()
+        # # --- make matching week keys ---
+        # wk = wk.rename(columns={"date": "week_end"})
+        # wk["week_end"] = wk["week_end"].dt.normalize()  # -> Sunday 00:00:00
 
-        # merge
-        df = df.merge(
-            wk[
-                [
-                    "store_item",
-                    "week_end",
-                    "sales_wk",
-                    "growth_rate",
-                    "growth_rate_clipped",
-                    "growth_binary",
-                    "growth_continuous",
-                ]
-            ],
-            on=["store_item", "week_end"],
-            how="left",
-        )
+        # # This matches resample labels:
+        # df["week_end"] = (
+        #     df["date"].dt.to_period("W-SUN").dt.end_time
+        # ).dt.normalize()
+
+        # # merge
+        # df = df.merge(
+        #     wk[
+        #         [
+        #             "store_item",
+        #             "week_end",
+        #             "sales_wk",
+        #             "growth_rate",
+        #             "growth_rate_clipped",
+        #             "growth_binary",
+        #             "growth_continuous",
+        #         ]
+        #     ],
+        #     on=["store_item", "week_end"],
+        #     how="left",
+        # )
 
         # df["growth_rate"] = (
         #     df["unit_sales"]
