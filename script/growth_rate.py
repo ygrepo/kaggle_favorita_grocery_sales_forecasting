@@ -102,30 +102,25 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-
-        # ---- weekly aggregation ----
+        # weekly aggregation
         wk = (
             df.set_index("date")
-            .groupby("store_item")["unit_sales"]
-            .resample("W")  # week ends on Sunday by default
+            .groupby("store_item", group_keys=False)["unit_sales"]
+            .resample("W-SUN")  # explicit: week ends Sunday
             .sum()
             .rename("sales_wk")
             .reset_index()
             .sort_values(["store_item", "date"])
         )
 
-        # pct_change per store_item (do not ffill across gaps)
+        # targets (same as you had) ...
         wk["growth_rate"] = (
             wk.groupby("store_item")["sales_wk"]
             .pct_change(fill_method=None)
             .replace([np.inf, -np.inf], np.nan)
         )
-
-        # clip extremes
         lo, hi = wk["growth_rate"].quantile([0.01, 0.99])
         wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
-
-        # two-stage targets
         wk["growth_binary"] = (
             wk["sales_wk"] > wk.groupby("store_item")["sales_wk"].shift(1)
         ).astype("Int8")
@@ -133,14 +128,18 @@ def main():
             wk["growth_binary"] == 1
         )
 
-        # ---- create a week key for a clean merge back ----
-        # label weeks exactly like resample('W') does: week end (Sunday) timestamps
+        # --- make matching week keys ---
         wk = wk.rename(columns={"date": "week_end"})
+        wk["week_end"] = wk["week_end"].dt.normalize()  # -> Sunday 00:00:00
+
+        # This matches resample labels:
         df["week_end"] = (
             df["date"].dt.to_period("W-SUN").dt.end_time
-        )  # matches resample('W')
+        ).dt.normalize()
+        # alternative (equivalent):
+        # df["week_end"] = (df["date"] + pd.offsets.Week(weekday=6)).dt.normalize()
 
-        # now merge on (store_item, week_end)
+        # merge
         df = df.merge(
             wk[
                 [
