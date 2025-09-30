@@ -186,7 +186,7 @@ def _append_rows(
 
 
 # Apply mapping to val/test preds
-def _apply(m, x: np.ndarray):
+def _apply(m: Any, x: np.ndarray) -> np.ndarray:
     """Helper to apply a mapping to an array."""
     x = np.asarray(x).ravel()
     return (
@@ -199,7 +199,7 @@ def _apply(m, x: np.ndarray):
 class BoosterWrapper:
     """Small wrapper so evaluate_model() can still call .predict(X)"""
 
-    def __init__(self, booster):
+    def __init__(self, booster: xgb.Booster):
         self.booster = booster
 
     def predict(self, X):

@@ -103,7 +103,11 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-        df["growth_rate"] = df["unit_sales"].pct_change(fill_method=None)
+        df["growth_rate"] = (
+            df["unit_sales"]
+            .pct_change(fill_method=None)
+            .fillna(df["unit_sales"].pct_change(fill_method=None).median())
+        )
         save_csv_or_parquet(df, output_fn)
         logger.info("Completed successfully")
     except Exception as e:
