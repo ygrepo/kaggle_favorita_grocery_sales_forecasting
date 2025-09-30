@@ -107,7 +107,7 @@ def main():
             df["unit_sales"]
             .pct_change(fill_method=None)
             .fillna(df["unit_sales"].pct_change(fill_method=None).median())
-        )
+        ) * 100.0
         save_csv_or_parquet(df, output_fn)
         logger.info("Completed successfully")
     except Exception as e:
