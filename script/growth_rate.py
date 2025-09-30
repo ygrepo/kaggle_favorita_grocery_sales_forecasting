@@ -103,11 +103,66 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-        df["growth_rate"] = (
-            df["unit_sales"]
+
+        # ---- weekly aggregation ----
+        wk = (
+            df.set_index("date")
+            .groupby("store_item", group_keys=False)["unit_sales"]
+            .resample("W")  # week ends on Sunday by default
+            .sum()
+            .rename("sales_wk")
+            .reset_index()
+            .sort_values(["store_item", "date"])
+        )
+
+        # pct_change per store_item (do not ffill across gaps)
+        wk["growth_rate"] = (
+            wk.groupby("store_item")["sales_wk"]
             .pct_change(fill_method=None)
-            .fillna(df["unit_sales"].pct_change(fill_method=None).median())
-        ) * 100.0
+            .replace([np.inf, -np.inf], np.nan)
+        )
+
+        # clip extremes
+        lo, hi = wk["growth_rate"].quantile([0.01, 0.99])
+        wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
+
+        # two-stage targets
+        wk["growth_binary"] = (
+            wk["sales_wk"] > wk.groupby("store_item")["sales_wk"].shift(1)
+        ).astype("Int8")
+        wk["growth_continuous"] = wk["growth_rate_clipped"].where(
+            wk["growth_binary"] == 1
+        )
+
+        # ---- create a week key for a clean merge back ----
+        # label weeks exactly like resample('W') does: week end (Sunday) timestamps
+        wk = wk.rename(columns={"date": "week_end"})
+        df["week_end"] = (
+            df["date"].dt.to_period("W-SUN").dt.end_time
+        )  # matches resample('W')
+
+        # now merge on (store_item, week_end)
+        df = df.merge(
+            wk[
+                [
+                    "store_item",
+                    "week_end",
+                    "sales_wk",
+                    "growth_rate",
+                    "growth_rate_clipped",
+                    "growth_binary",
+                    "growth_continuous",
+                ]
+            ],
+            on=["store_item", "week_end"],
+            how="left",
+        )
+
+        # df["growth_rate"] = (
+        #     df["unit_sales"]
+        #     .pct_change(fill_method=None)
+        #     .fillna(df["unit_sales"].pct_change(fill_method=None).median())
+        # ) * 100.0
         save_csv_or_parquet(df, output_fn)
         logger.info("Completed successfully")
     except Exception as e:
