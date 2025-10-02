@@ -80,7 +80,8 @@ def parse_args():
         "--keys",
         type=str,
         default="store_item",
-        help="Keys to group by",
+        help="Keys to group by (comma-separated for multiple keys, "
+        "e.g., 'store_item' or 'store,item')",
     )
     parser.add_argument(
         "--log_fn",
@@ -122,9 +123,15 @@ def main():
 
         df = read_csv_or_parquet(data_fn)
 
+        # Convert keys string to tuple
+        keys_tuple = (
+            tuple(args.keys.split(",")) if "," in args.keys else (args.keys,)
+        )
+        logger.debug(f"Converted keys '{args.keys}' to tuple: {keys_tuple}")
+
         cluster_df, features_df = build_growth_features_for_clustering(
             df,
-            keys=args.keys,
+            keys=keys_tuple,
             tau=args.tau,
             include_pca_smoothed=args.include_pca_smoothed,
             pca_components=args.pca_components,
