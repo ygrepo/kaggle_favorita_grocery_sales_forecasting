@@ -30,7 +30,10 @@ def get_normalized_assignments(
 ) -> pd.DataFrame:
 
     I, J = norm_data.shape
-    assert block_id_mat.shape == (I, J), "block_id matrix must match norm_data shape"
+    assert block_id_mat.shape == (
+        I,
+        J,
+    ), "block_id matrix must match norm_data shape"
 
     # Build a DF aligned to norm_data’s index/columns
     blk_df = pd.DataFrame(
@@ -78,7 +81,9 @@ def merge_assignments(
 
     # long (store,item,block_id)
     blk_long = (
-        pd.DataFrame(block_id_mat, index=norm_data.index, columns=norm_data.columns)
+        pd.DataFrame(
+            block_id_mat, index=norm_data.index, columns=norm_data.columns
+        )
         .stack()
         .rename("block_id")
         .reset_index()
@@ -228,7 +233,9 @@ def merge_blocks_by_stat(
 
     # Use bid_merged
     df_assign = (
-        pd.DataFrame(bid_merged, index=norm_data.index, columns=norm_data.columns)
+        pd.DataFrame(
+            bid_merged, index=norm_data.index, columns=norm_data.columns
+        )
         .stack()
         .rename("merged_block_id")
         .reset_index()
@@ -308,7 +315,8 @@ def get_sorted_row_col(
     if col_rep_varies:
         col_df = blk.T.assign(__rep=col_rep, __min=col_min, __mean=col_mean)
         col_order = col_df.sort_values(
-            by=["__rep", "__min", "__mean", *list(col_df.columns)], kind="mergesort"
+            by=["__rep", "__min", "__mean", *list(col_df.columns)],
+            kind="mergesort",
         ).index.tolist()
     else:
         # fallback: pure lexicographic by full column pattern
@@ -459,7 +467,9 @@ def compute_block_wcv_bcv_silhouette(
             else:
                 # exclude this block's own mean by masking by coordinates
                 # (safer than comparing floats)
-                mask_self = ~((defined_idx[:, 0] == r) & (defined_idx[:, 1] == c))
+                mask_self = ~(
+                    (defined_idx[:, 0] == r) & (defined_idx[:, 1] == c)
+                )
                 others = defined_vals[mask_self]
                 if others.size == 0:
                     bcv = np.nan
@@ -478,7 +488,15 @@ def compute_block_wcv_bcv_silhouette(
 
     return pd.DataFrame(
         rows,
-        columns=["r", "c", "n", "mean", "WCV", "BCV_nearest", "silhouette_like"],
+        columns=[
+            "r",
+            "c",
+            "n",
+            "mean",
+            "WCV",
+            "BCV_nearest",
+            "silhouette_like",
+        ],
     )
 
 
@@ -504,7 +522,9 @@ def _baseline_array(X: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
 
     # Handle empty observations
     if obs.size == 0:
-        logger.warning("Empty observations for baseline calculation, using 0.0")
+        logger.warning(
+            "Empty observations for baseline calculation, using 0.0"
+        )
         mu = 0.0
     else:
         mu = float(np.mean(obs))
@@ -523,7 +543,9 @@ def _obs_count(mask: np.ndarray | None, X: np.ndarray) -> int:
         return int(X.size)
     mask = mask.astype(bool)
     if mask.shape != X.shape:
-        raise ValueError(f"mask shape {mask.shape} must match X shape {X.shape}")
+        raise ValueError(
+            f"mask shape {mask.shape} must match X shape {X.shape}"
+        )
     return int(np.sum(mask))
 
 
@@ -535,7 +557,9 @@ def neg_loglik_from_loss(
     (Exact constants cancel in AIC/BIC comparisons across same data.)
     """
     if loss_name == "gaussian":
-        return gaussian_loss(X, Xhat, mask=mask)  # SSE ~ 2*negLL up to sigma^2 scale
+        return gaussian_loss(
+            X, Xhat, mask=mask
+        )  # SSE ~ 2*negLL up to sigma^2 scale
     elif loss_name == "poisson":
         return poisson_nll(X, Xhat, mask=mask)  # exact NLL (up to const)
     else:
@@ -639,7 +663,9 @@ def _fit_with_restarts(
 
     best = None
     for s in list(seeds)[:restarts]:
-        est = est_maker(n_row_clusters=n_row, n_col_clusters=n_col, random_state=s)
+        est = est_maker(
+            n_row_clusters=n_row, n_col_clusters=n_col, random_state=s
+        )
         est.fit(X)
         # training loss (use the same metric family as model_loss)
         Xhat = est.reconstruct()
@@ -673,7 +699,9 @@ def make_gap_cellmask(min_keep: int = 6):
         assert (
             U is not None and V is not None and B is not None
         ), "Estimator must be fitted"
-        assert allowed.shape == B.shape, f"allowed {allowed.shape} != B {B.shape}"
+        assert (
+            allowed.shape == B.shape
+        ), f"allowed {allowed.shape} != B {B.shape}"
         cell_mask = est.blockmask_to_cellmask(allowed)  # (I, J)
         return cell_mask
 
@@ -741,7 +769,14 @@ def sweep_btf_grid(
     if n_jobs == 1:
         # Single-threaded processing
         return _sweep_btf_grid_sequential(
-            est_maker, X, rc_pairs, restarts, seeds, min_keep, keep_strategy, fit_kwargs
+            est_maker,
+            X,
+            rc_pairs,
+            restarts,
+            seeds,
+            min_keep,
+            keep_strategy,
+            fit_kwargs,
         )
     else:
         # Multi-threaded processing
@@ -782,15 +817,28 @@ def suggest_min_keep_elbow(est) -> int:
 
 
 def _process_single_rc_pair(
-    R: int, C: int, est_maker, X, restarts, seeds, min_keep, keep_strategy, fit_kwargs
+    R: int,
+    C: int,
+    est_maker,
+    X,
+    restarts,
+    seeds,
+    min_keep,
+    keep_strategy,
+    fit_kwargs,
 ):
     """Process a single (R,C) pair and return the metrics row."""
 
     # Suppress numpy warnings for the entire computation to avoid noise
     # These warnings are expected when dealing with sparse data and large (R,C) values
-    with np.errstate(invalid="ignore", divide="ignore"), warnings.catch_warnings():
+    with (
+        np.errstate(invalid="ignore", divide="ignore"),
+        warnings.catch_warnings(),
+    ):
         warnings.filterwarnings(
-            "ignore", category=RuntimeWarning, message=".*Mean of empty slice.*"
+            "ignore",
+            category=RuntimeWarning,
+            message=".*Mean of empty slice.*",
         )
         warnings.filterwarnings(
             "ignore",
@@ -839,14 +887,18 @@ def _process_single_rc_pair(
         # --- Assignments (for WCV/BCV and coverage) ---
         assign = est.assign_unique_blocks(
             X=X,
-            method=("gaussian_delta" if est.loss == "gaussian" else "poisson_delta"),
+            method=(
+                "gaussian_delta" if est.loss == "gaussian" else "poisson_delta"
+            ),
             allowed_mask=(
                 np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
             ),  # drop weakest 20% blocks
         )
 
         # --- Silhouette-like (WCV/BCV) ---
-        wcvdf = compute_block_wcv_bcv_silhouette(X, assign, *est.B_.shape, mask=mask)
+        wcvdf = compute_block_wcv_bcv_silhouette(
+            X, assign, *est.B_.shape, mask=mask
+        )
         col = wcvdf["silhouette_like"]
         if not wcvdf.empty and col.notna().any():
             sil_mean = float(np.nanmean(col))
@@ -874,7 +926,9 @@ def _process_single_rc_pair(
         # Fraction of blocks whose ΔLoss is below the 20th percentile
         # i.e., what proportion of blocks are "weak" compared to the rest
         # frac_weak: proportion of blocks considered weak.
-        frac_weak = float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
+        frac_weak = (
+            float(np.mean(abl_pos < thresh)) if abl_pos.size else np.nan
+        )
 
         gini = (
             gini_concentration(np.maximum(ablation_flat, 0.0))
@@ -937,13 +991,28 @@ def _process_single_rc_pair(
 
 
 def _sweep_btf_grid_sequential(
-    est_maker, X, rc_pairs, restarts, seeds, min_keep, keep_strategy, fit_kwargs
+    est_maker,
+    X,
+    rc_pairs,
+    restarts,
+    seeds,
+    min_keep,
+    keep_strategy,
+    fit_kwargs,
 ):
     """Sequential processing of (R,C) pairs."""
     rows = []
     for R, C in rc_pairs:
         row = _process_single_rc_pair(
-            R, C, est_maker, X, restarts, seeds, min_keep, keep_strategy, fit_kwargs
+            R,
+            C,
+            est_maker,
+            X,
+            restarts,
+            seeds,
+            min_keep,
+            keep_strategy,
+            fit_kwargs,
         )
         rows.append(row)
     return pd.DataFrame(rows)
@@ -966,7 +1035,15 @@ def _process_rc_batch(args):
     for R, C in rc_batch:
         try:
             row = _process_single_rc_pair(
-                R, C, est_maker, X, restarts, seeds, min_keep, keep_strategy, fit_kwargs
+                R,
+                C,
+                est_maker,
+                X,
+                restarts,
+                seeds,
+                min_keep,
+                keep_strategy,
+                fit_kwargs,
             )
             results.append(row)
         except Exception as e:
@@ -1044,10 +1121,13 @@ def _sweep_btf_grid_parallel(
 
     # Create batches of (R,C) pairs
     batches = [
-        rc_pairs[i : i + batch_size] for i in range(0, len(rc_pairs), batch_size)
+        rc_pairs[i : i + batch_size]
+        for i in range(0, len(rc_pairs), batch_size)
     ]
 
-    logger.info(f"Created {len(batches)} batches of ~{batch_size} (R,C) pairs each")
+    logger.info(
+        f"Created {len(batches)} batches of ~{batch_size} (R,C) pairs each"
+    )
 
     # Prepare arguments for each batch
     batch_args = [
@@ -1118,7 +1198,9 @@ def pick_best_btf_setting(
         # if all NaN, skip PVE filtering
 
     if d.empty:
-        raise ValueError("No candidate settings remain after filters (PVE/Silhouette).")
+        raise ValueError(
+            "No candidate settings remain after filters (PVE/Silhouette)."
+        )
 
     # --- Sorting: prefer high PVE/structure, then smaller models, then deterministic tie ---
     sort_cols = [
@@ -1169,7 +1251,9 @@ def pick_best_btf_setting(
         subset=["n_row", "n_col"], keep="first"
     ).reset_index(drop=True)
     if settings_sorted.empty:
-        raise ValueError("After de-duplicating (n_row, n_col), no settings remain.")
+        raise ValueError(
+            "After de-duplicating (n_row, n_col), no settings remain."
+        )
 
     best = settings_sorted.iloc[0].copy()
     return settings_sorted, best
@@ -1204,9 +1288,73 @@ def normalize_data_and_fit_estimator(
 
     est.fit(X_array)
     assign = est.filter_blocks(
-        X=X_array, min_keep=min_keep, keep_strategy=keep_strategy, return_frame=False
+        X=X_array,
+        min_keep=min_keep,
+        keep_strategy=keep_strategy,
+        return_frame=False,
     )
     return est, assign
+
+
+def _prep_matrix_for_btnmf(
+    df: pd.DataFrame,
+    id_cols: list[str] | None,
+    normalize: bool,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """
+    Returns: X_mat (I×J nonnegative), row_names (I,), feat_cols (len=J)
+    - If normalize=True: per-column min-max to [0,1] after shifting to nonnegative.
+    - If normalize=False: assume already nonnegative & comparably scaled (e.g., M_btnmf).
+    """
+    X = df.copy()
+
+    # infer id cols
+    if id_cols is None:
+        if {"store", "item"}.issubset(X.columns):
+            id_cols = ["store", "item"]
+        elif "store_item" in X.columns:
+            id_cols = ["store_item"]
+        else:
+            id_cols = []
+
+    # numeric feature columns
+    feat_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    feat_cols = [c for c in feat_cols if c not in id_cols]
+    if not feat_cols:
+        raise ValueError("No numeric feature columns found to cluster on.")
+
+    # row names
+    if id_cols == ["store", "item"]:
+        row_names = (
+            X["store"].astype(str) + "▮" + X["item"].astype(str)
+        ).to_numpy()
+    elif id_cols == ["store_item"]:
+        row_names = X["store_item"].astype(str).to_numpy()
+    else:
+        row_names = X.index.astype(str).to_numpy()
+
+    # matrix
+    M = X[feat_cols].to_numpy(dtype=np.float32)
+    M = np.where(np.isfinite(M), M, 0.0)
+
+    # ensure nonnegative
+    min_per_col = np.nanmin(M, axis=0)
+    neg_cols = min_per_col < 0
+    if np.any(neg_cols):
+        M[:, neg_cols] = M[:, neg_cols] - min_per_col[neg_cols][None, :]
+
+    if normalize:
+        # per-column min-max to [0,1]
+        col_min = np.nanmin(M, axis=0)
+        M0 = M - col_min
+        col_max = np.nanmax(M0, axis=0)
+        col_max[col_max == 0] = 1.0
+        M = M0 / col_max
+
+    # clip any tiny numeric junk
+    M = np.clip(M, 0.0, None)
+
+    return M, row_names, feat_cols
 
 
 def cluster_data_and_explain_blocks(
@@ -1214,6 +1362,9 @@ def cluster_data_and_explain_blocks(
     row_range: range,
     col_range: range,
     *,
+    # NEW: toggle preprocessing for raw features
+    normalize: bool = True,
+    # BTNMF / solver params (unchanged)
     alpha: float = 1e-2,
     beta: float = 0.6,
     block_l1: float = 0.0,
@@ -1231,51 +1382,63 @@ def cluster_data_and_explain_blocks(
     summary_fn: Optional[Path] = None,
     block_id_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
-    figure_fn: Optional[Path] = None,
     n_jobs: int = 1,
     batch_size: int = 4,
-    plot_figure: bool = False,
 ) -> pd.DataFrame:
+    """
+    Works with BOTH:
+      • raw feature tables  -> set normalize=True (min-max per column to [0,1])
+      • prebuilt M_btnmf    -> set normalize=False (already nonnegative [0,1])
+    df must contain ids: ["store","item"] or ["store_item"] plus numeric feature columns.
+    """
+    # overlap budgets: <=0 means data-driven stopping
     if k_row <= 0 or k_col <= 0:
         k_row = None
         k_col = None
 
+    # Build factory (same as before)
     make_btf = BinaryTriFactorizationEstimator.factory(
         k_row=k_row,
         k_col=k_col,
         loss="gaussian",
         alpha=alpha,
         beta=beta,
-        block_l1=block_l1,  # 0 = off; >0 = L1 on B (0.01 = good start)
-        b_inner=b_inner,  # inner prox steps for B when block_l1>0
+        block_l1=block_l1,
+        b_inner=b_inner,
         max_iter=max_iter,
         tol=tol,
     )
 
-    norm_data = normalize_data(
-        df,
-        column_name="growth_rate",
-        log_transform=False,
-        median_transform=True,
-        mean_transform=False,
-        zscore_rows=False,
-        zscore_cols=True,
+    # ----- INPUT PREP (new) -----
+    # auto-detect id cols; min-max if normalize=True
+    if {"store", "item"}.issubset(df.columns):
+        id_cols = ["store", "item"]
+    elif "store_item" in df.columns:
+        id_cols = ["store_item"]
+    else:
+        id_cols = []
+
+    X_mat, row_names, feat_cols = _prep_matrix_for_btnmf(
+        df, id_cols=id_cols, normalize=normalize
     )
-    num_nans, num_total, num_finite = get_nan_stats(norm_data)
+
+    # small stats
+    num_total = X_mat.size
+    num_nans = int(np.isnan(X_mat).sum())
+    num_finite = int(np.isfinite(X_mat).sum())
     logger.info(
         "Finite: %d, NaNs: %d (%.1f%%)",
         num_finite,
         num_nans,
-        100 * num_nans / num_total,
+        100.0 * num_nans / max(1, num_total),
     )
 
-    # Run the sweep
-    # Define your grid
-    R_list = row_range
-    C_list = col_range
+    # ----- grid sweep over (R,C) -----
+    R_list = list(row_range)
+    C_list = list(col_range)
     grid_df = sweep_btf_grid(
         make_btf,
-        norm_data.to_numpy(dtype=np.float32),
+        X_mat,
         R_list,
         C_list,
         restarts=3,
@@ -1286,97 +1449,256 @@ def cluster_data_and_explain_blocks(
         n_jobs=n_jobs,
         batch_size=batch_size,
     )
-
     logger.info(f"Grid search completed. Found {len(grid_df)} combinations")
 
-    # Rank and pick the best
     ranked_df, best = pick_best_btf_setting(
         grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
     )
+    if top_rank_fn is not None and top_k is not None:
+        ranked_df.iloc[:top_k].to_csv(top_rank_fn, index=False)
 
-    if top_rank_fn is not None:
-        logger.info(f"Saving top {top_k} ranked_df to {top_rank_fn}")
-        top_k_df = ranked_df.iloc[:top_k]
-        top_k_df.to_csv(top_rank_fn, index=False)
-    n_row = best["n_row"]
-    n_col = best["n_col"]
+    n_row = int(best["n_row"])
+    n_col = int(best["n_col"])
     est = make_btf(n_row, n_col, random_state=42)
 
-    # Handle both DataFrame and NumPy array cases
-    X_array = norm_data.to_numpy()
-    row_names = norm_data.index.to_numpy()
-    col_names = norm_data.columns.to_numpy()
-    est.fit(X_array)
+    # ----- fit final model -----
+    est.fit(X_mat)
     suggested_min_keep_elbow = suggest_min_keep_elbow(est)
     logger.info(
         f"Current min_keep: {min_keep}-Suggested min_keep: {suggested_min_keep_elbow}"
     )
     min_keep = min(min_keep, suggested_min_keep_elbow)
+
     assign = est.filter_blocks(
-        X=X_array, min_keep=min_keep, keep_strategy=keep_strategy, return_frame=False
+        X=X_mat,
+        min_keep=min_keep,
+        keep_strategy=keep_strategy,
+        return_frame=False,
     )
+
+    # optional summary
     if summary_fn is not None:
         summary = est.explain_blocks(
-            X=X_array,
+            X=X_mat,
             assign=assign,
             row_names=row_names,
-            col_names=col_names,
+            col_names=np.array(feat_cols),
             top_k=5,
         )
-        logger.info(f"Saving summary to {summary_fn}")
         summary.to_csv(summary_fn, index=False)
 
+    # diagnostics
     U, _, V = est.factors()
     bid = np.asarray(assign["block_id"])
-
     logger.info(
-        f"unique block_ids (first 20): {np.unique(bid)[:20]} count: {np.unique(bid).size}"
+        f"unique block_ids (first 20): {np.unique(bid)[:20]}  count: {np.unique(bid).size}"
     )
-    logger.info(f"bid shape: {bid.shape}")
+    logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # len R
+    logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # len C
     if block_id_fn is not None:
-        logger.info(f"Saving block_id to {block_id_fn}")
         np.save(block_id_fn, bid)
 
-    # Cluster occupancy (are we collapsed to one cluster?)
-    logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # length R
-    logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # length C
-    df2_blocks = get_normalized_assignments(bid, norm_data)[
-        ["store", "item", "growth_rate_1", "block_id"]
-    ]
-    df = df.merge(
-        df2_blocks[["store", "item", "block_id"]], on=["store", "item"], how="left"
-    )
-    logger.info(f"block_id nunique: {df['block_id'].nunique(dropna=True)}")
-    logger.info(df["block_id"].value_counts(dropna=False))
+    # ----- merge block_id back to df -----
+    if id_cols == ["store", "item"]:
+        assign_df = pd.DataFrame(
+            {
+                "store": df["store"].astype(str).to_numpy(),
+                "item": df["item"].astype(str).to_numpy(),
+                "block_id": bid,
+            }
+        )
+        out = df.merge(assign_df, on=["store", "item"], how="left")
+    elif id_cols == ["store_item"]:
+        assign_df = pd.DataFrame(
+            {
+                "store_item": df["store_item"].astype(str).to_numpy(),
+                "block_id": bid,
+            }
+        )
+        out = df.merge(assign_df, on=["store_item"], how="left")
+    else:
+        out = df.copy()
+        out["block_id"] = bid
 
     if output_fn is not None:
-        logger.info(f"Saving output to {output_fn}")
-        save_csv_or_parquet(df, output_fn)
+        save_csv_or_parquet(out, output_fn)
 
-    # plot
-    if plot_figure:
-        row_order, col_order = get_sorted_row_col(df2_blocks)
-        plot_block_annot_heatmap(
-            df2_blocks,
-            ttl="Store-SKU Clusters",
-            value_col="growth_rate_1",
-            block_col="block_id",
-            row_col="store",
-            col_col="item",
-            date_col=None,
-            row_order=row_order,
-            col_order=col_order,
-            fmt="{:.0f}",
-            cell_h=0.6,
-            cell_w=0.75,
-            font_size=11,
-            # figsize=(6, 4),
-            xlabel_size=14,
-            ylabel_size=14,
-            label_weight="bold",
-            fn=figure_fn,
-            xtick_rotation=45,
-            show_plot=False,
-        )
+    return out
 
-    return df
+
+# def cluster_data_and_explain_blocks(
+#     df: pd.DataFrame,
+#     row_range: range,
+#     col_range: range,
+#     *,
+#     alpha: float = 1e-2,
+#     beta: float = 0.6,
+#     block_l1: float = 0.0,
+#     b_inner: int = 15,
+#     max_iter: int = 50,
+#     k_row: int = 1,
+#     k_col: int = 1,
+#     keep_strategy: str = "delta_then_size",
+#     tol: float = 1e-5,
+#     max_pve_drop: float = 0.01,
+#     min_sil: float = -0.05,
+#     min_keep: int = 6,
+#     top_k: Optional[int] = None,
+#     top_rank_fn: Optional[Path] = None,
+#     summary_fn: Optional[Path] = None,
+#     block_id_fn: Optional[Path] = None,
+#     output_fn: Optional[Path] = None,
+#     figure_fn: Optional[Path] = None,
+#     n_jobs: int = 1,
+#     batch_size: int = 4,
+#     plot_figure: bool = False,
+# ) -> pd.DataFrame:
+#     if k_row <= 0 or k_col <= 0:
+#         k_row = None
+#         k_col = None
+
+#     make_btf = BinaryTriFactorizationEstimator.factory(
+#         k_row=k_row,
+#         k_col=k_col,
+#         loss="gaussian",
+#         alpha=alpha,
+#         beta=beta,
+#         block_l1=block_l1,  # 0 = off; >0 = L1 on B (0.01 = good start)
+#         b_inner=b_inner,  # inner prox steps for B when block_l1>0
+#         max_iter=max_iter,
+#         tol=tol,
+#     )
+
+#     norm_data = normalize_data(
+#         df,
+#         column_name="growth_rate",
+#         log_transform=False,
+#         median_transform=True,
+#         mean_transform=False,
+#         zscore_rows=False,
+#         zscore_cols=True,
+#     )
+#     num_nans, num_total, num_finite = get_nan_stats(norm_data)
+#     logger.info(
+#         "Finite: %d, NaNs: %d (%.1f%%)",
+#         num_finite,
+#         num_nans,
+#         100 * num_nans / num_total,
+#     )
+
+#     # Run the sweep
+#     # Define your grid
+#     R_list = row_range
+#     C_list = col_range
+#     grid_df = sweep_btf_grid(
+#         make_btf,
+#         norm_data.to_numpy(dtype=np.float32),
+#         R_list,
+#         C_list,
+#         restarts=3,
+#         seeds=range(123, 999),
+#         min_keep=None,
+#         keep_strategy=keep_strategy,
+#         fit_kwargs={"max_iter": max_iter, "tol": tol},
+#         n_jobs=n_jobs,
+#         batch_size=batch_size,
+#     )
+
+#     logger.info(f"Grid search completed. Found {len(grid_df)} combinations")
+
+#     # Rank and pick the best
+#     ranked_df, best = pick_best_btf_setting(
+#         grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
+#     )
+
+#     if top_rank_fn is not None:
+#         logger.info(f"Saving top {top_k} ranked_df to {top_rank_fn}")
+#         top_k_df = ranked_df.iloc[:top_k]
+#         top_k_df.to_csv(top_rank_fn, index=False)
+#     n_row = best["n_row"]
+#     n_col = best["n_col"]
+#     est = make_btf(n_row, n_col, random_state=42)
+
+#     # Handle both DataFrame and NumPy array cases
+#     X_array = norm_data.to_numpy()
+#     row_names = norm_data.index.to_numpy()
+#     col_names = norm_data.columns.to_numpy()
+#     est.fit(X_array)
+#     suggested_min_keep_elbow = suggest_min_keep_elbow(est)
+#     logger.info(
+#         f"Current min_keep: {min_keep}-Suggested min_keep: {suggested_min_keep_elbow}"
+#     )
+#     min_keep = min(min_keep, suggested_min_keep_elbow)
+#     assign = est.filter_blocks(
+#         X=X_array,
+#         min_keep=min_keep,
+#         keep_strategy=keep_strategy,
+#         return_frame=False,
+#     )
+#     if summary_fn is not None:
+#         summary = est.explain_blocks(
+#             X=X_array,
+#             assign=assign,
+#             row_names=row_names,
+#             col_names=col_names,
+#             top_k=5,
+#         )
+#         logger.info(f"Saving summary to {summary_fn}")
+#         summary.to_csv(summary_fn, index=False)
+
+#     U, _, V = est.factors()
+#     bid = np.asarray(assign["block_id"])
+
+#     logger.info(
+#         f"unique block_ids (first 20): {np.unique(bid)[:20]} count: {np.unique(bid).size}"
+#     )
+#     logger.info(f"bid shape: {bid.shape}")
+#     if block_id_fn is not None:
+#         logger.info(f"Saving block_id to {block_id_fn}")
+#         np.save(block_id_fn, bid)
+
+#     # Cluster occupancy (are we collapsed to one cluster?)
+#     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # length R
+#     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # length C
+#     df2_blocks = get_normalized_assignments(bid, norm_data)[
+#         ["store", "item", "growth_rate_1", "block_id"]
+#     ]
+#     df = df.merge(
+#         df2_blocks[["store", "item", "block_id"]],
+#         on=["store", "item"],
+#         how="left",
+#     )
+#     logger.info(f"block_id nunique: {df['block_id'].nunique(dropna=True)}")
+#     logger.info(df["block_id"].value_counts(dropna=False))
+
+#     if output_fn is not None:
+#         logger.info(f"Saving output to {output_fn}")
+#         save_csv_or_parquet(df, output_fn)
+
+#     # plot
+#     if plot_figure:
+#         row_order, col_order = get_sorted_row_col(df2_blocks)
+#         plot_block_annot_heatmap(
+#             df2_blocks,
+#             ttl="Store-SKU Clusters",
+#             value_col="growth_rate_1",
+#             block_col="block_id",
+#             row_col="store",
+#             col_col="item",
+#             date_col=None,
+#             row_order=row_order,
+#             col_order=col_order,
+#             fmt="{:.0f}",
+#             cell_h=0.6,
+#             cell_w=0.75,
+#             font_size=11,
+#             # figsize=(6, 4),
+#             xlabel_size=14,
+#             ylabel_size=14,
+#             label_weight="bold",
+#             fn=figure_fn,
+#             xtick_rotation=45,
+#             show_plot=False,
+#         )
+
+#     return df

@@ -129,7 +129,7 @@ def main():
         )
         logger.debug(f"Converted keys '{args.keys}' to tuple: {keys_tuple}")
 
-        cluster_df, features_df = build_growth_features_for_clustering(
+        cluster_df, features_df, diag = build_growth_features_for_clustering(
             df,
             keys=keys_tuple,
             tau=args.tau,
@@ -137,6 +137,17 @@ def main():
             pca_components=args.pca_components,
             smooth_window=args.smooth_window,
         )
+
+        # See which columns were pruned (near-empty) and their support
+        logger.info(diag.sort_values("nan_frac", ascending=False).head(10))
+        # Optional: log a warning if a “key” feature was dropped
+        if any(
+            (diag["feature"].isin(["ac_lag12", "seasonal_strength"]))
+            & (diag["dropped"])
+        ):
+            logger.warning(
+                "Long-horizon features were dropped due to low support (short history)."
+            )
 
         cluster_fn = Path(args.output_cluster_fn).resolve()
 
