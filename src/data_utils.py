@@ -739,6 +739,7 @@ def build_growth_features_for_clustering(
     """
 
     g = wk
+    logger.info("Building features for clustering...")
     klist = list(keys)
 
     # ---- base series ----
@@ -810,7 +811,7 @@ def build_growth_features_for_clustering(
         gr_sm = gr.rolling(smooth_window, min_periods=1).mean()
 
         n_eff = int(gr_sm.notna().sum())
-        has_var = np.nanstd(gr_sm.values) > 0
+        has_var = (gr_sm.values.size >= 2) & (np.nanstd(gr_sm.values) > 0)
 
         ac1 = (
             _safe_autocorr(gr_sm, 1)

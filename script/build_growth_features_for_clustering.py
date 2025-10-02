@@ -149,14 +149,6 @@ def main():
                 "Long-horizon features were dropped due to low support (short history)."
             )
 
-        # --- diagnostics log (optional) ---
-        dropped_feats = diag.loc[diag["dropped"], "feature"].tolist()
-        if dropped_feats:
-            logger.warning(
-                f"Dropping near-empty features (≥{drop_if_nan_frac_ge:.0%} NaN): "
-                f"{dropped_feats[:10]}{'...' if len(dropped_feats)>10 else ''}"
-            )
-
         cluster_fn = Path(args.output_cluster_fn).resolve()
 
         save_csv_or_parquet(cluster_df, cluster_fn)
