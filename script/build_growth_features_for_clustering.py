@@ -137,7 +137,6 @@ def main():
             pca_components=args.pca_components,
             smooth_window=args.smooth_window,
         )
-
         # See which columns were pruned (near-empty) and their support
         logger.info(diag.sort_values("nan_frac", ascending=False).head(10))
         # Optional: log a warning if a “key” feature was dropped
