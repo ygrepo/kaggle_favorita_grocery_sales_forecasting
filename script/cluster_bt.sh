@@ -12,7 +12,8 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_input_clustered.parquet"
+
 
 TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
 SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
@@ -39,7 +40,7 @@ TOP_K=10
 K_ROW=0
 K_COL=0
 KEEP_STRATEGY="TopK"
-NORMALIZE="False"
+NORMALIZE="True"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
