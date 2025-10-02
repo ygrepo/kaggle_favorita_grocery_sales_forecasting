@@ -121,11 +121,18 @@ def get_n_jobs(n_jobs: int) -> int:
     return n_jobs
 
 
-def parse_range(range_str):
-    try:
-        start, end = map(int, range_str.split(":"))
-        return range(start, end)
-    except Exception as e:
-        raise argparse.ArgumentTypeError(
-            f"Invalid range format: {range_str}. Use START:END"
-        ) from e
+def parse_range(arg: str):
+    """
+    Parse a CLI argument that can be either:
+      - a colon-separated range 'START:END' (inclusive of START, exclusive of END),
+      - or a comma-separated list 'a,b,c'.
+    Returns a Python range or list of ints.
+    """
+    if ":" in arg:
+        start, end = arg.split(":")
+        return range(int(start), int(end))
+    elif "," in arg:
+        return [int(x) for x in arg.split(",")]
+    else:
+        # single integer
+        return [int(arg)]

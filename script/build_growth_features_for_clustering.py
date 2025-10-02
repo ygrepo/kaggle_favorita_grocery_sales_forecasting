@@ -122,13 +122,7 @@ def main():
         data_fn = Path(args.data_fn).resolve()
 
         df = read_csv_or_parquet(data_fn)
-        if "robust_" in df.columns:
-            logger.info("Dropping existing robust_* columns")
-            df.drop(
-                columns=[c for c in df.columns if c.startswith("robust_")],
-                errors="ignore",
-                inplace=True,
-            )
+
 
         # Convert keys string to tuple
         keys_tuple = (

@@ -17,7 +17,6 @@ DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate.parq
 TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
 SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
 BLOCK_ID_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
-FIGURE_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_figure.tiff"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
 
 
@@ -40,7 +39,7 @@ TOP_K=10
 K_ROW=0
 K_COL=0
 KEEP_STRATEGY="TopK"
-
+NORMALIZE="False"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -72,11 +71,11 @@ while [[ $# -gt 0 ]]; do
     --top_k) TOP_K="$2"; shift 2 ;;
     --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
     --keep_strategy) KEEP_STRATEGY="$2"; shift 2 ;;
+    --normalize) NORMALIZE="$2"; shift 2 ;;
     --n_jobs) N_JOBS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
     --block_id_fn) BLOCK_ID_FN="$2"; shift 2 ;;
-    --figure_fn) FIGURE_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
@@ -111,9 +110,9 @@ echo "Top k: $TOP_K" | tee -a "$LOG_FILE"
 echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
 echo "N jobs: $N_JOBS" | tee -a "$LOG_FILE"
 echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
+echo "Normalize: $NORMALIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
 echo "Block id fn: $BLOCK_ID_FN" | tee -a "$LOG_FILE"
-echo "Figure fn: $FIGURE_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
@@ -139,11 +138,11 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --top_k "$TOP_K" \
   --top_rank_fn "$TOP_RANK_FN" \
   --keep_strategy "$KEEP_STRATEGY" \
+  --normalize "$NORMALIZE" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --summary_fn "$SUMMARY_FN" \
   --block_id_fn "$BLOCK_ID_FN" \
-  --figure_fn "$FIGURE_FN" \
   --output_fn "$OUTPUT_FN" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" 

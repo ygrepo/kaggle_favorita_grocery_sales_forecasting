@@ -16,36 +16,15 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.BTNMF_util import cluster_data_and_explain_blocks
-from src.utils import setup_logging, read_csv_or_parquet, get_logger
+from src.utils import (
+    setup_logging,
+    read_csv_or_parquet,
+    get_logger,
+    str2bool,
+    parse_range,
+)
 
 logger = get_logger(__name__)
-
-
-def parse_range(range_str):
-    try:
-        start, end = map(int, range_str.split(":"))
-        return range(start, end)
-    except Exception as e:
-        raise argparse.ArgumentTypeError(
-            f"Invalid range format: {range_str}. Use START:END"
-        ) from e
-
-
-def parse_range(arg: str):
-    """
-    Parse a CLI argument that can be either:
-      - a colon-separated range 'START:END' (inclusive of START, exclusive of END),
-      - or a comma-separated list 'a,b,c'.
-    Returns a Python range or list of ints.
-    """
-    if ":" in arg:
-        start, end = arg.split(":")
-        return range(int(start), int(end))
-    elif "," in arg:
-        return [int(x) for x in arg.split(",")]
-    else:
-        # single integer
-        return [int(arg)]
 
 
 def parse_args():
@@ -150,10 +129,10 @@ def parse_args():
         help="Top k for BT-NMF",
     )
     parser.add_argument(
-        "--plot_figure",
-        type=bool,
-        default=False,
-        help="Whether to plot the figure",
+        "--normalize",
+        type=str2bool,
+        default=True,
+        help="Whether to normalize the data",
     )
     parser.add_argument(
         "--top_rank_fn",
@@ -172,12 +151,6 @@ def parse_args():
         type=str,
         default="",
         help="Path to block id file (relative to project root)",
-    )
-    parser.add_argument(
-        "--figure_fn",
-        type=str,
-        default="",
-        help="Path to figure file (relative to project root)",
     )
     parser.add_argument(
         "--output_fn",
@@ -245,8 +218,8 @@ def main():
         logger.info(f"  N jobs: {args.n_jobs}")
         logger.info(f"  Batch size: {args.batch_size}")
         logger.info(f"  Summary fn: {args.summary_fn}")
+        logger.info(f"  Normalize: {args.normalize}")
         logger.info(f"  Block id fn: {args.block_id_fn}")
-        logger.info(f"  Figure fn: {args.figure_fn}")
         logger.info(f"  Output fn: {args.output_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
@@ -254,9 +227,15 @@ def main():
 
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
+        if "robust_" in df.columns:
+            logger.info("Dropping existing robust_* columns")
+            df.drop(
+                columns=[c for c in df.columns if c.startswith("robust_")],
+                errors="ignore",
+                inplace=True,
+            )
 
         output_fn = Path(args.output_fn).resolve()
-        figure_fn = Path(args.figure_fn).resolve()
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
         block_id_fn = Path(args.block_id_fn).resolve()
@@ -274,6 +253,7 @@ def main():
             df,
             row_range=args.row_range,
             col_range=args.col_range,
+            normalize=args.normalize,
             alpha=args.alpha,
             beta=args.beta,
             block_l1=args.block_l1,
@@ -291,10 +271,8 @@ def main():
             summary_fn=summary_fn,
             block_id_fn=block_id_fn,
             output_fn=output_fn,
-            figure_fn=figure_fn,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
-            plot_figure=args.plot_figure,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:
