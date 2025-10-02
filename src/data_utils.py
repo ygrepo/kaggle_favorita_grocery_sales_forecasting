@@ -753,7 +753,7 @@ def build_growth_features_for_clustering(
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
     # g = wk.copy()
-    g = w
+    g = wk
     klist = list(keys)
 
     # ---- base series ----
