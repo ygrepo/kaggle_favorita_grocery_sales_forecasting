@@ -119,3 +119,13 @@ def get_n_jobs(n_jobs: int) -> int:
     elif n_jobs <= 1:
         n_jobs = 1
     return n_jobs
+
+
+def parse_range(range_str):
+    try:
+        start, end = map(int, range_str.split(":"))
+        return range(start, end)
+    except Exception as e:
+        raise argparse.ArgumentTypeError(
+            f"Invalid range format: {range_str}. Use START:END"
+        ) from e

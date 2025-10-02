@@ -481,10 +481,6 @@ def create_cyclical_features(
     return df
 
 
-# -------------------------------
-# 1) Ensure we have a weekly frame with growth columns
-#    (uses your store_item key; swap to ["store","item"] if needed)
-# -------------------------------
 def make_weekly_growth(
     df: pd.DataFrame,
     keys=("store_item",),
@@ -512,19 +508,19 @@ def make_weekly_growth(
         .replace([np.inf, -np.inf], np.nan)
     )
 
-    # winsorize extremes
+    # winsorize extremes (global quantiles are fine; per-key is slower)
     lo, hi = wk["growth_rate"].quantile(list(clip))
     wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
 
-    # two-part targets
+    # (optional) your original two-part targets
     prev = wk.groupby(list(keys))["sales_wk"].shift(1)
     wk["growth_binary"] = (wk["sales_wk"] > prev).astype("Int8")
     wk["growth_continuous"] = wk["growth_rate_clipped"].where(
         wk["growth_binary"] == 1
     )
 
-    # direction with dead-zone τ for richer targets
-    gr = wk["growth_rate_clipped"]
+    # --- direction with dead-zone τ ---
+    gr = wk["growth_rate_clipped"].astype(float)
     wk["direction"] = np.select(
         [gr >= tau, gr <= -tau], [1, -1], default=0
     ).astype("int8")
@@ -533,7 +529,75 @@ def make_weekly_growth(
         wk["direction"] == -1, -gr, np.nan
     )  # positive mag
 
+    # --- unified signed, NaN-free target (soft-thresholded) ---
+    # magnitude >= 0, remove tiny jitters; restore sign; flats -> 0.0
+    mag = np.maximum(np.abs(gr) - tau, 0.0)
+    sgn = np.sign(gr) * (wk["direction"] != 0)
+    wk["growth_rate_continuous"] = (sgn * mag).astype("float32")
+
+    # normalized weekly key for joins
+    wk["week_end"] = wk[
+        "date"
+    ].dt.normalize()  # matches resample label (Sunday 00:00)
     return wk
+
+
+def compute_item_sensitivity(
+    wk: pd.DataFrame, keys=("store_item",), tau=0.01, sens_clip=(0.3, 3.0)
+):
+    klist = list(keys)
+    # absolute move magnitude on soft-thresholded target
+    tmp = wk.assign(
+        abs_move=np.abs(wk["growth_rate_continuous"]).astype(float)
+    )
+
+    # item median magnitude (non-flats only)
+    item_med = (
+        tmp.loc[tmp["abs_move"] > 0]
+        .groupby(klist, as_index=False)
+        .agg(item_med_abs=("abs_move", "median"), n_moves=("abs_move", "size"))
+    )
+
+    # block median magnitude (non-flats only)
+    if "block_id" not in tmp.columns:
+        raise KeyError(
+            "wk must include 'block_id' for block-level downscaling."
+        )
+    block_med = (
+        tmp.loc[tmp["abs_move"] > 0]
+        .groupby(["block_id"], as_index=False)
+        .agg(block_med_abs=("abs_move", "median"))
+    )
+
+    sens = item_med.merge(
+        wk[klist + ["block_id"]].drop_duplicates(), on=klist, how="left"
+    ).merge(block_med, on="block_id", how="left")
+
+    # sensitivity ratio with clipping & safe fallback
+    sens["s_ij"] = sens["item_med_abs"] / sens["block_med_abs"].replace(
+        0, np.nan
+    )
+    sens["s_ij"] = sens["s_ij"].clip(*sens_clip).fillna(1.0)
+    return sens[klist + ["block_id", "s_ij", "n_moves"]]
+
+
+def downscale_block_to_items(
+    wk: pd.DataFrame,
+    pred_block: pd.DataFrame,
+    sens_tbl: pd.DataFrame,
+    keys=("store_item",),
+):
+    klist = list(keys)
+    grid = wk[klist + ["block_id", "week_end"]].drop_duplicates()
+    out = grid.merge(
+        pred_block[["block_id", "week_end", "g_block_hat"]],
+        on=["block_id", "week_end"],
+        how="left",
+    ).merge(sens_tbl, on=klist + ["block_id"], how="left")
+    out["g_item_hat"] = out["s_ij"].fillna(1.0) * out["g_block_hat"].fillna(
+        0.0
+    )
+    return out  # (store_item, block_id, week_end, g_item_hat)
 
 
 # -------------------------------
@@ -589,72 +653,120 @@ def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
     return float(np.sqrt(cs**2 + cc**2))
 
 
+def _robust_summaries(s: pd.Series, tau: float):
+    s = pd.to_numeric(s, errors="coerce").astype(float)
+    nz = s[np.abs(s) > tau]
+    if nz.empty:
+        med_nz = np.nan
+    else:
+        med_nz = np.nanmedian(nz)
+
+    # trimmed mean (10-90) and huberized mean (winsorize 1-99)
+    q10, q90 = (
+        np.nanpercentile(s, [10, 90]) if s.notna().sum() else (np.nan, np.nan)
+    )
+    trimmed = s[(s >= q10) & (s <= q90)]
+    trimmed_mean_10_90 = (
+        np.nanmean(trimmed) if trimmed.notna().any() else np.nan
+    )
+
+    q01, q99 = (
+        np.nanpercentile(s, [1, 99]) if s.notna().sum() else (np.nan, np.nan)
+    )
+    huberized = (
+        np.clip(s, q01, q99) if np.isfinite(q01) and np.isfinite(q99) else s
+    )
+    huber_mean_q01_q99 = np.nanmean(huberized)
+
+    median_abs = np.nanmedian(np.abs(s)) if s.notna().any() else np.nan
+    share_zero = np.mean(np.abs(s) <= tau) if len(s) else np.nan
+    return (
+        med_nz,
+        trimmed_mean_10_90,
+        huber_mean_q01_q99,
+        median_abs,
+        share_zero,
+    )
+
+
 def build_growth_features_for_clustering(
     wk: pd.DataFrame,
-    keys=("store_item",),
-    tau=0.01,
-    include_pca_smoothed=True,
-    pca_components=4,
-    smooth_window=4,
-):
+    keys: tuple[str, ...] = ("store_item",),
+    tau: float = 0.01,
+    include_pca_smoothed: bool = True,
+    pca_components: int = 4,
+    smooth_window: int = 4,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     g = wk.copy()
     klist = list(keys)
 
-    # base series we’ll summarize
-    series = {
-        "gc": g["growth_continuous"],  # positive growth only
-        "gr": g["growth_rate_clipped"],  # signed, clipped pct_change
-        "up": g["growth_up"],  # positive magnitudes
-        "dn": g["growth_down"],  # negative magnitudes (positive scale)
-    }
+    # ---- base series ----
+    g = g.assign(
+        gc=pd.to_numeric(g["growth_continuous"], errors="coerce"),
+        gr=pd.to_numeric(g["growth_rate_clipped"], errors="coerce"),
+        up=pd.to_numeric(g["growth_up"], errors="coerce"),
+        dn=pd.to_numeric(g["growth_down"], errors="coerce"),
+    )
 
-    # Summary stats per key
+    logger.info("Computing IQRs...")
+    iqr_gc = (
+        "gc",
+        lambda s: np.nanpercentile(pd.to_numeric(s, "coerce"), 75)
+        - np.nanpercentile(pd.to_numeric(s, "coerce"), 25),
+    )
+    iqr_gr = (
+        "gr",
+        lambda s: np.nanpercentile(pd.to_numeric(s, "coerce"), 75)
+        - np.nanpercentile(pd.to_numeric(s, "coerce"), 25),
+    )
+
+    logger.info("Computing base aggregates...")
     feats = (
-        g.assign(
-            gc=series["gc"], gr=series["gr"], up=series["up"], dn=series["dn"]
-        )
-        .groupby(klist)
+        g.groupby(klist)
         .agg(
             gc_mean=("gc", "mean"),
             gc_median=("gc", "median"),
             gc_std=("gc", "std"),
-            gc_iqr=(
-                "gc",
-                lambda s: np.nanpercentile(s, 75) - np.nanpercentile(s, 25),
-            ),
+            gc_iqr=iqr_gc,
             gr_mean=("gr", "mean"),
             gr_std=("gr", "std"),
-            gr_iqr=(
-                "gr",
-                lambda s: np.nanpercentile(s, 75) - np.nanpercentile(s, 25),
-            ),
+            gr_iqr=iqr_gr,
+            # respect dead-zone τ
             frac_nonzero=(
                 "gr",
-                lambda s: np.mean(~pd.isna(s) & (np.abs(s) > 0)),
+                lambda s: np.mean(np.abs(pd.to_numeric(s, "coerce")) > tau),
             ),
-            frac_up=("gr", lambda s: np.mean(s > tau)),
-            frac_down=("gr", lambda s: np.mean(s < -tau)),
+            frac_up=(
+                "gr",
+                lambda s: np.mean(pd.to_numeric(s, "coerce") > tau),
+            ),
+            frac_down=(
+                "gr",
+                lambda s: np.mean(pd.to_numeric(s, "coerce") < -tau),
+            ),
             pos_to_neg_ratio=(
                 "gr",
                 lambda s: (
                     np.nan
-                    if (np.sum(s < -tau) == 0)
-                    else np.sum(s > tau) / max(1, np.sum(s < -tau))
+                    if (np.sum(pd.to_numeric(s, "coerce") < -tau) == 0)
+                    else np.sum(pd.to_numeric(s, "coerce") > tau)
+                    / max(1, np.sum(pd.to_numeric(s, "coerce") < -tau))
                 ),
             ),
             big_move_rate=(
                 "gr",
-                lambda s: np.mean(np.abs(s) > 0.1),
-            ),  # >10% WoW moves
+                lambda s: np.mean(np.abs(pd.to_numeric(s, "coerce")) > 0.10),
+            ),
         )
         .reset_index()
     )
 
-    # Autocorrelations & trend/seasonality
+    # ---- autocorrs / trend / seasonality ----
     ac_rows = []
     for key_vals, sub in g.groupby(klist, sort=False):
+        logger.debug(f"Computing autocorrs for {key_vals}")
         sub = sub.sort_values("date", kind="mergesort")
-        gr = sub["growth_rate_clipped"]
+        gr = pd.to_numeric(sub["gr"], errors="coerce")
 
         ac1 = _safe_autocorr(gr, 1)
         ac4 = _safe_autocorr(gr, 4)
@@ -677,57 +789,86 @@ def build_growth_features_for_clustering(
             )
         )
         ac_rows.append(row)
-    ac_df = pd.DataFrame(ac_rows)
+    feats = feats.merge(pd.DataFrame(ac_rows), on=klist, how="left")
 
-    feats = feats.merge(ac_df, on=klist, how="left")
+    # ---- robust summaries to avoid 0-median collapse ----
+    rows = []
+    for key_vals, sub in g.groupby(klist, sort=False):
+        logger.debug(f"Computing robust summaries for {key_vals}")
+        sub = sub.sort_values("date", kind="mergesort")
+        gr = pd.to_numeric(sub["gr"], errors="coerce")
+        up = pd.to_numeric(sub["up"], errors="coerce")
+        dn = pd.to_numeric(sub["dn"], errors="coerce")  # positive magnitudes
 
-    # Optional: PCA on smoothed trajectories to capture shape
-    if include_pca_smoothed:
-        if PCA is None:
-            # silently skip if sklearn not available
-            pass
-        else:
-            # build a wide matrix of smoothed gr (same length per series by pivot)
+        gr_med_nz, gr_trim_mean, gr_huber_mean, gr_med_abs, gr_share_zero = (
+            _robust_summaries(gr, tau)
+        )
+        up_med = np.nanmedian(up) if up.notna().any() else np.nan
+        dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
+
+        row = dict(
+            zip(
+                klist, key_vals if isinstance(key_vals, tuple) else (key_vals,)
+            )
+        )
+        row.update(
+            {
+                "gr_median_nz": gr_med_nz,
+                "gr_trimmed_mean_10_90": gr_trim_mean,
+                "gr_huber_mean_q01_q99": gr_huber_mean,
+                "gr_median_abs": gr_med_abs,
+                "gr_share_zero": gr_share_zero,
+                "median_up": up_med,
+                "median_down_mag": dn_med,
+            }
+        )
+        rows.append(row)
+    feats = feats.merge(pd.DataFrame(rows), on=klist, how="left")
+
+    # ---- optional PCA on smoothed trajectories ----
+    if include_pca_smoothed and ("date" in g.columns):
+        try:
+            logger.debug("Computing PCA on smoothed trajectories...")
             gg = g.sort_values(klist + ["date"]).copy()
-            gg["gr_sm"] = gg.groupby(klist)["growth_rate_clipped"].transform(
+            gg["gr_sm"] = gg.groupby(klist)["gr"].transform(
                 lambda s: s.rolling(smooth_window, min_periods=1).mean()
             )
             wide = gg.pivot_table(
                 index=klist, columns="date", values="gr_sm", aggfunc="first"
-            )
-            # fill missing with 0 (neutral), then standardize per-column
-            wide = wide.fillna(0.0)
-            if wide.shape[1] >= pca_components + 2:
-                # standardize columns to comparable scale
+            ).fillna(0.0)
+            if wide.shape[0] >= 5 and wide.shape[1] >= pca_components + 2:
+                wide = wide.astype(float)
                 wide_std = (wide - wide.mean(axis=0)) / (
                     wide.std(axis=0) + 1e-12
                 )
-                pca = PCA(n_components=pca_components, random_state=0)
-                Z = pca.fit_transform(wide_std.values)
-                pca_cols = {i: f"traj_pca_{i+1}" for i in range(Z.shape[1])}
+                Z = PCA(
+                    n_components=pca_components, random_state=0
+                ).fit_transform(wide_std.values)
                 Z_df = pd.DataFrame(
-                    Z, index=wide.index, columns=list(pca_cols.values())
-                )
-                Z_df = Z_df.reset_index()
+                    Z,
+                    index=wide.index,
+                    columns=[f"traj_pca_{i+1}" for i in range(Z.shape[1])],
+                ).reset_index()
                 feats = feats.merge(Z_df, on=klist, how="left")
+        except Exception:
+            logger.warning("PCA failed; skipping trajectory features")
+            # silently skip PCA if sklearn missing or shape not suitable
+            pass
 
-    # Ensure finite and non-negative for BTNMF
+    # ---- BTNMF-ready, non-negative [0,1] scaling ----
     num_cols = [c for c in feats.columns if c not in klist]
-    X = feats[num_cols].astype(float)
+    X = feats[num_cols].apply(pd.to_numeric, errors="coerce")
 
-    # Replace inf/NaN
     X = X.replace([np.inf, -np.inf], np.nan)
     X = X.fillna(X.median(numeric_only=True))
 
-    # Shift to non-negative (BTNMF-friendly) then scale to [0,1]
     col_min = X.min(axis=0)
-    X_nonneg = X - col_min  # shift
+    X_nonneg = X - col_min
     col_max = X_nonneg.max(axis=0).replace(0, 1.0)
     X_scaled = X_nonneg / col_max
 
     M_btnmf = pd.concat([feats[klist], X_scaled], axis=1)
-
-    return M_btnmf, feats  # scaled (for BTNMF) and raw feature tables
+    return M_btnmf, feats
 
 
 def zscore_with_axis(
