@@ -660,61 +660,46 @@ def _robust_summaries(
     min_support: int = 5,
     return_meta: bool = False,
 ):
-    """
-    Robust summaries of a series with safe guards and a support check.
-
-    Returns (in order):
-      gr_median_nz, trimmed_mean_10_90, huber_mean_q01_q99,
-      gr_median_abs, gr_share_zero
-
-    If return_meta=True, also returns:
-      meta = {
-        'n': int,            # non-NaN samples
-        'n_nonzero': int,    # |x|>tau samples
-        'supported': bool,   # n >= min_support AND has variance
-        'has_variance': bool
-      }
-    """
     x = pd.to_numeric(gr, errors="coerce").dropna().to_numpy()
     n = x.size
     has_var = np.nanstd(x) > 0
     supported = (n >= min_support) and has_var
 
-    # Default outputs
     out = (np.nan, np.nan, np.nan, np.nan, np.nan)
-
     if supported:
-        # median of non-zeros (dead-zone tau)
         nz = x[np.abs(x) > tau]
         gr_median_nz = np.nanmedian(nz) if nz.size else np.nan
 
-        # trimmed mean (10–90)
         if n >= 5:
             q10, q90 = np.nanpercentile(x, [10, 90])
-            trimmed_mask = (x >= q10) & (x <= q90)
-            trimmed = x[trimmed_mask]
-            trimmed_mean_10_90 = (
-                np.nanmean(trimmed) if trimmed.size else np.nan
-            )
+            if np.isfinite(q10) and np.isfinite(q90):
+                trimmed = x[(x >= q10) & (x <= q90)]
+                gr_trimmed_mean = (
+                    np.nanmean(trimmed) if trimmed.size else np.nan
+                )
+            else:
+                gr_trimmed_mean = np.nan
         else:
-            trimmed_mean_10_90 = np.nan
+            gr_trimmed_mean = np.nan
 
-        # huberized mean (winsorize 1–99 or mask)
         if n >= 5:
             q01, q99 = np.nanpercentile(x, [1, 99])
-            huber_mask = (x >= q01) & (x <= q99)
-            huberized = x[huber_mask]
-            gr_huber_mean = np.nanmean(huberized) if huberized.size else np.nan
+            if np.isfinite(q01) and np.isfinite(q99):
+                huberized = x[(x >= q01) & (x <= q99)]
+                gr_huber_mean = (
+                    np.nanmean(huberized) if huberized.size else np.nan
+                )
+            else:
+                gr_huber_mean = np.nan
         else:
             gr_huber_mean = np.nan
 
-        # robust scale + flatness
         gr_median_abs = np.nanmedian(np.abs(x)) if n else np.nan
         gr_share_zero = np.mean(np.isclose(x, 0)) if n else np.nan
 
         out = (
             gr_median_nz,
-            trimmed_mean_10_90,
+            gr_trimmed_mean,
             gr_huber_mean,
             gr_median_abs,
             gr_share_zero,
@@ -738,13 +723,13 @@ def build_growth_features_for_clustering(
     include_pca_smoothed: bool = True,
     pca_components: int = 4,
     smooth_window: int = 4,
-    # NEW: feature support/quality controls
-    min_support_ac1: int = 4,  # ≥ 4 points for lag1
-    min_support_ac4: int = 6,  # ≥ 6 points for lag4
-    min_support_ac12: int = 14,  # ≥14 points for lag12
-    min_support_trend: int = 5,  # ≥ 5 points with variance
-    min_support_season: int = 26,  # ≥26 points for 52-wk seasonality proxy
-    drop_if_nan_frac_ge: float = 0.95,  # drop column if ≥95% NaN before impute
+    # feature support/quality controls
+    min_support_ac1: int = 4,
+    min_support_ac4: int = 6,
+    min_support_ac12: int = 14,
+    min_support_trend: int = 5,
+    min_support_season: int = 26,
+    drop_if_nan_frac_ge: float = 0.95,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Returns:
@@ -752,7 +737,7 @@ def build_growth_features_for_clustering(
       feats   : raw feature table (with NaNs preserved pre-scaling)
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
-    # g = wk.copy()
+
     g = wk
     klist = list(keys)
 
@@ -822,43 +807,35 @@ def build_growth_features_for_clustering(
     for key_vals, sub in g.groupby(klist, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gr"], errors="coerce")
-        # smooth slightly to reduce sparsity
         gr_sm = gr.rolling(smooth_window, min_periods=1).mean()
 
         n_eff = int(gr_sm.notna().sum())
-        has_var = np.nanstd(gr_sm) > 0
+        has_var = np.nanstd(gr_sm.values) > 0
 
-        # lag-1 always tries on smoothed
         ac1 = (
             _safe_autocorr(gr_sm, 1)
             if n_eff >= min_support_ac1 and has_var
             else np.nan
         )
 
-        # lag-4: fallback to directional corr if too short
         if n_eff >= min_support_ac4 and has_var:
             ac4 = _safe_autocorr(gr_sm, 4)
         elif n_eff >= min_support_ac1:
-            gr_sm_sign = gr_sm.transform(np.sign)
-            ac4 = _safe_autocorr(gr_sm_sign, 1)  # direction fallback
+            gr_sm_sign = gr_sm.apply(np.sign)  # keep Series semantics
+            ac4 = _safe_autocorr(gr_sm_sign, 1)
         else:
             ac4 = np.nan
 
-        # lag-12 only if truly long
         ac12 = (
             _safe_autocorr(gr_sm, 12)
             if (n_eff >= min_support_ac12 and has_var)
             else np.nan
         )
-
-        # trend slope only with enough support & variance
         slope = (
             _trend_slope(gr_sm)
             if (n_eff >= min_support_trend and has_var)
             else np.nan
         )
-
-        # seasonality only if long enough
         seas = (
             _seasonal_corr(sub["date"], gr_sm, period=52)
             if (n_eff >= min_support_season and has_var)
@@ -883,7 +860,7 @@ def build_growth_features_for_clustering(
 
     feats = feats.merge(pd.DataFrame(ac_rows), on=klist, how="left")
 
-    # ---- robust summaries (help avoid 0-median collapse) ----
+    # ---- robust summaries (with support metadata) ----
     rows = []
     logger.info("Computing robust summaries...")
     for key_vals, sub in g.groupby(klist, sort=False):
@@ -892,14 +869,13 @@ def build_growth_features_for_clustering(
         up = pd.to_numeric(sub["up"], errors="coerce")
         dn = pd.to_numeric(sub["dn"], errors="coerce")
 
-        # inside build_growth_features_for_clustering, in the loop per series:
         (
             gr_med_nz,
             gr_trim_mean,
             gr_huber_mean,
             gr_med_abs,
             gr_share_zero,
-        ), meta = _robust_summaries(  # noqa: E501
+        ), meta = _robust_summaries(
             gr, tau, min_support=min_support_trend, return_meta=True
         )
 
@@ -920,7 +896,6 @@ def build_growth_features_for_clustering(
                 "gr_share_zero": gr_share_zero,
                 "median_up": up_med,
                 "median_down_mag": dn_med,
-                # optional: per-row diagnostics if you want to inspect later
                 "robust_support_n": meta["n"],
                 "robust_has_variance": meta["has_variance"],
                 "robust_supported": meta["supported"],
@@ -931,7 +906,7 @@ def build_growth_features_for_clustering(
     feats = feats.merge(pd.DataFrame(rows), on=klist, how="left")
 
     # ---- optional PCA on smoothed trajectories ----
-    if include_pca_smoothed and ("date" in g.columns):
+    if include_pca_smoothed and ("date" in g.columns) and (_PCA is not None):
         try:
             logger.info("Computing PCA on smoothed trajectories...")
             gg = g.sort_values(klist + ["date"]).copy()
@@ -946,7 +921,7 @@ def build_growth_features_for_clustering(
                 wide_std = (wide - wide.mean(axis=0)) / (
                     wide.std(axis=0) + 1e-12
                 )
-                Z = PCA(
+                Z = _PCA(
                     n_components=pca_components, random_state=0
                 ).fit_transform(wide_std.values)
                 Z_df = pd.DataFrame(
@@ -959,9 +934,9 @@ def build_growth_features_for_clustering(
             logger.warning("PCA failed; skipping trajectory features")
 
     # ---- diagnostics & column pruning BEFORE scaling ----
+    logger.info("Computing diagnostics...")
     diag_rows = []
     num_cols_all = [c for c in feats.columns if c not in klist]
-    logger.info("Computing diagnostics...")
     for c in num_cols_all:
         s = pd.to_numeric(feats[c], errors="coerce")
         nan_frac = float(s.isna().mean())
@@ -978,23 +953,33 @@ def build_growth_features_for_clustering(
     diag = pd.DataFrame(diag_rows).sort_values("feature")
 
     keep_cols = [r["feature"] for r in diag_rows if not r["dropped"]]
-    # ensure we don't accidentally drop everything
     if not keep_cols:
-        keep_cols = num_cols_all  # fall back: keep all, impute later
+        keep_cols = num_cols_all
+
+    dropped_feats = [r["feature"] for r in diag_rows if r["dropped"]]
+    if dropped_feats:
+        logger.warning(
+            f"Dropping near-empty features (≥{drop_if_nan_frac_ge:.0%} NaN): "
+            f"{dropped_feats[:10]}{'...' if len(dropped_feats) > 10 else ''}"
+        )
 
     feats_kept = pd.concat([feats[klist], feats[keep_cols]], axis=1)
 
-    # ---- BTNMF-ready scaling ----
-    X = feats_kept[[c for c in feats_kept.columns if c not in klist]].apply(
-        pd.to_numeric, errors="coerce"
-    )
+    # ---- BTNMF-ready scaling (coerce to float; use aligned subtract/divide) ----
+    X = feats_kept.drop(columns=klist)
+    # convert ANY dtype (including boolean/nullable) to float64
+    X = X.apply(pd.to_numeric, errors="coerce").astype("float64")
     X = X.replace([np.inf, -np.inf], np.nan)
     X = X.fillna(X.median(numeric_only=True))
 
-    col_min = X.min(axis=0)
-    X_nonneg = X - col_min
-    col_max = X_nonneg.max(axis=0).replace(0, 1.0)
-    X_scaled = (X_nonneg / col_max).astype("float32")
+    # aligned, column-wise operations (avoid boolean subtract)
+    col_min = X.min(axis=0).astype("float64")
+    X_nonneg = X.subtract(col_min, axis=1)
+
+    col_max = X_nonneg.max(axis=0).astype("float64")
+    col_max = col_max.mask(col_max == 0, 1.0)
+
+    X_scaled = X_nonneg.divide(col_max, axis=1).astype("float32")
 
     M_btnmf = pd.concat([feats_kept[klist], X_scaled], axis=1)
     return M_btnmf, feats, diag
