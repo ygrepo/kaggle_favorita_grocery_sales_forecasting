@@ -757,7 +757,7 @@ def build_growth_features_for_clustering(
     klist = list(keys)
 
     # ---- base series ----
-    logger.info("🏗  Building base series...")
+    logger.info("Building base series...")
     g = g.assign(
         gc=pd.to_numeric(g["growth_continuous"], errors="coerce"),
         gr=pd.to_numeric(g["growth_rate_clipped"], errors="coerce"),
@@ -818,6 +818,7 @@ def build_growth_features_for_clustering(
 
     # ---- autocorrs / trend / seasonality with safeguards ----
     ac_rows = []
+    logger.info("Computing autocorrs, trend, seasonality...")
     for key_vals, sub in g.groupby(klist, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gr"], errors="coerce")
@@ -884,6 +885,7 @@ def build_growth_features_for_clustering(
 
     # ---- robust summaries (help avoid 0-median collapse) ----
     rows = []
+    logger.info("Computing robust summaries...")
     for key_vals, sub in g.groupby(klist, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gr"], errors="coerce")
@@ -931,6 +933,7 @@ def build_growth_features_for_clustering(
     # ---- optional PCA on smoothed trajectories ----
     if include_pca_smoothed and ("date" in g.columns):
         try:
+            logger.info("Computing PCA on smoothed trajectories...")
             gg = g.sort_values(klist + ["date"]).copy()
             gg["gr_sm"] = gg.groupby(klist)["gr"].transform(
                 lambda s: s.rolling(smooth_window, min_periods=1).mean()
@@ -958,6 +961,7 @@ def build_growth_features_for_clustering(
     # ---- diagnostics & column pruning BEFORE scaling ----
     diag_rows = []
     num_cols_all = [c for c in feats.columns if c not in klist]
+    logger.info("Computing diagnostics...")
     for c in num_cols_all:
         s = pd.to_numeric(feats[c], errors="coerce")
         nan_frac = float(s.isna().mean())
