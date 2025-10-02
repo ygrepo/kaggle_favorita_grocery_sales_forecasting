@@ -23,6 +23,7 @@ from src.utils import (
     get_logger,
     save_csv_or_parquet,
     read_csv_or_parquet,
+    str2bool,
 )
 
 logger = get_logger(__name__)
@@ -59,7 +60,7 @@ def parse_args():
     )
     parser.add_argument(
         "--include_pca_smoothed",
-        type=bool,
+        type=str2bool,
         default=False,
         help="Whether to include PCA on smoothed trajectories",
     )
