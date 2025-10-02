@@ -260,6 +260,16 @@ def main():
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
         block_id_fn = Path(args.block_id_fn).resolve()
+        #         out = cluster_data_and_explain_blocks(
+        #     M_btnmf,
+        #     row_range=range(8, 17, 2),
+        #     col_range=range(3, 7),
+        #     normalize=False,      # <-- important for M_btnmf
+        #     k_row=2,
+        #     k_col=2,
+        #     max_iter=100,
+        # )
+
         cluster_data_and_explain_blocks(
             df,
             row_range=args.row_range,

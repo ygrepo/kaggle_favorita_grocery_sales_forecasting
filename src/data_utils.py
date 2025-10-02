@@ -653,40 +653,82 @@ def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
     return float(np.sqrt(cs**2 + cc**2))
 
 
-def _robust_summaries(s: pd.Series, tau: float):
-    s = pd.to_numeric(s, errors="coerce").astype(float)
-    nz = s[np.abs(s) > tau]
-    if nz.empty:
-        med_nz = np.nan
-    else:
-        med_nz = np.nanmedian(nz)
+def _robust_summaries(
+    gr: pd.Series | np.ndarray,
+    tau: float = 0.01,
+    *,
+    min_support: int = 5,
+    return_meta: bool = False,
+):
+    """
+    Robust summaries of a series with safe guards and a support check.
 
-    # trimmed mean (10-90) and huberized mean (winsorize 1-99)
-    q10, q90 = (
-        np.nanpercentile(s, [10, 90]) if s.notna().sum() else (np.nan, np.nan)
-    )
-    trimmed = s[(s >= q10) & (s <= q90)]
-    trimmed_mean_10_90 = (
-        np.nanmean(trimmed) if trimmed.notna().any() else np.nan
-    )
+    Returns (in order):
+      gr_median_nz, trimmed_mean_10_90, huber_mean_q01_q99,
+      gr_median_abs, gr_share_zero
 
-    q01, q99 = (
-        np.nanpercentile(s, [1, 99]) if s.notna().sum() else (np.nan, np.nan)
-    )
-    huberized = (
-        np.clip(s, q01, q99) if np.isfinite(q01) and np.isfinite(q99) else s
-    )
-    huber_mean_q01_q99 = np.nanmean(huberized)
+    If return_meta=True, also returns:
+      meta = {
+        'n': int,            # non-NaN samples
+        'n_nonzero': int,    # |x|>tau samples
+        'supported': bool,   # n >= min_support AND has variance
+        'has_variance': bool
+      }
+    """
+    x = pd.to_numeric(gr, errors="coerce").dropna().to_numpy()
+    n = x.size
+    has_var = np.nanstd(x) > 0
+    supported = (n >= min_support) and has_var
 
-    median_abs = np.nanmedian(np.abs(s)) if s.notna().any() else np.nan
-    share_zero = np.mean(np.abs(s) <= tau) if len(s) else np.nan
-    return (
-        med_nz,
-        trimmed_mean_10_90,
-        huber_mean_q01_q99,
-        median_abs,
-        share_zero,
-    )
+    # Default outputs
+    out = (np.nan, np.nan, np.nan, np.nan, np.nan)
+
+    if supported:
+        # median of non-zeros (dead-zone tau)
+        nz = x[np.abs(x) > tau]
+        gr_median_nz = np.nanmedian(nz) if nz.size else np.nan
+
+        # trimmed mean (10–90)
+        if n >= 5:
+            q10, q90 = np.nanpercentile(x, [10, 90])
+            trimmed_mask = (x >= q10) & (x <= q90)
+            trimmed = x[trimmed_mask]
+            trimmed_mean_10_90 = (
+                np.nanmean(trimmed) if trimmed.size else np.nan
+            )
+        else:
+            trimmed_mean_10_90 = np.nan
+
+        # huberized mean (winsorize 1–99 or mask)
+        if n >= 5:
+            q01, q99 = np.nanpercentile(x, [1, 99])
+            huber_mask = (x >= q01) & (x <= q99)
+            huberized = x[huber_mask]
+            gr_huber_mean = np.nanmean(huberized) if huberized.size else np.nan
+        else:
+            gr_huber_mean = np.nan
+
+        # robust scale + flatness
+        gr_median_abs = np.nanmedian(np.abs(x)) if n else np.nan
+        gr_share_zero = np.mean(np.isclose(x, 0)) if n else np.nan
+
+        out = (
+            gr_median_nz,
+            trimmed_mean_10_90,
+            gr_huber_mean,
+            gr_median_abs,
+            gr_share_zero,
+        )
+
+    if return_meta:
+        meta = {
+            "n": int(n),
+            "n_nonzero": int((np.abs(x) > tau).sum()),
+            "supported": bool(supported),
+            "has_variance": bool(has_var),
+        }
+        return out, meta
+    return out
 
 
 def build_growth_features_for_clustering(
@@ -711,11 +753,11 @@ def build_growth_features_for_clustering(
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
     # g = wk.copy()
-    g = wk
+    g = w
     klist = list(keys)
 
     # ---- base series ----
-    logger.info("Building base series")
+    logger.info("🏗  Building base series...")
     g = g.assign(
         gc=pd.to_numeric(g["growth_continuous"], errors="coerce"),
         gr=pd.to_numeric(g["growth_rate_clipped"], errors="coerce"),
@@ -724,7 +766,6 @@ def build_growth_features_for_clustering(
     )
 
     # --- base aggregates (robust IQRs) ---
-    logger.info("Computing IQRs...")
     iqr_gc = (
         "gc",
         lambda s: np.nanpercentile(pd.to_numeric(s, "coerce"), 75)
@@ -736,7 +777,6 @@ def build_growth_features_for_clustering(
         - np.nanpercentile(pd.to_numeric(s, "coerce"), 25),
     )
 
-    logger.info("Computing base aggregates...")
     feats = (
         g.groupby(klist)
         .agg(
@@ -778,7 +818,6 @@ def build_growth_features_for_clustering(
 
     # ---- autocorrs / trend / seasonality with safeguards ----
     ac_rows = []
-    logger.info("Computing autocorrs...")
     for key_vals, sub in g.groupby(klist, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gr"], errors="coerce")
@@ -799,7 +838,8 @@ def build_growth_features_for_clustering(
         if n_eff >= min_support_ac4 and has_var:
             ac4 = _safe_autocorr(gr_sm, 4)
         elif n_eff >= min_support_ac1:
-            ac4 = _safe_autocorr(np.sign(gr_sm), 1)  # direction fallback
+            gr_sm_sign = gr_sm.transform(np.sign)
+            ac4 = _safe_autocorr(gr_sm_sign, 1)  # direction fallback
         else:
             ac4 = np.nan
 
@@ -844,16 +884,23 @@ def build_growth_features_for_clustering(
 
     # ---- robust summaries (help avoid 0-median collapse) ----
     rows = []
-    logger.info("Computing robust summaries...")
     for key_vals, sub in g.groupby(klist, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gr"], errors="coerce")
         up = pd.to_numeric(sub["up"], errors="coerce")
         dn = pd.to_numeric(sub["dn"], errors="coerce")
 
-        gr_med_nz, gr_trim_mean, gr_huber_mean, gr_med_abs, gr_share_zero = (
-            _robust_summaries(gr, tau)
+        # inside build_growth_features_for_clustering, in the loop per series:
+        (
+            gr_med_nz,
+            gr_trim_mean,
+            gr_huber_mean,
+            gr_med_abs,
+            gr_share_zero,
+        ), meta = _robust_summaries(  # noqa: E501
+            gr, tau, min_support=min_support_trend, return_meta=True
         )
+
         up_med = np.nanmedian(up) if up.notna().any() else np.nan
         dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
 
@@ -871,6 +918,10 @@ def build_growth_features_for_clustering(
                 "gr_share_zero": gr_share_zero,
                 "median_up": up_med,
                 "median_down_mag": dn_med,
+                # optional: per-row diagnostics if you want to inspect later
+                "robust_support_n": meta["n"],
+                "robust_has_variance": meta["has_variance"],
+                "robust_supported": meta["supported"],
             }
         )
         rows.append(row)
@@ -939,7 +990,7 @@ def build_growth_features_for_clustering(
     col_min = X.min(axis=0)
     X_nonneg = X - col_min
     col_max = X_nonneg.max(axis=0).replace(0, 1.0)
-    X_scaled = X_nonneg / col_max
+    X_scaled = (X_nonneg / col_max).astype("float32")
 
     M_btnmf = pd.concat([feats_kept[klist], X_scaled], axis=1)
     return M_btnmf, feats, diag
