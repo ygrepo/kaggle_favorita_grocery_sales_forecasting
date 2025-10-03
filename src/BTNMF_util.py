@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from src.utils import get_logger
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
+import pickle
+
+import warnings
 
 logger = get_logger(__name__)
 
@@ -1424,6 +1427,7 @@ def cluster_data_and_explain_blocks(
     summary_fn: Optional[Path] = None,
     block_id_fn: Optional[Path] = None,
     output_fn: Optional[Path] = None,
+    model_fn: Optional[Path] = None,
     n_jobs: int = 1,
     batch_size: int = 4,
 ) -> pd.DataFrame:
@@ -1517,19 +1521,20 @@ def cluster_data_and_explain_blocks(
         return_frame=False,
     )
 
+    col_names = np.array(feat_cols)
     # optional summary
     if summary_fn is not None:
         summary = est.explain_blocks(
             X=X_mat,
             assign=assign,
             row_names=row_names,
-            col_names=np.array(feat_cols),
+            col_names=col_names,
             top_k=5,
         )
         summary.to_csv(summary_fn, index=False)
 
     # diagnostics
-    U, _, V = est.factors()
+    U, B, V = est.factors()
 
     block_ids = assign["block_id"]
     out = _build_assign_df(row_names, block_ids, df, id_cols=("store_item",))
@@ -1544,6 +1549,24 @@ def cluster_data_and_explain_blocks(
     )
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")
+
+    cluster_data_and_explain_blocks = {
+        # factorization results
+        "U": U,
+        "V": V,
+        "B": B,
+        # block energy matrix
+        "E": (B**2) * (U.sum(axis=0)[:, None] * V.sum(axis=0)[None, :]),
+        # labels (hard assignments)
+        "row_names": row_names,
+        "col_labels": col_names,
+    }
+
+    if model_fn is not None:
+
+        with open(model_fn, "wb") as f:
+            pickle.dump(cluster_data_and_explain_blocks, f)
+        logger.info(f"Saved model to {model_fn}")
 
     if output_fn is not None:
         save_csv_or_parquet(out, output_fn)
