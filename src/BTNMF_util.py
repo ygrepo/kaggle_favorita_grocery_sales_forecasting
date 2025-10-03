@@ -1484,22 +1484,53 @@ def cluster_data_and_explain_blocks(
 
     # diagnostics
     U, _, V = est.factors()
-    bid = np.asarray(assign["block_id"]).ravel()
-    logger.info(f"bid shape: {bid.shape}")
+    bid_matrix = np.asarray(assign["block_id"])  # Shape: (I, J)
+    r_star = np.asarray(
+        assign["r_star"]
+    )  # Shape: (I, J) - row cluster assignments
+
+    logger.info(f"bid_matrix shape: {bid_matrix.shape}")
+    logger.info(f"r_star shape: {r_star.shape}")
+
+    # Extract row-level block assignments (one per store_item)
+    # The block_id matrix already contains proper assignments from assign_unique_blocks
+    # We just need to aggregate across features for each store_item
+
+    row_block_assignments = []
+    for i in range(bid_matrix.shape[0]):  # For each store_item (row)
+        # Get all block_ids for this store_item across all features
+        row_block_ids = bid_matrix[i, :]
+
+        # Only consider valid assignments (>= 0)
+        valid_blocks = row_block_ids[row_block_ids >= 0]
+
+        if len(valid_blocks) > 0:
+            # Take the most common block_id for this store_item
+            unique_blocks, counts = np.unique(valid_blocks, return_counts=True)
+            most_common_block = unique_blocks[np.argmax(counts)]
+            row_block_assignments.append(most_common_block)
+        else:
+            row_block_assignments.append(-1)  # No valid assignment
+
+    row_block_assignments = np.array(row_block_assignments)
+    logger.info(f"row_block_assignments shape: {row_block_assignments.shape}")
+    unique_assignments = np.unique(row_block_assignments)
     logger.info(
-        f"unique block_ids (first 20): {np.unique(bid)[:20]}  count: {np.unique(bid).size}"
+        f"unique block assignments (first 20): {unique_assignments[:20]}  "
+        f"count: {unique_assignments.size}"
     )
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # len R
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # len C
+
     if block_id_fn is not None:
-        np.save(block_id_fn, bid)
+        np.save(block_id_fn, row_block_assignments)
 
     # ----- merge block_id back to df -----
 
     assign_df = pd.DataFrame(
         {
-            "store_item": df["store_item"].astype(str).to_numpy(),
-            "block_id": bid,
+            "store_item": row_names.astype(str),
+            "block_id": row_block_assignments,
         }
     )
     out = df.merge(assign_df, on=["store_item"], how="left")
