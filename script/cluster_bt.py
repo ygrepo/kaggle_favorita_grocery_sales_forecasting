@@ -159,6 +159,12 @@ def parse_args():
         help="Path to output file (relative to project root)",
     )
     parser.add_argument(
+        "--model_fn",
+        type=str,
+        default="",
+        help="Path to model file (relative to project root)",
+    )
+    parser.add_argument(
         "--n_jobs",
         type=int,
         default=1,
@@ -221,6 +227,7 @@ def main():
         logger.info(f"  Normalize: {args.normalize}")
         logger.info(f"  Block id fn: {args.block_id_fn}")
         logger.info(f"  Output fn: {args.output_fn}")
+        logger.info(f"  Model fn: {args.model_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
         data_fn = Path(args.data_fn).resolve()
@@ -239,6 +246,7 @@ def main():
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
         block_id_fn = Path(args.block_id_fn).resolve()
+        model_fn = Path(args.model_fn).resolve()
         #         out = cluster_data_and_explain_blocks(
         #     M_btnmf,
         #     row_range=range(8, 17, 2),
@@ -271,6 +279,7 @@ def main():
             summary_fn=summary_fn,
             block_id_fn=block_id_fn,
             output_fn=output_fn,
+            model_fn=model_fn,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
         )

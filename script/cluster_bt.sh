@@ -19,6 +19,7 @@ TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_
 SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
 BLOCK_ID_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
+MODEL_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_model.pickle"
 
 
 
@@ -78,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
     --block_id_fn) BLOCK_ID_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
+    --model_fn) MODEL_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -115,6 +117,7 @@ echo "Normalize: $NORMALIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
 echo "Block id fn: $BLOCK_ID_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
+echo "Model fn: $MODEL_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
@@ -145,6 +148,7 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --summary_fn "$SUMMARY_FN" \
   --block_id_fn "$BLOCK_ID_FN" \
   --output_fn "$OUTPUT_FN" \
+  --model_fn "$MODEL_FN" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" 
 exit_code=$?
