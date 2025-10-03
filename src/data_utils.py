@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Optional
+from typing import Optional, Any
 from tqdm import tqdm
 from pathlib import Path
 from statsmodels.tsa.arima.model import ARIMA
@@ -659,6 +659,9 @@ def _robust_summaries(
     *,
     min_support: int = 5,
     return_meta: bool = False,
+) -> (
+    tuple[float, float, float, float, float]
+    | tuple[tuple[float, float, float, float, float], dict[str, Any]]
 ):
     x = pd.to_numeric(gr, errors="coerce").dropna().to_numpy()
     n = x.size
@@ -720,7 +723,7 @@ def build_growth_features_for_clustering(
     wk: pd.DataFrame,
     keys: tuple[str, ...] = ("store_item",),
     tau: float = 0.01,
-    include_pca_smoothed: bool = True,
+    include_pca_smoothed: bool = False,
     pca_components: int = 4,
     smooth_window: int = 4,
     # feature support/quality controls
@@ -730,6 +733,7 @@ def build_growth_features_for_clustering(
     min_support_trend: int = 5,
     min_support_season: int = 26,
     drop_if_nan_frac_ge: float = 0.95,
+    return_meta: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Returns:
@@ -738,7 +742,7 @@ def build_growth_features_for_clustering(
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
 
-    g = wk
+    g = wk.copy()
     logger.info("Building features for clustering...")
     klist = list(keys)
 
@@ -869,45 +873,78 @@ def build_growth_features_for_clustering(
         gr = pd.to_numeric(sub["gr"], errors="coerce")
         up = pd.to_numeric(sub["up"], errors="coerce")
         dn = pd.to_numeric(sub["dn"], errors="coerce")
-
-        (
-            gr_med_nz,
-            gr_trim_mean,
-            gr_huber_mean,
-            gr_med_abs,
-            gr_share_zero,
-        ), meta = _robust_summaries(
-            gr, tau, min_support=min_support_trend, return_meta=True
-        )
-
-        up_med = np.nanmedian(up) if up.notna().any() else np.nan
-        dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
-
-        row = dict(
-            zip(
-                klist, key_vals if isinstance(key_vals, tuple) else (key_vals,)
+        if return_meta:
+            robust_stats, meta = _robust_summaries(
+                gr, tau, min_support=min_support_trend, return_meta=True
             )
-        )
-        row.update(
-            {
-                "gr_median_nz": gr_med_nz,
-                "gr_trimmed_mean_10_90": gr_trim_mean,
-                "gr_huber_mean_q01_q99": gr_huber_mean,
-                "gr_median_abs": gr_med_abs,
-                "gr_share_zero": gr_share_zero,
-                "median_up": up_med,
-                "median_down_mag": dn_med,
-                "robust_support_n": meta["n"],
-                "robust_has_variance": meta["has_variance"],
-                "robust_supported": meta["supported"],
-            }
-        )
+            (
+                gr_med_nz,
+                gr_trim_mean,
+                gr_huber_mean,
+                gr_med_abs,
+                gr_share_zero,
+            ) = robust_stats
+
+            up_med = np.nanmedian(up) if up.notna().any() else np.nan
+            dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
+
+            row: dict[str, Any] = dict(
+                zip(
+                    klist,
+                    key_vals if isinstance(key_vals, tuple) else (key_vals,),
+                )
+            )
+            row.update(
+                {
+                    "gr_median_nz": float(gr_med_nz),
+                    "gr_trimmed_mean_10_90": float(gr_trim_mean),
+                    "gr_huber_mean_q01_q99": float(gr_huber_mean),
+                    "gr_median_abs": float(gr_med_abs),
+                    "gr_share_zero": float(gr_share_zero),
+                    "median_up": float(up_med),
+                    "median_down_mag": float(dn_med),
+                    "robust_support_n": int(meta["n"]),
+                    "robust_has_variance": bool(meta["has_variance"]),
+                    "robust_supported": bool(meta["supported"]),
+                }
+            )
+        else:
+            (
+                gr_med_nz,
+                gr_trim_mean,
+                gr_huber_mean,
+                gr_med_abs,
+                gr_share_zero,
+            ) = _robust_summaries(
+                gr, tau, min_support=min_support_trend, return_meta=False
+            )
+            up_med = np.nanmedian(up) if up.notna().any() else np.nan
+            dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
+
+            row = dict(
+                zip(
+                    klist,
+                    key_vals if isinstance(key_vals, tuple) else (key_vals,),
+                )
+            )
+            row.update(
+                {
+                    "gr_median_nz": gr_med_nz,
+                    "gr_trimmed_mean_10_90": gr_trim_mean,
+                    "gr_huber_mean_q01_q99": gr_huber_mean,
+                    "gr_median_abs": gr_med_abs,
+                    "gr_share_zero": gr_share_zero,
+                    "median_up": up_med,
+                    "median_down_mag": dn_med,
+                }
+            )
+
         rows.append(row)
 
     feats = feats.merge(pd.DataFrame(rows), on=klist, how="left")
 
     # ---- optional PCA on smoothed trajectories ----
-    if include_pca_smoothed and ("date" in g.columns) and (_PCA is not None):
+    if include_pca_smoothed and ("date" in g.columns):
         try:
             logger.info("Computing PCA on smoothed trajectories...")
             gg = g.sort_values(klist + ["date"]).copy()
@@ -922,7 +959,7 @@ def build_growth_features_for_clustering(
                 wide_std = (wide - wide.mean(axis=0)) / (
                     wide.std(axis=0) + 1e-12
                 )
-                Z = _PCA(
+                Z = PCA(
                     n_components=pca_components, random_state=0
                 ).fit_transform(wide_std.values)
                 Z_df = pd.DataFrame(
@@ -984,188 +1021,6 @@ def build_growth_features_for_clustering(
 
     M_btnmf = pd.concat([feats_kept[klist], X_scaled], axis=1)
     return M_btnmf, feats, diag
-
-
-# def build_growth_features_for_clustering(
-#     wk: pd.DataFrame,
-#     keys: tuple[str, ...] = ("store_item",),
-#     tau: float = 0.01,
-#     include_pca_smoothed: bool = True,
-#     pca_components: int = 4,
-#     smooth_window: int = 4,
-# ) -> tuple[pd.DataFrame, pd.DataFrame]:
-#     g = wk.copy()
-#     klist = list(keys)
-
-#     # ---- base series ----
-#     g = g.assign(
-#         gc=pd.to_numeric(g["growth_continuous"], errors="coerce"),
-#         gr=pd.to_numeric(g["growth_rate_clipped"], errors="coerce"),
-#         up=pd.to_numeric(g["growth_up"], errors="coerce"),
-#         dn=pd.to_numeric(g["growth_down"], errors="coerce"),
-#     )
-
-#     logger.info("Computing IQRs...")
-#     iqr_gc = (
-#         "gc",
-#         lambda s: np.nanpercentile(pd.to_numeric(s, "coerce"), 75)
-#         - np.nanpercentile(pd.to_numeric(s, "coerce"), 25),
-#     )
-#     iqr_gr = (
-#         "gr",
-#         lambda s: np.nanpercentile(pd.to_numeric(s, "coerce"), 75)
-#         - np.nanpercentile(pd.to_numeric(s, "coerce"), 25),
-#     )
-
-#     logger.info("Computing base aggregates...")
-#     feats = (
-#         g.groupby(klist)
-#         .agg(
-#             gc_mean=("gc", "mean"),
-#             gc_median=("gc", "median"),
-#             gc_std=("gc", "std"),
-#             gc_iqr=iqr_gc,
-#             gr_mean=("gr", "mean"),
-#             gr_std=("gr", "std"),
-#             gr_iqr=iqr_gr,
-#             # respect dead-zone τ
-#             frac_nonzero=(
-#                 "gr",
-#                 lambda s: np.mean(np.abs(pd.to_numeric(s, "coerce")) > tau),
-#             ),
-#             frac_up=(
-#                 "gr",
-#                 lambda s: np.mean(pd.to_numeric(s, "coerce") > tau),
-#             ),
-#             frac_down=(
-#                 "gr",
-#                 lambda s: np.mean(pd.to_numeric(s, "coerce") < -tau),
-#             ),
-#             pos_to_neg_ratio=(
-#                 "gr",
-#                 lambda s: (
-#                     np.nan
-#                     if (np.sum(pd.to_numeric(s, "coerce") < -tau) == 0)
-#                     else np.sum(pd.to_numeric(s, "coerce") > tau)
-#                     / max(1, np.sum(pd.to_numeric(s, "coerce") < -tau))
-#                 ),
-#             ),
-#             big_move_rate=(
-#                 "gr",
-#                 lambda s: np.mean(np.abs(pd.to_numeric(s, "coerce")) > 0.10),
-#             ),
-#         )
-#         .reset_index()
-#     )
-
-#     # ---- autocorrs / trend / seasonality ----
-#     ac_rows = []
-#     for key_vals, sub in g.groupby(klist, sort=False):
-#         logger.debug(f"Computing autocorrs for {key_vals}")
-#         sub = sub.sort_values("date", kind="mergesort")
-#         gr = pd.to_numeric(sub["gr"], errors="coerce")
-
-#         ac1 = _safe_autocorr(gr, 1)
-#         ac4 = _safe_autocorr(gr, 4)
-#         ac12 = _safe_autocorr(gr, 12)
-#         slope = _trend_slope(gr)
-#         seas = _seasonal_corr(sub["date"], gr, period=52)
-
-#         row = dict(
-#             zip(
-#                 klist, key_vals if isinstance(key_vals, tuple) else (key_vals,)
-#             )
-#         )
-#         row.update(
-#             dict(
-#                 ac_lag1=ac1,
-#                 ac_lag4=ac4,
-#                 ac_lag12=ac12,
-#                 trend_slope=slope,
-#                 seasonal_strength=seas,
-#             )
-#         )
-#         ac_rows.append(row)
-#     feats = feats.merge(pd.DataFrame(ac_rows), on=klist, how="left")
-
-#     # ---- robust summaries to avoid 0-median collapse ----
-#     rows = []
-#     for key_vals, sub in g.groupby(klist, sort=False):
-#         logger.debug(f"Computing robust summaries for {key_vals}")
-#         sub = sub.sort_values("date", kind="mergesort")
-#         gr = pd.to_numeric(sub["gr"], errors="coerce")
-#         up = pd.to_numeric(sub["up"], errors="coerce")
-#         dn = pd.to_numeric(sub["dn"], errors="coerce")  # positive magnitudes
-
-#         gr_med_nz, gr_trim_mean, gr_huber_mean, gr_med_abs, gr_share_zero = (
-#             _robust_summaries(gr, tau)
-#         )
-#         up_med = np.nanmedian(up) if up.notna().any() else np.nan
-#         dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
-
-#         row = dict(
-#             zip(
-#                 klist, key_vals if isinstance(key_vals, tuple) else (key_vals,)
-#             )
-#         )
-#         row.update(
-#             {
-#                 "gr_median_nz": gr_med_nz,
-#                 "gr_trimmed_mean_10_90": gr_trim_mean,
-#                 "gr_huber_mean_q01_q99": gr_huber_mean,
-#                 "gr_median_abs": gr_med_abs,
-#                 "gr_share_zero": gr_share_zero,
-#                 "median_up": up_med,
-#                 "median_down_mag": dn_med,
-#             }
-#         )
-#         rows.append(row)
-#     feats = feats.merge(pd.DataFrame(rows), on=klist, how="left")
-
-#     # ---- optional PCA on smoothed trajectories ----
-#     if include_pca_smoothed and ("date" in g.columns):
-#         try:
-#             logger.debug("Computing PCA on smoothed trajectories...")
-#             gg = g.sort_values(klist + ["date"]).copy()
-#             gg["gr_sm"] = gg.groupby(klist)["gr"].transform(
-#                 lambda s: s.rolling(smooth_window, min_periods=1).mean()
-#             )
-#             wide = gg.pivot_table(
-#                 index=klist, columns="date", values="gr_sm", aggfunc="first"
-#             ).fillna(0.0)
-#             if wide.shape[0] >= 5 and wide.shape[1] >= pca_components + 2:
-#                 wide = wide.astype(float)
-#                 wide_std = (wide - wide.mean(axis=0)) / (
-#                     wide.std(axis=0) + 1e-12
-#                 )
-#                 Z = PCA(
-#                     n_components=pca_components, random_state=0
-#                 ).fit_transform(wide_std.values)
-#                 Z_df = pd.DataFrame(
-#                     Z,
-#                     index=wide.index,
-#                     columns=[f"traj_pca_{i+1}" for i in range(Z.shape[1])],
-#                 ).reset_index()
-#                 feats = feats.merge(Z_df, on=klist, how="left")
-#         except Exception:
-#             logger.warning("PCA failed; skipping trajectory features")
-#             # silently skip PCA if sklearn missing or shape not suitable
-#             pass
-
-#     # ---- BTNMF-ready, non-negative [0,1] scaling ----
-#     num_cols = [c for c in feats.columns if c not in klist]
-#     X = feats[num_cols].apply(pd.to_numeric, errors="coerce")
-
-#     X = X.replace([np.inf, -np.inf], np.nan)
-#     X = X.fillna(X.median(numeric_only=True))
-
-#     col_min = X.min(axis=0)
-#     X_nonneg = X - col_min
-#     col_max = X_nonneg.max(axis=0).replace(0, 1.0)
-#     X_scaled = X_nonneg / col_max
-
-#     M_btnmf = pd.concat([feats[klist], X_scaled], axis=1)
-#     return M_btnmf, feats
 
 
 def zscore_with_axis(
