@@ -1028,7 +1028,6 @@ def _process_rc_batch(args):
         restarts,
         seeds,
         min_keep,
-        keep_strategy,
         fit_kwargs,
     ) = args
 
@@ -1043,7 +1042,6 @@ def _process_rc_batch(args):
                 restarts,
                 seeds,
                 min_keep,
-                keep_strategy,
                 fit_kwargs,
             )
             results.append(row)
