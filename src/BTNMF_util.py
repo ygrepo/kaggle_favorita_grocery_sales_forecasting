@@ -1362,9 +1362,7 @@ def cluster_data_and_explain_blocks(
     row_range: range,
     col_range: range,
     *,
-    # NEW: toggle preprocessing for raw features
     normalize: bool = True,
-    # BTNMF / solver params (unchanged)
     alpha: float = 1e-2,
     beta: float = 0.6,
     block_l1: float = 0.0,
@@ -1411,12 +1409,8 @@ def cluster_data_and_explain_blocks(
 
     # ----- INPUT PREP (new) -----
     # auto-detect id cols; min-max if normalize=True
-    if {"store", "item"}.issubset(df.columns):
-        id_cols = ["store", "item"]
-    elif "store_item" in df.columns:
-        id_cols = ["store_item"]
-    else:
-        id_cols = []
+
+    id_cols = ["store_item"]
 
     X_mat, row_names, feat_cols = _prep_matrix_for_btnmf(
         df, id_cols=id_cols, normalize=normalize
@@ -1467,7 +1461,8 @@ def cluster_data_and_explain_blocks(
     logger.info(
         f"Current min_keep: {min_keep}-Suggested min_keep: {suggested_min_keep_elbow}"
     )
-    min_keep = min(min_keep, suggested_min_keep_elbow)
+    min_keep = suggested_min_keep_elbow
+    # min_keep = min(min_keep, suggested_min_keep_elbow)
 
     assign = est.filter_blocks(
         X=X_mat,
@@ -1489,7 +1484,8 @@ def cluster_data_and_explain_blocks(
 
     # diagnostics
     U, _, V = est.factors()
-    bid = np.asarray(assign["block_id"])
+    bid = np.asarray(assign["block_id"]).ravel()
+    logger.info(f"bid shape: {bid.shape}")
     logger.info(
         f"unique block_ids (first 20): {np.unique(bid)[:20]}  count: {np.unique(bid).size}"
     )
@@ -1499,26 +1495,14 @@ def cluster_data_and_explain_blocks(
         np.save(block_id_fn, bid)
 
     # ----- merge block_id back to df -----
-    if id_cols == ["store", "item"]:
-        assign_df = pd.DataFrame(
-            {
-                "store": df["store"].astype(str).to_numpy(),
-                "item": df["item"].astype(str).to_numpy(),
-                "block_id": bid,
-            }
-        )
-        out = df.merge(assign_df, on=["store", "item"], how="left")
-    elif id_cols == ["store_item"]:
-        assign_df = pd.DataFrame(
-            {
-                "store_item": df["store_item"].astype(str).to_numpy(),
-                "block_id": bid,
-            }
-        )
-        out = df.merge(assign_df, on=["store_item"], how="left")
-    else:
-        out = df.copy()
-        out["block_id"] = bid
+
+    assign_df = pd.DataFrame(
+        {
+            "store_item": df["store_item"].astype(str).to_numpy(),
+            "block_id": bid,
+        }
+    )
+    out = df.merge(assign_df, on=["store_item"], how="left")
 
     if output_fn is not None:
         save_csv_or_parquet(out, output_fn)
