@@ -1357,6 +1357,54 @@ def _prep_matrix_for_btnmf(
     return M, row_names, feat_cols
 
 
+def _build_assign_df(
+    row_names: np.ndarray,
+    block_ids: np.ndarray,
+    df: pd.DataFrame,
+    id_cols: tuple = ("store_item",),
+) -> pd.DataFrame:
+    """
+    Create tidy (key, block_id) frame aligned to BTNMF row order,
+    robust to 1D/2D block_ids and tuple row_names.
+    """
+    # --- collapse block_ids ---
+    bid = np.asarray(block_ids)
+    if bid.ndim == 1:
+        bid = bid.astype(int)
+    elif bid.ndim == 2:
+        I, J = bid.shape
+        out = np.full(I, -1, dtype=int)
+        for i in range(I):
+            vals = bid[i][bid[i] >= 0]
+            if vals.size:
+                u, c = np.unique(vals, return_counts=True)
+                out[i] = int(u[np.argmax(c)])
+        bid = out
+    else:
+        raise ValueError("block_ids must be 1-D or 2-D")
+
+    rn = np.asarray(row_names, dtype=object).ravel()
+
+    if id_cols == ("store_item",):
+        assign_df = pd.DataFrame(
+            {"store_item": rn.astype(str), "block_id": bid}
+        )
+        if "store_item" not in df.columns and {"store", "item"}.issubset(
+            df.columns
+        ):
+            df = df.assign(
+                store_item=df["store"].astype(str)
+                + "_"
+                + df["item"].astype(str)
+            )
+        df_out = df.copy()
+        df_out["store_item"] = df_out["store_item"].astype(str)
+        return df_out.merge(assign_df, on="store_item", how="left")
+
+    else:
+        raise ValueError(f"Unsupported id_cols={id_cols}")
+
+
 def cluster_data_and_explain_blocks(
     df: pd.DataFrame,
     row_range: range,
@@ -1484,56 +1532,20 @@ def cluster_data_and_explain_blocks(
 
     # diagnostics
     U, _, V = est.factors()
-    bid_matrix = np.asarray(assign["block_id"])  # Shape: (I, J)
-    r_star = np.asarray(
-        assign["r_star"]
-    )  # Shape: (I, J) - row cluster assignments
 
-    logger.info(f"bid_matrix shape: {bid_matrix.shape}")
-    logger.info(f"r_star shape: {r_star.shape}")
+    block_ids = assign["block_id"]
+    out = _build_assign_df(row_names, block_ids, df, id_cols=("store_item",))
 
-    # Extract row-level block assignments (one per store_item)
-    # The block_id matrix already contains proper assignments from assign_unique_blocks
-    # We just need to aggregate across features for each store_item
+    if block_id_fn is not None:
+        np.save(block_id_fn, np.asarray(out["block_id"]))
 
-    row_block_assignments = []
-    for i in range(bid_matrix.shape[0]):  # For each store_item (row)
-        # Get all block_ids for this store_item across all features
-        row_block_ids = bid_matrix[i, :]
-
-        # Only consider valid assignments (>= 0)
-        valid_blocks = row_block_ids[row_block_ids >= 0]
-
-        if len(valid_blocks) > 0:
-            # Take the most common block_id for this store_item
-            unique_blocks, counts = np.unique(valid_blocks, return_counts=True)
-            most_common_block = unique_blocks[np.argmax(counts)]
-            row_block_assignments.append(most_common_block)
-        else:
-            row_block_assignments.append(-1)  # No valid assignment
-
-    row_block_assignments = np.array(row_block_assignments)
-    logger.info(f"row_block_assignments shape: {row_block_assignments.shape}")
-    unique_assignments = np.unique(row_block_assignments)
+    unique_assignments = np.unique(out["block_id"])
     logger.info(
         f"unique block assignments (first 20): {unique_assignments[:20]}  "
         f"count: {unique_assignments.size}"
     )
-    logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")  # len R
-    logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")  # len C
-
-    if block_id_fn is not None:
-        np.save(block_id_fn, row_block_assignments)
-
-    # ----- merge block_id back to df -----
-
-    assign_df = pd.DataFrame(
-        {
-            "store_item": row_names.astype(str),
-            "block_id": row_block_assignments,
-        }
-    )
-    out = df.merge(assign_df, on=["store_item"], how="left")
+    logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")
+    logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")
 
     if output_fn is not None:
         save_csv_or_parquet(out, output_fn)
