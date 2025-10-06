@@ -114,7 +114,11 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-        df = make_weekly_growth(df, tau=args.tau)
+        # Use function default if tau is not specified
+        if args.tau is not None:
+            df = make_weekly_growth(df, tau=args.tau)
+        else:
+            df = make_weekly_growth(df)  # Use default tau=0.01
         save_csv_or_parquet(df, output_fn)
         if args.tau_range is not None:
             taus = args.tau_range

@@ -128,6 +128,10 @@ def parse_range(arg: str):
       - or a comma-separated list 'a,b,c'.
     Returns a Python range or list of numbers (int or float).
     """
+    # Handle empty string
+    if not arg or arg.strip() == "":
+        return None
+
     if ":" in arg:
         start, end = arg.split(":")
         # Try float first, fall back to int
