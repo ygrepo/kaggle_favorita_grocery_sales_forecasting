@@ -126,13 +126,33 @@ def parse_range(arg: str):
     Parse a CLI argument that can be either:
       - a colon-separated range 'START:END' (inclusive of START, exclusive of END),
       - or a comma-separated list 'a,b,c'.
-    Returns a Python range or list of ints.
+    Returns a Python range or list of numbers (int or float).
     """
     if ":" in arg:
         start, end = arg.split(":")
-        return range(int(start), int(end))
+        # Try float first, fall back to int
+        try:
+            start_val = float(start)
+            end_val = float(end)
+            if start_val.is_integer() and end_val.is_integer():
+                return range(int(start_val), int(end_val))
+            else:
+                # For float ranges, we can't use range(), return a list
+                import numpy as np
+
+                return np.arange(start_val, end_val, 0.001).tolist()
+        except ValueError:
+            return range(int(start), int(end))
     elif "," in arg:
-        return [int(x) for x in arg.split(",")]
+        # Try to parse as floats first, fall back to ints
+        try:
+            return [float(x.strip()) for x in arg.split(",")]
+        except ValueError:
+            return [int(x.strip()) for x in arg.split(",")]
     else:
-        # single integer
-        return [int(arg)]
+        # single value - try float first, fall back to int
+        try:
+            val = float(arg)
+            return [val]
+        except ValueError:
+            return [int(arg)]

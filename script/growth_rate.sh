@@ -24,7 +24,7 @@ BATCH_SIZE=10
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
 LOG_LEVEL="DEBUG"
-TAU_RANGE=0.005, 0.01, 0.02, 0.03, 0.05
+TAU_RANGE="0.005,0.01,0.02,0.03,0.05"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
