@@ -20,21 +20,11 @@ from src.data_utils import (
     load_raw_data,
     save_csv_or_parquet,
     make_weekly_growth,
-    fit_three_state_representatives,
+    tau_diagnostics,
 )
-from src.utils import setup_logging, get_logger
+from src.utils import setup_logging, get_logger, parse_range
 
 logger = get_logger(__name__)
-
-
-def parse_range(range_str):
-    try:
-        start, end = map(int, range_str.split(":"))
-        return range(start, end)
-    except Exception as e:
-        raise argparse.ArgumentTypeError(
-            f"Invalid range format: {range_str}. Use START:END"
-        ) from e
 
 
 def parse_args():
@@ -67,6 +57,18 @@ def parse_args():
         help="Batch size for multiprocessing",
     )
     parser.add_argument(
+        "--tau_range",
+        type=parse_range,
+        default=None,
+        help="Range of taus: START:END or explicit list a,b,c",
+    )
+    parser.add_argument(
+        "--tau_diag_fn",
+        type=str,
+        default="",
+        help="Path to output file for tau diagnostics (relative to project root)",
+    )
+    parser.add_argument(
         "--log_fn",
         type=str,
         default="",
@@ -95,6 +97,7 @@ def main():
         logger.info(f"  Output fn: {args.output_fn}")
         logger.info(f"  N jobs: {args.n_jobs}")
         logger.info(f"  Batch size: {args.batch_size}")
+        logger.info(f"  Tau range: {args.tau_range}")
         logger.info(f"  Log fn: {args.log_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
@@ -105,8 +108,13 @@ def main():
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
         df = make_weekly_growth(df)
-        # fit_three_state_representatives(df)
         save_csv_or_parquet(df, output_fn)
+        if args.tau_range is not None:
+            taus = args.tau_range
+            logger.info(f"Computing tau diagnostics for taus: {taus}")
+            diag, per_key_side = tau_diagnostics(df, taus=taus)
+            diag_fn = Path(args.tau_diag_fn).resolve()
+            save_csv_or_parquet(diag, diag_fn)
         logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error Generating growth rate data: {e}")

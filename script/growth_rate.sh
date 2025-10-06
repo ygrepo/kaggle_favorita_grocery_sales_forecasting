@@ -16,6 +16,7 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.parquet"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_weekly_growth_rate.parquet"
+TAU_DIAG_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_weekly_growth_rate_diagnostics.csv"
 
 N_JOBS=-1
 BATCH_SIZE=10
@@ -23,6 +24,7 @@ BATCH_SIZE=10
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
 LOG_LEVEL="DEBUG"
+TAU_RANGE=0.005, 0.01, 0.02, 0.03, 0.05
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -35,6 +37,8 @@ while [[ $# -gt 0 ]]; do
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
+    --tau_range) TAU_RANGE="$2"; shift 2 ;;
+    --tau_diag_fn) TAU_DIAG_FN="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
 done
@@ -48,6 +52,7 @@ echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
+echo "Tau diagnostics fn: $TAU_DIAG_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
@@ -59,7 +64,9 @@ python "${SCRIPT_DIR}/growth_rate.py" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --log_level "$LOG_LEVEL" \
-  --log_fn "$LOG_FILE"
+  --log_fn "$LOG_FILE" \
+  --tau_range "$TAU_RANGE" \
+  --tau_diag_fn "$TAU_DIAG_FN"
 exit_code=$?
 set -e
 

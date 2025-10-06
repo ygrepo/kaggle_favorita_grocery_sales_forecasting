@@ -481,6 +481,100 @@ def create_cyclical_features(
     return df
 
 
+def tau_diagnostics(
+    wk: pd.DataFrame,
+    taus=(0.005, 0.01, 0.02, 0.03, 0.05),
+    keys=("store_item",),
+    gr_col="growth_rate_clipped",
+    date_col="date",
+):
+    wk = wk.copy().sort_values(list(keys) + [date_col])
+    g = wk[gr_col].astype(float).values
+
+    out = []
+    for tau in taus:
+        # 3-way split
+        down = g <= -tau
+        side = np.abs(g) < tau
+        up = g >= tau
+
+        # soft-thresholded continuous (signed)
+        mag = np.maximum(np.abs(g) - tau, 0.0)
+        sgn = np.sign(g) * (~side)
+        g_soft = sgn * mag
+
+        # global fractions + energy removed
+        frac_down = np.nanmean(down)
+        frac_side = np.nanmean(side)
+        frac_up = np.nanmean(up)
+        mean_abs_g = np.nanmean(np.abs(g))
+        mean_abs_soft = np.nanmean(np.abs(g_soft))
+        l1_reduction = (
+            (mean_abs_g - mean_abs_soft) / mean_abs_g
+            if mean_abs_g > 0
+            else np.nan
+        )
+        var_soft = np.nanvar(g_soft)
+
+        # per-series direction churn
+        wk[f"__dir_{tau}"] = np.select(
+            [g >= tau, g <= -tau], [1, -1], default=0
+        )
+        churns = []
+        for _, grp in wk.groupby(list(keys), sort=False):
+            d = grp[f"__dir_{tau}"].to_numpy()
+            nz = d != 0
+            # flips only when consecutive both nonzero and opposite signs
+            valid = nz[1:] & nz[:-1]
+            flips = (d[1:] * d[:-1] == -1) & valid
+            denom = valid.sum()
+            churns.append(flips.sum() / denom if denom > 0 else np.nan)
+        med_churn = np.nanmedian(churns)
+        p10_churn = np.nanpercentile(churns, 10)
+        p90_churn = np.nanpercentile(churns, 90)
+
+        out.append(
+            {
+                "tau": tau,
+                "frac_down": frac_down,
+                "frac_side": frac_side,
+                "frac_up": frac_up,
+                "mean_abs_g": mean_abs_g,
+                "mean_abs_soft": mean_abs_soft,
+                "l1_reduction": l1_reduction,
+                "var_soft": var_soft,
+                "median_churn": med_churn,
+                "p10_churn": p10_churn,
+                "p90_churn": p90_churn,
+            }
+        )
+
+    diag = pd.DataFrame(out)
+
+    # optional per-key sideways share distribution at tau=1%
+    tau_ref = 0.01
+    if tau_ref in taus:
+        dir_ref = np.select([g >= tau_ref, g <= -tau_ref], [1, -1], default=0)
+        wk["__side_ref"] = (dir_ref == 0).astype(int)
+        per_key_side = (
+            wk.groupby(list(keys))["__side_ref"]
+            .mean()
+            .rename("sideways_share_at_1pct")
+            .reset_index()
+        )
+    else:
+        per_key_side = None
+    # cleanup temp columns
+    for tau in taus:
+        col = f"__dir_{tau}"
+        if col in wk:
+            wk.drop(columns=[col], inplace=True)
+    if "__side_ref" in wk:
+        wk.drop(columns=["__side_ref"], inplace=True)
+
+    return diag, per_key_side
+
+
 def make_weekly_growth(
     df: pd.DataFrame,
     keys=("store_item",),
