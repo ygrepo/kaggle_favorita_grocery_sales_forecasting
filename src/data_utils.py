@@ -564,8 +564,9 @@ def make_weekly_growth(
 
     # Frank–Hall cumulative binaries for K=3 classes
     # y1: is class > Down? (not Down); y2: is class > Sideways? (Up)
-    wk["gr_gt_0"] = (wk["gr_3cat"] > 0).astype("int8")
-    wk["gr_gt_1"] = (wk["gr_3cat"] > 1).astype("int8")
+    # Handle NA values by filling with False before converting to int8
+    wk["gr_gt_0"] = (wk["gr_3cat"] > 0).fillna(False).astype("int8")
+    wk["gr_gt_1"] = (wk["gr_3cat"] > 1).fillna(False).astype("int8")
 
     # --- normalized weekly label for joins ---
     wk["week_end"] = wk["date"].dt.normalize()
