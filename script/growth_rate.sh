@@ -26,7 +26,7 @@ LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
 LOG_LEVEL="DEBUG"
 #TAU_RANGE="0.005,0.01,0.02,0.03,0.05"
 #TAU_RANGE="0.05:5:0.05"
-TAU_RANGE = "0.05,0.075,0.1,0.12,0.15"
+TAU_RANGE="0.05,0.075,0.1,0.12,0.15"
 TAU=0.05
 
 # Parse command line arguments
