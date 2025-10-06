@@ -57,6 +57,12 @@ def parse_args():
         help="Batch size for multiprocessing",
     )
     parser.add_argument(
+        "--tau",
+        type=float,
+        default=None,
+        help="Single tau value to test",
+    )
+    parser.add_argument(
         "--tau_range",
         type=parse_range,
         default=None,
@@ -97,6 +103,7 @@ def main():
         logger.info(f"  Output fn: {args.output_fn}")
         logger.info(f"  N jobs: {args.n_jobs}")
         logger.info(f"  Batch size: {args.batch_size}")
+        logger.info(f"  Tau: {args.tau}")
         logger.info(f"  Tau range: {args.tau_range}")
         logger.info(f"  Log fn: {args.log_fn}")
         logger.info(f"  Log level: {args.log_level}")
@@ -107,7 +114,7 @@ def main():
 
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
-        df = make_weekly_growth(df)
+        df = make_weekly_growth(df, tau=args.tau)
         save_csv_or_parquet(df, output_fn)
         if args.tau_range is not None:
             taus = args.tau_range

@@ -24,7 +24,10 @@ BATCH_SIZE=10
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_FILE="${LOG_DIR}/growth_rate_$(date +"%Y%m%d_%H%M%S").log"
 LOG_LEVEL="DEBUG"
-TAU_RANGE="0.005,0.01,0.02,0.03,0.05"
+#TAU_RANGE="0.005,0.01,0.02,0.03,0.05"
+#TAU_RANGE="0.05:5:0.05"
+TAU_RANGE = "0.05,0.075,0.1,0.12,0.15"
+TAU=0.05
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -37,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
+    --tau) TAU="$2"; shift 2 ;;
     --tau_range) TAU_RANGE="$2"; shift 2 ;;
     --tau_diag_fn) TAU_DIAG_FN="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -65,6 +69,7 @@ python "${SCRIPT_DIR}/growth_rate.py" \
   --batch_size "$BATCH_SIZE" \
   --log_level "$LOG_LEVEL" \
   --log_fn "$LOG_FILE" \
+  --tau "$TAU" \
   --tau_range "$TAU_RANGE" \
   --tau_diag_fn "$TAU_DIAG_FN"
 exit_code=$?
