@@ -27,8 +27,9 @@ LOG_LEVEL="DEBUG"
 #TAU_RANGE="0.005,0.01,0.02,0.03,0.05"
 #TAU_RANGE="0.05:5:0.05"
 #TAU_RANGE="0.05,0.075,0.1,0.12,0.15"
-TAU_RANGE="0.25,0.5,1,5,10"
-TAU=0.05
+TAU_RANGE=""
+#TAU_RANGE="0.25,0.5,1,5,10"
+TAU=0.25
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
