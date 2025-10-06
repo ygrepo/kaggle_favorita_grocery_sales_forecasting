@@ -20,6 +20,7 @@ from src.data_utils import (
     load_raw_data,
     save_csv_or_parquet,
     make_weekly_growth,
+    fit_three_state_representatives,
 )
 from src.utils import setup_logging, get_logger
 
@@ -104,6 +105,7 @@ def main():
         output_fn = Path(args.output_fn).resolve()
         df["unit_sales"] = df["unit_sales"].astype(float)
         df = make_weekly_growth(df)
+        # fit_three_state_representatives(df)
         save_csv_or_parquet(df, output_fn)
         logger.info("Completed successfully")
     except Exception as e:

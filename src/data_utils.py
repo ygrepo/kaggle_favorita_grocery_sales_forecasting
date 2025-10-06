@@ -484,13 +484,35 @@ def create_cyclical_features(
 def make_weekly_growth(
     df: pd.DataFrame,
     keys=("store_item",),
-    week_rule="W-SUN",
+    week_rule: str = "W-SUN",
     clip=(0.01, 0.99),
-    tau=0.01,
+    tau: float = 0.01,
 ) -> pd.DataFrame:
+    """
+    Build weekly totals and multiple growth targets.
+
+    Adds:
+      - sales_wk:        weekly summed sales per key
+      - growth_rate:     pct_change of sales_wk per key (raw)
+      - growth_rate_clipped: winsorized growth_rate at global quantiles
+
+      Dead-zone (±tau) signed target and decompositions:
+      - direction:       {-1,0,+1} per tau threshold
+      - growth_up:       growth when direction==+1, else NaN
+      - growth_down:     positive magnitude of -growth when direction==-1, else NaN
+      - growth_rate_continuous: soft-thresholded signed growth in float32
+                               (|g|-tau if beyond tau, with original sign; else 0)
+
+      Three-state ordinal target:
+      - gr_3cat:         0=Down (g<=-tau), 1=Sideways (-tau<g<tau), 2=Up (g>=tau)   (Int8)
+
+      Calendar key:
+      - week_end:        normalized timestamp for the resample label (e.g., Sunday 00:00)
+    """
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
+    # --- weekly aggregation ---
     wk = (
         df.set_index("date")
         .groupby(list(keys))["unit_sales"]
@@ -501,45 +523,107 @@ def make_weekly_growth(
         .sort_values(list(keys) + ["date"])
     )
 
-    # pct_change per series
+    # --- raw pct-change growth per series (can be inf/NaN) ---
     wk["growth_rate"] = (
         wk.groupby(list(keys))["sales_wk"]
         .pct_change(fill_method=None)
         .replace([np.inf, -np.inf], np.nan)
     )
 
-    # winsorize extremes (global quantiles are fine; per-key is slower)
-    lo, hi = wk["growth_rate"].quantile(list(clip))
-    wk["growth_rate_clipped"] = wk["growth_rate"].clip(lo, hi)
-
-    # (optional) your original two-part targets
-    prev = wk.groupby(list(keys))["sales_wk"].shift(1)
-    wk["growth_binary"] = (wk["sales_wk"] > prev).astype("Int8")
-    wk["growth_continuous"] = wk["growth_rate_clipped"].where(
-        wk["growth_binary"] == 1
-    )
+    # --- winsorize extremes globally (fast & stable) ---
+    if wk["growth_rate"].notna().any():
+        lo, hi = wk["growth_rate"].quantile(list(clip))
+    else:
+        lo, hi = -1.0, 1.0  # fallback
+    gr_clip = wk["growth_rate"].clip(lo, hi)
+    wk["growth_rate_clipped"] = gr_clip
 
     # --- direction with dead-zone τ ---
     gr = wk["growth_rate_clipped"].astype(float)
-    wk["direction"] = np.select(
-        [gr >= tau, gr <= -tau], [1, -1], default=0
-    ).astype("int8")
-    wk["growth_up"] = np.where(wk["direction"] == 1, gr, np.nan)
-    wk["growth_down"] = np.where(
-        wk["direction"] == -1, -gr, np.nan
-    )  # positive mag
+    direction = np.select([gr >= tau, gr <= -tau], [1, -1], default=0).astype(
+        "int8"
+    )
+    wk["direction"] = direction
 
-    # --- unified signed, NaN-free target (soft-thresholded) ---
-    # magnitude >= 0, remove tiny jitters; restore sign; flats -> 0.0
+    # --- two-part targets  ---
+    wk["growth_up"] = np.where(direction == 1, gr, np.nan)
+    wk["growth_down"] = np.where(
+        direction == -1, -gr, np.nan
+    )  # positive magnitude
+
+    # --- unified signed, NaN-free, soft-thresholded target ---
     mag = np.maximum(np.abs(gr) - tau, 0.0)
-    sgn = np.sign(gr) * (wk["direction"] != 0)
+    sgn = np.sign(gr) * (direction != 0)
     wk["growth_rate_continuous"] = (sgn * mag).astype("float32")
 
-    # normalized weekly key for joins
-    wk["week_end"] = wk[
-        "date"
-    ].dt.normalize()  # matches resample label (Sunday 00:00)
+    # --- 3-category ordinal target (Down < Sideways < Up) ---
+    # 0 = Down (g <= -tau), 1 = Sideways (-tau < g < tau), 2 = Up (g >= +tau)
+    bins = [-np.inf, -tau, tau, np.inf]
+    labels = [0, 1, 2]
+    wk["gr_3cat"] = pd.cut(gr, bins=bins, labels=labels).astype("Int8")
+
+    # Frank–Hall cumulative binaries for K=3 classes
+    # y1: is class > Down? (not Down); y2: is class > Sideways? (Up)
+    wk["gr_gt_0"] = (wk["gr_3cat"] > 0).astype("int8")
+    wk["gr_gt_1"] = (wk["gr_3cat"] > 1).astype("int8")
+
+    # --- normalized weekly label for joins ---
+    wk["week_end"] = wk["date"].dt.normalize()
+
     return wk
+
+
+def fit_three_state_representatives(
+    wk: pd.DataFrame, gr_col="growth_rate_clipped", tau=0.01
+):
+    """Compute per-bin representative (median) growth values from training data."""
+    g = wk[gr_col].astype(float)
+    m_D = g[g <= -tau].median()
+    m_S = g[(g > -tau) & (g < tau)].median()
+    m_U = g[g >= tau].median()
+
+    # Fallbacks if a bin is empty
+    if np.isnan(m_D):
+        m_D = -tau * 1.5
+    if np.isnan(m_S):
+        m_S = 0.0
+    if np.isnan(m_U):
+        m_U = +tau * 1.5
+
+    return {
+        "m_D": float(m_D),
+        "m_S": float(m_S),
+        "m_U": float(m_U),
+        "tau": tau,
+    }
+
+
+def expected_growth_from_cumulative(q_not_down, q_up, reps):
+    """
+    q_not_down: P(y > Down) in [0,1]
+    q_up:       P(y > Sideways) in [0,1]
+    reps: dict with keys m_D, m_S, m_U
+    Returns: (E[g], Var[g], sd_hat, lower, upper)
+    """
+    q_not_down = np.asarray(q_not_down)
+    q_up = np.asarray(q_up)
+
+    p_D = 1.0 - q_not_down
+    p_U = q_up
+    p_S = q_not_down - q_up
+
+    m_D, m_S, m_U = reps["m_D"], reps["m_S"], reps["m_U"]
+
+    g_hat = p_D * m_D + p_S * m_S + p_U * m_U
+    var_hat = (
+        p_D * (m_D - g_hat) ** 2
+        + p_S * (m_S - g_hat) ** 2
+        + p_U * (m_U - g_hat) ** 2
+    )
+    sd_hat = np.sqrt(var_hat)
+    lower = g_hat - 1.96 * sd_hat
+    upper = g_hat + 1.96 * sd_hat
+    return g_hat, var_hat, sd_hat, lower, upper
 
 
 def compute_item_sensitivity(
