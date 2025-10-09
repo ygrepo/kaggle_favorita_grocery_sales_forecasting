@@ -641,6 +641,7 @@ def make_weekly_growth(
 
     # --- two-part targets  ---
     wk["growth_up"] = np.where(direction == 1, gr, np.nan)
+    wk["growth_sideways"] = np.where(direction == 0, gr, np.nan)
     wk["growth_down"] = np.where(
         direction == -1, -gr, np.nan
     )  # positive magnitude
@@ -653,16 +654,16 @@ def make_weekly_growth(
     # --- 3-category ordinal target (Down < Sideways < Up) ---
     # 0 = Down (g <= -tau), 1 = Sideways (-tau < g < tau), 2 = Up (g >= +tau)
     bins = [-np.inf, -tau, tau, np.inf]
-    labels = [0, 1, 2]
+    labels = [-1, 0, 1]
     wk["gr_3cat"] = pd.cut(gr, bins=bins, labels=labels).astype("Int8")
 
-    # Frank–Hall cumulative binaries for K=3 classes
-    # y1: is class > Down? (not Down); y2: is class > Sideways? (Up)
-    # Handle NA values by filling with False before converting to int8
-    wk["gr_gt_0"] = (wk["gr_3cat"] > 0).fillna(False).astype("int8")
-    wk["gr_gt_1"] = (wk["gr_3cat"] > 1).fillna(False).astype("int8")
+    # # Frank–Hall cumulative binaries for K=3 classes
+    # # y1: is class > Down? (not Down); y2: is class > Sideways? (Up)
+    # # Handle NA values by filling with False before converting to int8
+    # wk["gr_gt_0"] = (wk["gr_3cat"] > 0).fillna(False).astype("int8")
+    # wk["gr_gt_1"] = (wk["gr_3cat"] > 1).fillna(False).astype("int8")
 
-    # --- normalized weekly label for joins ---
+    # # --- normalized weekly label for joins ---
     wk["week_end"] = wk["date"].dt.normalize()
 
     return wk
