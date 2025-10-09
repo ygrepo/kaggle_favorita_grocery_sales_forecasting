@@ -23,7 +23,6 @@ from src.utils import (
     get_logger,
     save_csv_or_parquet,
     read_csv_or_parquet,
-    str2bool,
 )
 
 logger = get_logger(__name__)
@@ -57,18 +56,6 @@ def parse_args():
         type=float,
         default=0.01,
         help="Tau parameter for robust summaries",
-    )
-    parser.add_argument(
-        "--include_pca_smoothed",
-        type=str2bool,
-        default=False,
-        help="Whether to include PCA on smoothed trajectories",
-    )
-    parser.add_argument(
-        "--pca_components",
-        type=int,
-        default=4,
-        help="Number of PCA components",
     )
     parser.add_argument(
         "--smooth_window",
@@ -112,8 +99,6 @@ def main():
         logger.info(f"  Output cluster fn: {args.output_cluster_fn}")
         logger.info(f"  Output feature fn: {args.output_features_fn}")
         logger.info(f"  Tau: {args.tau}")
-        logger.info(f"  Include PCA smoothed: {args.include_pca_smoothed}")
-        logger.info(f"  PCA components: {args.pca_components}")
         logger.info(f"  Smooth window: {args.smooth_window}")
         logger.info(f"  Keys: {args.keys}")
         logger.info(f"  Log fn: {args.log_fn}")
@@ -122,7 +107,6 @@ def main():
         data_fn = Path(args.data_fn).resolve()
 
         df = read_csv_or_parquet(data_fn)
-
 
         # Convert keys string to tuple
         keys_tuple = (
@@ -134,8 +118,6 @@ def main():
             df,
             keys=keys_tuple,
             tau=args.tau,
-            include_pca_smoothed=args.include_pca_smoothed,
-            pca_components=args.pca_components,
             smooth_window=args.smooth_window,
         )
         # See which columns were pruned (near-empty) and their support

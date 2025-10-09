@@ -19,8 +19,6 @@ OUTPUT_CLUSTER_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth
 OUTPUT_FEATURES_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_features.parquet"
 
 TAU=0.05
-INCLUDE_PCA_SMOOTHED=False
-PCA_COMPONENTS=4
 SMOOTH_WINDOW=4
 KEYS="store_item"
 
@@ -38,8 +36,6 @@ while [[ $# -gt 0 ]]; do
     --output_features_fn) OUTPUT_FEATURES_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --tau) TAU="$2"; shift 2 ;;
-    --include_pca_smoothed) INCLUDE_PCA_SMOOTHED="$2"; shift 2 ;;
-    --pca_components) PCA_COMPONENTS="$2"; shift 2 ;;
     --smooth_window) SMOOTH_WINDOW="$2"; shift 2 ;;
     --keys) KEYS="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
@@ -59,8 +55,6 @@ echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Output cluster fn: $OUTPUT_CLUSTER_FN" | tee -a "$LOG_FILE"
 echo "Output features fn: $OUTPUT_FEATURES_FN" | tee -a "$LOG_FILE"
 echo "Tau: $TAU" | tee -a "$LOG_FILE"
-echo "Include PCA smoothed: $INCLUDE_PCA_SMOOTHED" | tee -a "$LOG_FILE"
-echo "PCA components: $PCA_COMPONENTS" | tee -a "$LOG_FILE"
 echo "Smooth window: $SMOOTH_WINDOW" | tee -a "$LOG_FILE"
 echo "Keys: $KEYS" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
@@ -73,8 +67,6 @@ python "${SCRIPT_DIR}/build_growth_features_for_clustering.py" \
   --output_cluster_fn "$OUTPUT_CLUSTER_FN" \
   --output_features_fn "$OUTPUT_FEATURES_FN" \
   --tau "$TAU" \
-  --include_pca_smoothed "$INCLUDE_PCA_SMOOTHED" \
-  --pca_components "$PCA_COMPONENTS" \
   --smooth_window "$SMOOTH_WINDOW" \
   --keys "$KEYS" \
   --log_level "$LOG_LEVEL" \
