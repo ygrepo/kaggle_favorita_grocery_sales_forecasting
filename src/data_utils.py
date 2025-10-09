@@ -642,9 +642,9 @@ def make_weekly_growth(
     wk["direction"] = direction
 
     # --- two-part targets  ---
-    wk["growth_up"] = np.where(direction == 1, gr, np.nan)
-    wk["growth_sideways"] = np.where(direction == 0, gr, np.nan)
-    wk["growth_down"] = np.where(
+    wk["growth_rate_up"] = np.where(direction == 1, gr, np.nan)
+    wk["growth_rate_sideways"] = np.where(direction == 0, gr, np.nan)
+    wk["growth_rate_down"] = np.where(
         direction == -1, -gr, np.nan
     )  # positive magnitude
 
@@ -944,16 +944,20 @@ def build_growth_features_for_clustering(
     # ---- base series ----
     logger.info("Building base series...")
     g = g.assign(
-        gc=pd.to_numeric(g["growth_continuous"], errors="coerce"),
-        up=pd.to_numeric(g["growth_up"], errors="coerce"),  # 0/1 indicator
-        dn=pd.to_numeric(g["growth_down"], errors="coerce"),  # 0/1 indicator
+        gc=pd.to_numeric(g["growth_rate_continuous"], errors="coerce"),
+        up=pd.to_numeric(
+            g["growth_rate_up"], errors="coerce"
+        ),  # 0/1 indicator
+        dn=pd.to_numeric(
+            g["growth_rate_down"], errors="coerce"
+        ),  # 0/1 indicator
         up_mag=pd.to_numeric(
-            g["growth_up"], errors="coerce"
+            g["growth_rate_up"], errors="coerce"
         ),  # keep if you use later
         dn_mag=pd.to_numeric(
-            g["growth_down"], errors="coerce"
+            g["growth_rate_down"], errors="coerce"
         ),  # keep if you use later
-        sideways=pd.to_numeric(g["growth_sideways"], errors="coerce"),
+        sideways=pd.to_numeric(g["growth_rate_sideways"], errors="coerce"),
     )
 
     # --- base aggregates (robust IQRs) ---
@@ -1121,9 +1125,9 @@ def build_growth_features_for_clustering(
             row.update(
                 {
                     "gr_median_nz": gr_med_nz,
-                    "median_up": up_med,
-                    "median_down": dn_med,
-                    "median_sideways": sideways_med,
+                    "gr_median_up": up_med,
+                    "gr_median_down": dn_med,
+                    "gr_median_sideways": sideways_med,
                 }
             )
 
