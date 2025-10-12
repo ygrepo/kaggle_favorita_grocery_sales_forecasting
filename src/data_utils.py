@@ -13,11 +13,13 @@ import logging
 from src.utils import (
     save_csv_or_parquet,
     get_logger,
-    _safe_autocorr,
-    _trend_slope,
-    _seasonal_corr,
+    safe_autocorr,
+    trend_slope,
+    seasonal_corr,
     safe_std,
     safe_iqr,
+    safe_median,
+    safe_nanmean,
 )
 
 
@@ -676,31 +678,24 @@ def build_growth_features_for_clustering(
     feats = (
         g.groupby(key, dropna=False)
         .agg(
-            gc_median=("gc", "median"),
+            gc_median=("gc", safe_median),
             gc_std=("gc", safe_std),
             gc_iqr=("gc", safe_iqr),
-            # Fractions from provided 0/1 indicators
-            frac_up=(
-                "up",
-                lambda s: np.nanmean(pd.to_numeric(s, errors="coerce")),
-            ),
-            frac_sideways=(
-                "sideways",
-                lambda s: np.nanmean(pd.to_numeric(s, errors="coerce")),
-            ),
-            frac_down=(
-                "dn",
-                lambda s: np.nanmean(pd.to_numeric(s, errors="coerce")),
-            ),
-            # Positive vs negative counts based on gc and ±tau
+            frac_up=("up", safe_nanmean),
+            frac_sideways=("sideways", safe_nanmean),
+            frac_down=("dn", safe_nanmean),
             up_to_down_ratio=(
                 "gc",
                 lambda s: (
-                    (lambda pos, neg: np.nan if neg == 0 else pos / neg)(
-                        np.sum(pd.to_numeric(s, errors="coerce") > tau),
-                        np.sum(pd.to_numeric(s, errors="coerce") < -tau),
+                    lambda s_clean: (
+                        lambda pos, neg: (
+                            np.nan if neg == 0 else float(pos / neg)
+                        )
+                    )(
+                        np.sum(s_clean > tau),
+                        np.sum(s_clean < -tau),
                     )
-                ),
+                )(pd.to_numeric(s, errors="coerce").dropna()),
             ),
         )
         .reset_index()
@@ -718,31 +713,31 @@ def build_growth_features_for_clustering(
         has_var = (gr_sm.values.size >= 2) & (np.nanstd(gr_sm.values) > 0)
 
         ac1 = (
-            _safe_autocorr(gr_sm, 1)
+            safe_autocorr(gr_sm, 1)
             if n_eff >= min_support_ac1 and has_var
             else np.nan
         )
 
         if n_eff >= min_support_ac4 and has_var:
-            ac4 = _safe_autocorr(gr_sm, 4)
+            ac4 = safe_autocorr(gr_sm, 4)
         elif n_eff >= min_support_ac1:
             gr_sm_sign = gr_sm.apply(np.sign)  # keep Series semantics
-            ac4 = _safe_autocorr(gr_sm_sign, 1)
+            ac4 = safe_autocorr(gr_sm_sign, 1)
         else:
             ac4 = np.nan
 
         ac12 = (
-            _safe_autocorr(gr_sm, 12)
+            safe_autocorr(gr_sm, 12)
             if (n_eff >= min_support_ac12 and has_var)
             else np.nan
         )
         slope = (
-            _trend_slope(gr_sm)
+            trend_slope(gr_sm)
             if (n_eff >= min_support_trend and has_var)
             else np.nan
         )
         seas = (
-            _seasonal_corr(sub["date"], gr_sm, period=52)
+            seasonal_corr(gr_sm, period=52)
             if (n_eff >= min_support_season and has_var)
             else np.nan
         )
@@ -765,7 +760,7 @@ def build_growth_features_for_clustering(
     for key_vals, sub in g.groupby(key, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gc"], errors="coerce")
-        gr_median = np.nanmedian(gr) if gr.notna().any() else np.nan
+        gr_median = safe_median(gr)
         row = {
             key: key_vals,
             "gr_median": gr_median,

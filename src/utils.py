@@ -162,7 +162,7 @@ def parse_range(arg: str):
             return [int(arg)]
 
 
-def _safe_autocorr(x: pd.Series, lag: int) -> float:
+def safe_autocorr(x: pd.Series, lag: int) -> float:
     """
     compute the lag-lag autocorrelation (i.e.,
     Pearson correlation between x_t and x_{t−lag})
@@ -177,40 +177,30 @@ def _safe_autocorr(x: pd.Series, lag: int) -> float:
     b[:lag] = np.nan
     ok = ~np.isnan(a) & ~np.isnan(b)
 
-    if ok.sum() < 3:  # Need at least 3 points for meaningful correlation
+    if ok.sum() < 3:
         return np.nan
 
     a_valid, b_valid = a[ok], b[ok]
 
-    # Check if there's any variation
-    if np.var(a_valid) == 0 or np.var(b_valid) == 0:
+    # Check for variation
+    if len(np.unique(a_valid)) == 1 or len(np.unique(b_valid)) == 1:
         return np.nan
 
     a0 = a_valid - a_valid.mean()
     b0 = b_valid - b_valid.mean()
 
-    # Use ddof=0 for small samples, ddof=1 for larger samples
-    ddof = 1 if len(a_valid) > 10 else 0
+    a_std = np.sqrt(np.mean(a0**2))
+    b_std = np.sqrt(np.mean(b0**2))
 
-    try:
-        a_std = np.std(a0, ddof=ddof)
-        b_std = np.std(b0, ddof=ddof)
-
-        if a_std == 0 or b_std == 0:
-            return np.nan
-
-        denom = a_std * b_std
-        return (a0 * b0).mean() / denom if denom > 0 else np.nan
-
-    except (RuntimeWarning, ValueError):
-        logger.warning(f"Error computing autocorr for lag {lag}")
+    if a_std == 0 or b_std == 0:
         return np.nan
 
+    return (a0 * b0).mean() / (a_std * b_std)
 
-def _trend_slope(y: pd.Series) -> float:
+
+def trend_slope(y: pd.Series) -> float:
     """
-    Returns the correlation between value and time (computed as the mean of
-    the product of the z-scores).
+    Returns the correlation between value and time
     """
     y = pd.to_numeric(y, errors="coerce").astype(float)
     n = len(y)
@@ -221,35 +211,25 @@ def _trend_slope(y: pd.Series) -> float:
     ok = ~y.isna()
     x, y = x[ok], y[ok]
 
-    if len(y) < 5:
+    if len(y) < 5 or len(np.unique(y)) == 1:
         return np.nan
 
-    # Check for variation
-    if np.var(x) == 0 or np.var(y) == 0:
+    # Calculate correlation manually to avoid ddof issues
+    x_mean, y_mean = x.mean(), y.mean()
+    x_centered = x - x_mean
+    y_centered = y - y_mean
+
+    x_std = np.sqrt(np.mean(x_centered**2))
+    y_std = np.sqrt(np.mean(y_centered**2))
+
+    if x_std == 0 or y_std == 0:
         return np.nan
 
-    # Use ddof=0 for small samples to avoid the warning
-    ddof = 1 if len(y) > 10 else 0
-
-    try:
-        x_std = np.std(x, ddof=ddof)
-        y_std = np.std(y, ddof=ddof)
-
-        if x_std == 0 or y_std == 0:
-            return np.nan
-
-        x = (x - x.mean()) / x_std
-        y = (y - y.mean()) / y_std
-
-        return float((x * y).mean())
-
-    except (RuntimeWarning, ValueError):
-        logger.warning("Error computing trend slope")
-        return np.nan
+    return float(np.mean(x_centered * y_centered) / (x_std * y_std))
 
 
-def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
-    """Correlate with fundamental seasonal sine/cosine over week index"""
+def seasonal_corr(values: pd.Series, period: int = 52) -> float:
+    """Correlate with fundamental seasonal sine/cosine"""
     k = np.arange(len(values), dtype=float)
     s = np.sin(2 * np.pi * k / period)
     c = np.cos(2 * np.pi * k / period)
@@ -264,52 +244,66 @@ def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
     c_valid = c[ok]
 
     # Check for variation
-    if np.var(v_valid) == 0:
+    if len(np.unique(v_valid)) == 1:
         return np.nan
 
-    # Use ddof=0 for small samples
-    ddof = 1 if len(v_valid) > 15 else 0
+    # Manual standardization to avoid ddof issues
+    v_mean = np.mean(v_valid)
+    s_mean = np.mean(s_valid)
+    c_mean = np.mean(c_valid)
 
-    try:
-        v_std = np.std(v_valid, ddof=ddof)
-        s_std = np.std(s_valid, ddof=ddof)
-        c_std = np.std(c_valid, ddof=ddof)
+    v_centered = v_valid - v_mean
+    s_centered = s_valid - s_mean
+    c_centered = c_valid - c_mean
 
-        if v_std == 0 or s_std == 0 or c_std == 0:
-            return np.nan
+    v_std = np.sqrt(np.mean(v_centered**2))
+    s_std = np.sqrt(np.mean(s_centered**2))
+    c_std = np.sqrt(np.mean(c_centered**2))
 
-        v_norm = (v_valid - np.mean(v_valid)) / v_std
-        s_norm = (s_valid - np.mean(s_valid)) / s_std
-        c_norm = (c_valid - np.mean(c_valid)) / c_std
-
-        # magnitude of projection onto seasonal basis
-        cs = np.mean(v_norm * s_norm)
-        cc = np.mean(v_norm * c_norm)
-        return float(np.sqrt(cs**2 + cc**2))
-
-    except (RuntimeWarning, ValueError):
-        logger.warning("Error computing seasonal correlation")
+    if v_std == 0 or s_std == 0 or c_std == 0:
         return np.nan
+
+    v_norm = v_centered / v_std
+    s_norm = s_centered / s_std
+    c_norm = c_centered / c_std
+
+    cs = np.mean(v_norm * s_norm)
+    cc = np.mean(v_norm * c_norm)
+    return float(np.sqrt(cs**2 + cc**2))
 
 
 # --- base aggregates with safer std calculation ---
-def safe_std(s):
-    """Calculate std with fallback for small samples"""
+def safe_std(s: pd.Series) -> float:
+    """Calculate std safely without ddof warnings"""
     s_numeric = pd.to_numeric(s, errors="coerce")
     s_clean = s_numeric.dropna()
     if len(s_clean) <= 1:
-        logger.warning("Not enough data to compute std")
         return np.nan
-    # Use ddof=0 for very small samples
-    ddof = 1 if len(s_clean) > 5 else 0
-    return s_clean.std(ddof=ddof)
+    # Use population std to avoid ddof issues
+    return float(np.std(s_clean))
 
 
-def safe_iqr(s):
+def safe_iqr(s: pd.Series) -> float:
     """Calculate IQR safely"""
     s_numeric = pd.to_numeric(s, errors="coerce")
     s_clean = s_numeric.dropna()
     if len(s_clean) < 2:
-        logger.warning("Not enough data to compute IQR")
         return np.nan
-    return np.percentile(s_clean, 75) - np.percentile(s_clean, 25)
+    return float(np.percentile(s_clean, 75) - np.percentile(s_clean, 25))
+
+
+def safe_median(s: pd.Series) -> float:
+    """Calculate median safely"""
+    s_numeric = pd.to_numeric(s, errors="coerce")
+    s_clean = s_numeric.dropna()
+    if len(s_clean) == 0:
+        return np.nan
+    return float(np.median(s_clean))
+
+
+def safe_nanmean(s: pd.Series) -> float:
+    """Calculate mean safely"""
+    s_numeric = pd.to_numeric(s, errors="coerce")
+    if s_numeric.isna().all():
+        return np.nan
+    return float(np.nanmean(s_numeric))
