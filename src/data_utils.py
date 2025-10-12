@@ -631,40 +631,32 @@ def make_weekly_growth(
         lo, hi = wk["growth_rate"].quantile(list(clip))
     else:
         lo, hi = -1.0, 1.0  # fallback
-    gr_clip = wk["growth_rate"].clip(lo, hi)
-    wk["growth_rate_clipped"] = gr_clip
+    wk["growth_rate"] = wk["growth_rate"].clip(lo, hi)
 
     # --- direction with dead-zone τ ---
-    gr = wk["growth_rate_clipped"].astype(float)
+    gr = wk["growth_rate"].astype(float)
     direction = np.select([gr >= tau, gr <= -tau], [1, -1], default=0).astype(
         "int8"
     )
     wk["direction"] = direction
 
     # --- two-part targets  ---
-    wk["growth_rate_up"] = np.where(direction == 1, gr, np.nan)
-    wk["growth_rate_sideways"] = np.where(direction == 0, gr, np.nan)
-    wk["growth_rate_down"] = np.where(
-        direction == -1, -gr, np.nan
-    )  # positive magnitude
-
-    # --- unified signed, NaN-free, soft-thresholded target ---
-    mag = np.maximum(np.abs(gr) - tau, 0.0)
-    sgn = np.sign(gr) * (direction != 0)
-    wk["growth_rate_continuous"] = (sgn * mag).astype("float32")
+    wk["growth_up"] = np.where(direction == 1, 1, np.nan)
+    wk["growth_sideways"] = np.where(direction == 0, 1, np.nan)
+    wk["growth_down"] = np.where(
+        direction == -1, 1, np.nan
+    )  
+    # # --- unified signed, NaN-free, soft-thresholded target ---
+    # mag = np.maximum(np.abs(gr) - tau, 0.0)
+    # sgn = np.sign(gr) * (direction != 0)
+    # wk["growth_rate_continuous"] = (sgn * mag).astype("float32")
 
     # --- 3-category ordinal target (Down < Sideways < Up) ---
     # 0 = Down (g <= -tau), 1 = Sideways (-tau < g < tau), 2 = Up (g >= +tau)
-    bins = [-np.inf, -tau, tau, np.inf]
-    labels = [-1, 0, 1]
-    wk["gr_3cat"] = pd.cut(gr, bins=bins, labels=labels).astype("Int8")
-
-    # # Frank–Hall cumulative binaries for K=3 classes
-    # # y1: is class > Down? (not Down); y2: is class > Sideways? (Up)
-    # # Handle NA values by filling with False before converting to int8
-    # wk["gr_gt_0"] = (wk["gr_3cat"] > 0).fillna(False).astype("int8")
-    # wk["gr_gt_1"] = (wk["gr_3cat"] > 1).fillna(False).astype("int8")
-
+    # bins = [-np.inf, -tau, tau, np.inf]
+    # labels = [-1, 0, 1]
+    # wk["gr_3cat"] = pd.cut(gr, bins=bins, labels=labels).astype("Int8")
+    
     # # --- normalized weekly label for joins ---
     wk["week_end"] = wk["date"].dt.normalize()
 
@@ -945,19 +937,9 @@ def build_growth_features_for_clustering(
     logger.info("Building base series...")
     g = g.assign(
         gc=pd.to_numeric(g["growth_rate_continuous"], errors="coerce"),
-        up=pd.to_numeric(
-            g["growth_rate_up"], errors="coerce"
-        ),  # 0/1 indicator
-        dn=pd.to_numeric(
-            g["growth_rate_down"], errors="coerce"
-        ),  # 0/1 indicator
-        up_mag=pd.to_numeric(
-            g["growth_rate_up"], errors="coerce"
-        ),  # keep if you use later
-        dn_mag=pd.to_numeric(
-            g["growth_rate_down"], errors="coerce"
-        ),  # keep if you use later
+        up=pd.to_numeric(g["growth_rate_up"], errors="coerce"),
         sideways=pd.to_numeric(g["growth_rate_sideways"], errors="coerce"),
+        dn=pd.to_numeric(g["growth_rate_down"], errors="coerce"),
     )
 
     # --- base aggregates (robust IQRs) ---
@@ -970,7 +952,7 @@ def build_growth_features_for_clustering(
     feats = (
         g.groupby(klist, dropna=False)
         .agg(
-            gc_mean=("gc", "mean"),
+            # gc_mean=("gc", "mean"),
             gc_median=("gc", "median"),
             gc_std=("gc", "std"),
             gc_iqr=iqr_gc,
@@ -1125,9 +1107,9 @@ def build_growth_features_for_clustering(
             row.update(
                 {
                     "gr_median_nz": gr_med_nz,
-                    "gr_median_up": up_med,
-                    "gr_median_down": dn_med,
-                    "gr_median_sideways": sideways_med,
+                    "median_up": up_med,
+                    "median_down": dn_med,
+                    "median_sideways": sideways_med,
                 }
             )
 
