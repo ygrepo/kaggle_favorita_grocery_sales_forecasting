@@ -20,6 +20,7 @@ from src.utils import (
     safe_iqr,
     safe_median,
     safe_nanmean,
+    safe_rolling_mean,
 )
 
 
@@ -707,7 +708,7 @@ def build_growth_features_for_clustering(
     for key_vals, sub in g.groupby(key, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gc"], errors="coerce")
-        gr_sm = safe_nanmean(gr.rolling(smooth_window, min_periods=1))
+        gr_sm = safe_rolling_mean(gr, smooth_window, min_periods=1)
 
         n_eff = int(gr_sm.notna().sum())
         has_var = (gr_sm.values.size >= 2) & (np.nanstd(gr_sm.values) > 0)

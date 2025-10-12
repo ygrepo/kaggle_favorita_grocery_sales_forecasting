@@ -308,3 +308,11 @@ def safe_nanmean(s: pd.Series) -> float:
         return np.nan
     return float(np.nanmean(s_numeric))
 
+
+def safe_rolling_mean(
+    series: pd.Series, window: int, min_periods: int = 1
+) -> pd.Series:
+    """Safe rolling mean that handles edge cases"""
+    if len(series) == 0 or series.isna().all():
+        return pd.Series(index=series.index, dtype=float)
+    return series.rolling(window, min_periods=min_periods).mean()
