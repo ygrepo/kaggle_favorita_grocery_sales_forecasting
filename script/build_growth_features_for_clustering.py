@@ -64,13 +64,6 @@ def parse_args():
         help="Window size for smoothing trajectories",
     )
     parser.add_argument(
-        "--keys",
-        type=str,
-        default="store_item",
-        help="Keys to group by (comma-separated for multiple keys, "
-        "e.g., 'store_item' or 'store,item')",
-    )
-    parser.add_argument(
         "--log_fn",
         type=str,
         default="",
@@ -100,7 +93,6 @@ def main():
         logger.info(f"  Output feature fn: {args.output_features_fn}")
         logger.info(f"  Tau: {args.tau}")
         logger.info(f"  Smooth window: {args.smooth_window}")
-        logger.info(f"  Keys: {args.keys}")
         logger.info(f"  Log fn: {args.log_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
@@ -108,21 +100,13 @@ def main():
 
         df = read_csv_or_parquet(data_fn)
 
-        # Convert keys string to tuple
-        keys_tuple = (
-            tuple(args.keys.split(",")) if "," in args.keys else (args.keys,)
-        )
-        logger.debug(f"Converted keys '{args.keys}' to tuple: {keys_tuple}")
-
         cluster_df, features_df, diag = build_growth_features_for_clustering(
             df,
-            keys=keys_tuple,
             tau=args.tau,
             smooth_window=args.smooth_window,
         )
         # See which columns were pruned (near-empty) and their support
         logger.info(diag.sort_values("nan_frac", ascending=False).head(10))
-        # Optional: log a warning if a “key” feature was dropped
         if any(
             (diag["feature"].isin(["ac_lag12", "seasonal_strength"]))
             & (diag["dropped"])

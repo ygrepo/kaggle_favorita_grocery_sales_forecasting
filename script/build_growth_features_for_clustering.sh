@@ -20,7 +20,6 @@ OUTPUT_FEATURES_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growt
 
 TAU=0.05
 SMOOTH_WINDOW=4
-KEYS="store_item"
 
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -30,14 +29,11 @@ LOG_LEVEL="DEBUG"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data_dir) DATA_DIR="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --output_cluster_fn) OUTPUT_CLUSTER_FN="$2"; shift 2 ;;
     --output_features_fn) OUTPUT_FEATURES_FN="$2"; shift 2 ;;
-    --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --tau) TAU="$2"; shift 2 ;;
     --smooth_window) SMOOTH_WINDOW="$2"; shift 2 ;;
-    --keys) KEYS="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -56,7 +52,6 @@ echo "Output cluster fn: $OUTPUT_CLUSTER_FN" | tee -a "$LOG_FILE"
 echo "Output features fn: $OUTPUT_FEATURES_FN" | tee -a "$LOG_FILE"
 echo "Tau: $TAU" | tee -a "$LOG_FILE"
 echo "Smooth window: $SMOOTH_WINDOW" | tee -a "$LOG_FILE"
-echo "Keys: $KEYS" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
@@ -68,7 +63,6 @@ python "${SCRIPT_DIR}/build_growth_features_for_clustering.py" \
   --output_features_fn "$OUTPUT_FEATURES_FN" \
   --tau "$TAU" \
   --smooth_window "$SMOOTH_WINDOW" \
-  --keys "$KEYS" \
   --log_level "$LOG_LEVEL" \
   --log_fn "$LOG_FILE"
 exit_code=$?

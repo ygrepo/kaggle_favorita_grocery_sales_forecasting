@@ -586,24 +586,6 @@ def make_weekly_growth(
 ) -> pd.DataFrame:
     """
     Build weekly totals and multiple growth targets.
-
-    Adds:
-      - sales_wk:        weekly summed sales per key
-      - growth_rate:     pct_change of sales_wk per key (raw)
-      - growth_rate_clipped: winsorized growth_rate at global quantiles
-
-      Dead-zone (±tau) signed target and decompositions:
-      - direction:       {-1,0,+1} per tau threshold
-      - growth_up:       growth when direction==+1, else NaN
-      - growth_down:     positive magnitude of -growth when direction==-1, else NaN
-      - growth_rate_continuous: soft-thresholded signed growth in float32
-                               (|g|-tau if beyond tau, with original sign; else 0)
-
-      Three-state ordinal target:
-      - gr_3cat:         0=Down (g<=-tau), 1=Sideways (-tau<g<tau), 2=Up (g>=tau)   (Int8)
-
-      Calendar key:
-      - week_end:        normalized timestamp for the resample label (e.g., Sunday 00:00)
     """
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -643,140 +625,14 @@ def make_weekly_growth(
     # --- two-part targets  ---
     wk["growth_up"] = np.where(direction == 1, 1, np.nan)
     wk["growth_sideways"] = np.where(direction == 0, 1, np.nan)
-    wk["growth_down"] = np.where(
-        direction == -1, 1, np.nan
-    )  
-    # # --- unified signed, NaN-free, soft-thresholded target ---
-    # mag = np.maximum(np.abs(gr) - tau, 0.0)
-    # sgn = np.sign(gr) * (direction != 0)
-    # wk["growth_rate_continuous"] = (sgn * mag).astype("float32")
+    wk["growth_down"] = np.where(direction == -1, 1, np.nan)
 
-    # --- 3-category ordinal target (Down < Sideways < Up) ---
-    # 0 = Down (g <= -tau), 1 = Sideways (-tau < g < tau), 2 = Up (g >= +tau)
-    # bins = [-np.inf, -tau, tau, np.inf]
-    # labels = [-1, 0, 1]
-    # wk["gr_3cat"] = pd.cut(gr, bins=bins, labels=labels).astype("Int8")
-    
     # # --- normalized weekly label for joins ---
     wk["week_end"] = wk["date"].dt.normalize()
 
     return wk
 
 
-def fit_three_state_representatives(
-    wk: pd.DataFrame, gr_col="growth_rate_clipped", tau=0.01
-):
-    """Compute per-bin representative (median) growth values from training data."""
-    g = wk[gr_col].astype(float)
-    m_D = g[g <= -tau].median()
-    m_S = g[(g > -tau) & (g < tau)].median()
-    m_U = g[g >= tau].median()
-
-    # Fallbacks if a bin is empty
-    if np.isnan(m_D):
-        m_D = -tau * 1.5
-    if np.isnan(m_S):
-        m_S = 0.0
-    if np.isnan(m_U):
-        m_U = +tau * 1.5
-
-    return {
-        "m_D": float(m_D),
-        "m_S": float(m_S),
-        "m_U": float(m_U),
-        "tau": tau,
-    }
-
-
-def expected_growth_from_cumulative(q_not_down, q_up, reps):
-    """
-    q_not_down: P(y > Down) in [0,1]
-    q_up:       P(y > Sideways) in [0,1]
-    reps: dict with keys m_D, m_S, m_U
-    Returns: (E[g], Var[g], sd_hat, lower, upper)
-    """
-    q_not_down = np.asarray(q_not_down)
-    q_up = np.asarray(q_up)
-
-    p_D = 1.0 - q_not_down
-    p_U = q_up
-    p_S = q_not_down - q_up
-
-    m_D, m_S, m_U = reps["m_D"], reps["m_S"], reps["m_U"]
-
-    g_hat = p_D * m_D + p_S * m_S + p_U * m_U
-    var_hat = (
-        p_D * (m_D - g_hat) ** 2
-        + p_S * (m_S - g_hat) ** 2
-        + p_U * (m_U - g_hat) ** 2
-    )
-    sd_hat = np.sqrt(var_hat)
-    lower = g_hat - 1.96 * sd_hat
-    upper = g_hat + 1.96 * sd_hat
-    return g_hat, var_hat, sd_hat, lower, upper
-
-
-def compute_item_sensitivity(
-    wk: pd.DataFrame, keys=("store_item",), tau=0.01, sens_clip=(0.3, 3.0)
-):
-    klist = list(keys)
-    # absolute move magnitude on soft-thresholded target
-    tmp = wk.assign(
-        abs_move=np.abs(wk["growth_rate_continuous"]).astype(float)
-    )
-
-    # item median magnitude (non-flats only)
-    item_med = (
-        tmp.loc[tmp["abs_move"] > 0]
-        .groupby(klist, as_index=False)
-        .agg(item_med_abs=("abs_move", "median"), n_moves=("abs_move", "size"))
-    )
-
-    # block median magnitude (non-flats only)
-    if "block_id" not in tmp.columns:
-        raise KeyError(
-            "wk must include 'block_id' for block-level downscaling."
-        )
-    block_med = (
-        tmp.loc[tmp["abs_move"] > 0]
-        .groupby(["block_id"], as_index=False)
-        .agg(block_med_abs=("abs_move", "median"))
-    )
-
-    sens = item_med.merge(
-        wk[klist + ["block_id"]].drop_duplicates(), on=klist, how="left"
-    ).merge(block_med, on="block_id", how="left")
-
-    # sensitivity ratio with clipping & safe fallback
-    sens["s_ij"] = sens["item_med_abs"] / sens["block_med_abs"].replace(
-        0, np.nan
-    )
-    sens["s_ij"] = sens["s_ij"].clip(*sens_clip).fillna(1.0)
-    return sens[klist + ["block_id", "s_ij", "n_moves"]]
-
-
-def downscale_block_to_items(
-    wk: pd.DataFrame,
-    pred_block: pd.DataFrame,
-    sens_tbl: pd.DataFrame,
-    keys=("store_item",),
-):
-    klist = list(keys)
-    grid = wk[klist + ["block_id", "week_end"]].drop_duplicates()
-    out = grid.merge(
-        pred_block[["block_id", "week_end", "g_block_hat"]],
-        on=["block_id", "week_end"],
-        how="left",
-    ).merge(sens_tbl, on=klist + ["block_id"], how="left")
-    out["g_item_hat"] = out["s_ij"].fillna(1.0) * out["g_block_hat"].fillna(
-        0.0
-    )
-    return out  # (store_item, block_id, week_end, g_item_hat)
-
-
-# -------------------------------
-# 2) Helper feature functions
-# -------------------------------
 def _safe_autocorr(x: pd.Series, lag: int) -> float:
     """
     compute the lag-lag autocorrelation (i.e.,
@@ -842,75 +698,9 @@ def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
     return float(np.sqrt(cs**2 + cc**2))
 
 
-def _robust_summaries(
-    gr: pd.Series | np.ndarray,
-    tau: float = 0.01,
-    *,
-    min_support: int = 5,
-    return_meta: bool = False,
-) -> (
-    tuple[float, float, float, float, float]
-    | tuple[tuple[float, float, float, float, float], dict[str, Any]]
-):
-    x = pd.to_numeric(gr, errors="coerce").dropna().to_numpy()
-    n = x.size
-    has_var = np.nanstd(x) > 0
-    supported = (n >= min_support) and has_var
-
-    out = (np.nan, np.nan, np.nan, np.nan, np.nan)
-    if supported:
-        nz = x[np.abs(x) > tau]
-        gr_median_nz = np.nanmedian(nz) if nz.size else np.nan
-
-        if n >= 5:
-            q10, q90 = np.nanpercentile(x, [10, 90])
-            if np.isfinite(q10) and np.isfinite(q90):
-                trimmed = x[(x >= q10) & (x <= q90)]
-                gr_trimmed_mean = (
-                    np.nanmean(trimmed) if trimmed.size else np.nan
-                )
-            else:
-                gr_trimmed_mean = np.nan
-        else:
-            gr_trimmed_mean = np.nan
-
-        if n >= 5:
-            q01, q99 = np.nanpercentile(x, [1, 99])
-            if np.isfinite(q01) and np.isfinite(q99):
-                huberized = x[(x >= q01) & (x <= q99)]
-                gr_huber_mean = (
-                    np.nanmean(huberized) if huberized.size else np.nan
-                )
-            else:
-                gr_huber_mean = np.nan
-        else:
-            gr_huber_mean = np.nan
-
-        gr_median_abs = np.nanmedian(np.abs(x)) if n else np.nan
-        gr_share_zero = np.mean(np.isclose(x, 0)) if n else np.nan
-
-        out = (
-            gr_median_nz,
-            gr_trimmed_mean,
-            gr_huber_mean,
-            gr_median_abs,
-            gr_share_zero,
-        )
-
-    if return_meta:
-        meta = {
-            "n": int(n),
-            "n_nonzero": int((np.abs(x) > tau).sum()),
-            "supported": bool(supported),
-            "has_variance": bool(has_var),
-        }
-        return out, meta
-    return out
-
-
 def build_growth_features_for_clustering(
-    wk: pd.DataFrame,
-    keys: tuple[str, ...] = ("store_item",),
+    df: pd.DataFrame,
+    key: str = "store_item",
     tau: float = 0.01,
     smooth_window: int = 4,
     # feature support/quality controls
@@ -920,26 +710,23 @@ def build_growth_features_for_clustering(
     min_support_trend: int = 5,
     min_support_season: int = 26,
     drop_if_nan_frac_ge: float = 0.95,
-    return_meta: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Returns:
-      M_btnmf : BTNMF-ready (nonnegative, [0,1]) features
+      scaled_feats  : scaled (nonnegative, [0,1]) features
       feats   : raw feature table (with NaNs preserved pre-scaling)
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
 
-    g = wk.copy()
     logger.info("Building features for clustering...")
-    klist = list(keys)
 
     # ---- base series ----
     logger.info("Building base series...")
-    g = g.assign(
-        gc=pd.to_numeric(g["growth_rate_continuous"], errors="coerce"),
-        up=pd.to_numeric(g["growth_rate_up"], errors="coerce"),
-        sideways=pd.to_numeric(g["growth_rate_sideways"], errors="coerce"),
-        dn=pd.to_numeric(g["growth_rate_down"], errors="coerce"),
+    g = df.assign(
+        gc=pd.to_numeric(df["growth_rate"], errors="coerce"),
+        up=pd.to_numeric(df["growth_up"], errors="coerce"),
+        sideways=pd.to_numeric(df["growth_sideways"], errors="coerce"),
+        dn=pd.to_numeric(df["growth_down"], errors="coerce"),
     )
 
     # --- base aggregates (robust IQRs) ---
@@ -950,9 +737,8 @@ def build_growth_features_for_clustering(
     )
 
     feats = (
-        g.groupby(klist, dropna=False)
+        g.groupby(key, dropna=False)
         .agg(
-            # gc_mean=("gc", "mean"),
             gc_median=("gc", "median"),
             gc_std=("gc", "std"),
             gc_iqr=iqr_gc,
@@ -961,12 +747,16 @@ def build_growth_features_for_clustering(
                 "up",
                 lambda s: np.nanmean(pd.to_numeric(s, errors="coerce")),
             ),
+            frac_sideways=(
+                "sideways",
+                lambda s: np.nanmean(pd.to_numeric(s, errors="coerce")),
+            ),
             frac_down=(
                 "dn",
                 lambda s: np.nanmean(pd.to_numeric(s, errors="coerce")),
             ),
             # Positive vs negative counts based on gc and ±tau
-            pos_to_neg_ratio=(
+            up_to_down_ratio=(
                 "gc",
                 lambda s: (
                     (lambda pos, neg: np.nan if neg == 0 else pos / neg)(
@@ -980,9 +770,9 @@ def build_growth_features_for_clustering(
     )
 
     # ---- autocorrs / trend / seasonality with safeguards ----
-    ac_rows = []
+    rows = []
     logger.info("Computing autocorrs, trend, seasonality...")
-    for key_vals, sub in g.groupby(klist, sort=False):
+    for key_vals, sub in g.groupby(key, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
         gr = pd.to_numeric(sub["gc"], errors="coerce")
         gr_sm = gr.rolling(smooth_window, min_periods=1).mean()
@@ -1019,108 +809,41 @@ def build_growth_features_for_clustering(
             if (n_eff >= min_support_season and has_var)
             else np.nan
         )
-
-        row = dict(
-            zip(
-                klist, key_vals if isinstance(key_vals, tuple) else (key_vals,)
-            )
-        )
-        row.update(
-            dict(
-                ac_lag1=ac1,
-                ac_lag4=ac4,
-                ac_lag12=ac12,
-                trend_slope=slope,
-                seasonal_strength=seas,
-            )
-        )
-        ac_rows.append(row)
-
-    feats = feats.merge(pd.DataFrame(ac_rows), on=klist, how="left")
-
-    # ---- robust summaries (with support metadata) ----
-    rows = []
-    logger.info("Computing robust summaries...")
-    for key_vals, sub in g.groupby(klist, sort=False):
-        sub = sub.sort_values("date", kind="mergesort")
-        gr = pd.to_numeric(sub["gc"], errors="coerce")
-        up = pd.to_numeric(sub["up"], errors="coerce")
-        dn = pd.to_numeric(sub["dn"], errors="coerce")
-        sideways = pd.to_numeric(sub["sideways"], errors="coerce")
-        if return_meta:
-            robust_stats, meta = _robust_summaries(
-                gr, tau, min_support=min_support_trend, return_meta=True
-            )
-            (
-                gr_med_nz,
-                _,
-                _,
-                _,
-                _,
-            ) = robust_stats
-
-            up_med = np.nanmedian(up) if up.notna().any() else np.nan
-            dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
-            sideways_med = (
-                np.nanmedian(sideways) if sideways.notna().any() else np.nan
-            )
-
-            row: dict[str, Any] = dict(
-                zip(
-                    klist,
-                    key_vals if isinstance(key_vals, tuple) else (key_vals,),
-                )
-            )
-            row.update(
-                {
-                    "gr_median_nz": float(gr_med_nz),
-                    "median_up": float(up_med),
-                    "median_down": float(dn_med),
-                    "median_sideways": float(sideways_med),
-                    "robust_support_n": int(meta["n"]),
-                    "robust_has_variance": bool(meta["has_variance"]),
-                    "robust_supported": bool(meta["supported"]),
-                }
-            )
-        else:
-            (
-                gr_med_nz,
-                _,
-                _,
-                _,
-                _,
-            ) = _robust_summaries(
-                gr, tau, min_support=min_support_trend, return_meta=False
-            )
-            up_med = np.nanmedian(up) if up.notna().any() else np.nan
-            dn_med = np.nanmedian(dn) if dn.notna().any() else np.nan
-            sideways_med = (
-                np.nanmedian(sideways) if sideways.notna().any() else np.nan
-            )
-
-            row = dict(
-                zip(
-                    klist,
-                    key_vals if isinstance(key_vals, tuple) else (key_vals,),
-                )
-            )
-            row.update(
-                {
-                    "gr_median_nz": gr_med_nz,
-                    "median_up": up_med,
-                    "median_down": dn_med,
-                    "median_sideways": sideways_med,
-                }
-            )
+        row = {
+            key: key_vals,
+            "ac_lag1": ac1,
+            "ac_lag4": ac4,
+            "ac_lag12": ac12,
+            "trend_slope": slope,
+            "seasonal_strength": seas,
+        }
 
         rows.append(row)
 
-    feats = feats.merge(pd.DataFrame(rows), on=klist, how="left")
+    feats = feats.merge(pd.DataFrame(rows), on=key, how="left")
+
+    # ---- medians ----
+    rows = []
+    logger.info("Computing robust summaries...")
+    for key_vals, sub in g.groupby(key, sort=False):
+        sub = sub.sort_values("date", kind="mergesort")
+        gr = pd.to_numeric(sub["gc"], errors="coerce")
+        gr_median = np.nanmedian(gr) if gr.notna().any() else np.nan
+        row = {
+            key: key_vals,
+            "gr_median": gr_median,
+        }
+
+        rows.append(row)
+
+    feats = feats.merge(pd.DataFrame(rows), on=key, how="left")
 
     # ---- diagnostics & column pruning BEFORE scaling ----
     logger.info("Computing diagnostics...")
     diag_rows = []
-    num_cols_all = [c for c in feats.columns if c not in klist]
+    num_cols_all = [
+        c for c in feats.columns if c != key
+    ]  # Fixed: use != instead of 'not in'
     for c in num_cols_all:
         s = pd.to_numeric(feats[c], errors="coerce")
         nan_frac = float(s.isna().mean())
@@ -1147,11 +870,12 @@ def build_growth_features_for_clustering(
             f"{dropped_feats[:10]}{'...' if len(dropped_feats) > 10 else ''}"
         )
 
-    feats_kept = pd.concat([feats[klist], feats[keep_cols]], axis=1)
+    # Fixed: Proper column selection
+    feats_kept = feats[[key] + keep_cols].copy()
 
     # Select numeric feature matrix
-    X = feats_kept.drop(columns=klist).apply(pd.to_numeric, errors="coerce")
-    X = X.replace([np.inf, -np.inf], np.nan)  # keep behavior from your code
+    X = feats_kept.drop(columns=[key]).apply(pd.to_numeric, errors="coerce")
+    X = X.replace([np.inf, -np.inf], np.nan)
     num_cols = X.columns
 
     # Build scaler pipeline: median impute -> MinMax to [0,1]
@@ -1171,7 +895,7 @@ def build_growth_features_for_clustering(
     ).astype("float32")
 
     # Reattach key columns
-    feats_scaled = pd.concat([feats_kept[klist], X_scaled], axis=1)
+    feats_scaled = pd.concat([feats_kept[[key]], X_scaled], axis=1)
 
     return feats_scaled, feats, diag
 
