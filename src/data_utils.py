@@ -10,7 +10,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import MinMaxScaler
 import logging
-from src.utils import save_csv_or_parquet, get_logger
+from src.utils import (
+    save_csv_or_parquet,
+    get_logger,
+    _safe_autocorr,
+    _trend_slope,
+    _seasonal_corr,
+    safe_std,
+    safe_iqr,
+)
 
 
 logger = get_logger(__name__)
@@ -633,71 +641,6 @@ def make_weekly_growth(
     return wk
 
 
-def _safe_autocorr(x: pd.Series, lag: int) -> float:
-    """
-    compute the lag-lag autocorrelation (i.e.,
-    Pearson correlation between x_t and x_{t−lag})
-    while being robust to NaNs and tiny samples.
-    """
-    x = pd.to_numeric(x, errors="coerce").astype(float)
-    if x.isna().sum() > len(x) - 3 or len(x) <= lag + 2:
-        return np.nan
-    a = x.values
-    b = np.roll(a, lag)
-    b[:lag] = np.nan
-    ok = ~np.isnan(a) & ~np.isnan(b)
-    if ok.sum() < 3:
-        return np.nan
-    a0, b0 = a[ok] - a[ok].mean(), b[ok] - b[ok].mean()
-    denom = a0.std(ddof=1) * b0.std(ddof=1)
-    return (a0 * b0).mean() / denom if denom > 0 else np.nan
-
-
-def _trend_slope(y: pd.Series) -> float:
-    """
-    Returns the correlation between value and time (computed as the mean of
-    the product of the z-scores).
-    Output is Pearson correlation between (x, t) in [-1,1]
-        ≈ +1: strong upward trend
-        ≈ 0: no linear trend
-        ≈ −1: strong downward trend
-    Because both axes are standardized, this is proportional to the OLS slope;
-    in standardized units, the slope equals the correlation.
-    """
-    y = pd.to_numeric(y, errors="coerce").astype(float)
-    n = len(y)
-    if n < 5 or y.notna().sum() < 5:
-        return np.nan
-    x = np.arange(n, dtype=float)
-    ok = ~y.isna()
-    x, y = x[ok], y[ok]
-    if len(y) < 5:
-        return np.nan
-    x = (x - x.mean()) / (x.std(ddof=1) + 1e-12)
-    y = (y - y.mean()) / (y.std(ddof=1) + 1e-12)
-    return float(
-        (x * y).mean()
-    )  # correlation with time (≈ slope sign/strength)
-
-
-def _seasonal_corr(weeks: pd.Series, values: pd.Series, period=52) -> float:
-    # correlate with fundamental seasonal sine/cosine over week index
-    k = np.arange(len(values), dtype=float)
-    s = np.sin(2 * np.pi * k / period)
-    c = np.cos(2 * np.pi * k / period)
-    v = pd.to_numeric(values, errors="coerce").astype(float).values
-    ok = ~np.isnan(v)
-    if ok.sum() < 8:
-        return np.nan
-    v = (v[ok] - np.nanmean(v[ok])) / (np.nanstd(v[ok]) + 1e-12)
-    s = (s[ok] - np.nanmean(s[ok])) / (np.nanstd(s[ok]) + 1e-12)
-    c = (c[ok] - np.nanmean(c[ok])) / (np.nanstd(c[ok]) + 1e-12)
-    # magnitude of projection onto seasonal basis
-    cs = np.nanmean(v * s)
-    cc = np.nanmean(v * c)
-    return float(np.sqrt(cs**2 + cc**2))
-
-
 def build_growth_features_for_clustering(
     df: pd.DataFrame,
     key: str = "store_item",
@@ -729,19 +672,13 @@ def build_growth_features_for_clustering(
         dn=pd.to_numeric(df["growth_down"], errors="coerce"),
     )
 
-    # --- base aggregates (robust IQRs) ---
-    iqr_gc = (
-        "gc",
-        lambda s: np.nanpercentile(pd.to_numeric(s, errors="coerce"), 75)
-        - np.nanpercentile(pd.to_numeric(s, errors="coerce"), 25),
-    )
-
+    # --- base aggregates with safer std calculation ---
     feats = (
         g.groupby(key, dropna=False)
         .agg(
             gc_median=("gc", "median"),
-            gc_std=("gc", "std"),
-            gc_iqr=iqr_gc,
+            gc_std=("gc", safe_std),
+            gc_iqr=("gc", safe_iqr),
             # Fractions from provided 0/1 indicators
             frac_up=(
                 "up",
