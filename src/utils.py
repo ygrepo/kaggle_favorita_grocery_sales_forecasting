@@ -307,3 +307,4 @@ def safe_nanmean(s: pd.Series) -> float:
     if s_numeric.isna().all():
         return np.nan
     return float(np.nanmean(s_numeric))
+
