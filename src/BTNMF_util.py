@@ -721,7 +721,7 @@ def sweep_btf_grid(
     *,
     restarts: int = 3,
     seeds: Optional[Iterable[int]] = None,
-    #min_keep: int = 6,
+    # min_keep: int = 6,
     fit_kwargs: Optional[Dict[str, Any]] = None,
     n_jobs: int = 1,  # NEW: Number of parallel processes
     batch_size: int = 4,  # NEW: Number of (R,C) pairs per batch
@@ -775,7 +775,7 @@ def sweep_btf_grid(
             rc_pairs,
             restarts,
             seeds,
-            #min_keep,
+            # min_keep,
             fit_kwargs,
         )
     else:
@@ -786,7 +786,7 @@ def sweep_btf_grid(
             rc_pairs,
             restarts,
             seeds,
-            #min_keep,
+            # min_keep,
             fit_kwargs,
             n_jobs,
             batch_size,
@@ -830,7 +830,7 @@ def _process_single_rc_pair(
     X: np.ndarray,
     restarts: int,
     seeds: Optional[Iterable[int]],
-    #min_keep: Optional[int],
+    # min_keep: Optional[int],
     fit_kwargs: Optional[Dict[str, Any]],
 ):
     """Process a single (R,C) pair and return the metrics row."""
@@ -882,7 +882,7 @@ def _process_single_rc_pair(
         pve = compute_pve(X, Xhat, loss_name=loss_name, mask=None)
 
         N_all = X.size
-        N_obs = _obs_count(mask=None, X)
+        N_obs = _obs_count(mask=None, X=X)
 
         # Defensive checks for N_obs
         if N_obs is None:
@@ -1004,7 +1004,7 @@ def _sweep_btf_grid_sequential(
     rc_pairs: Iterable[Tuple[int, int]],
     restarts: int,
     seeds: Optional[Iterable[int]],
-    #min_keep: Optional[int],
+    # min_keep: Optional[int],
     fit_kwargs: Optional[Dict[str, Any]],
 ):
     """Sequential processing of (R,C) pairs."""
@@ -1017,7 +1017,7 @@ def _sweep_btf_grid_sequential(
             X,
             restarts,
             seeds,
-            #min_keep,
+            # min_keep,
             fit_kwargs,
         )
         rows.append(row)
@@ -1032,7 +1032,7 @@ def _process_rc_batch(args):
         X,
         restarts,
         seeds,
-        #min_keep,
+        # min_keep,
         fit_kwargs,
     ) = args
 
@@ -1046,7 +1046,7 @@ def _process_rc_batch(args):
                 X,
                 restarts,
                 seeds,
-                #min_keep,
+                # min_keep,
                 fit_kwargs,
             )
             results.append(row)
@@ -1109,7 +1109,7 @@ def _sweep_btf_grid_parallel(
     rc_pairs: Iterable[Tuple[int, int]],
     restarts: int,
     seeds: Optional[Iterable[int]],
-    #min_keep: Optional[int],
+    # min_keep: Optional[int],
     fit_kwargs: Optional[Dict[str, Any]],
     n_jobs: int,
     batch_size: int,
@@ -1139,7 +1139,7 @@ def _sweep_btf_grid_parallel(
             X,
             restarts,
             seeds,
-            #min_keep,
+            # min_keep,
             fit_kwargs,
         )
         for batch in batches
@@ -1488,7 +1488,7 @@ def cluster_data_and_explain_blocks(
         C_list,
         restarts=3,
         seeds=range(123, 999),
-        #min_keep=None,
+        # min_keep=None,
         fit_kwargs={"max_iter": max_iter, "tol": tol},
         n_jobs=n_jobs,
         batch_size=batch_size,
