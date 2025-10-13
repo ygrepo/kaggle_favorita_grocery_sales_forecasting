@@ -260,7 +260,7 @@ def main():
             max_iter=args.max_iter,
             k_row=args.k_row,
             k_col=args.k_col,
-            keep_strategy=args.keep_strategy,
+            # keep_strategy=args.keep_strategy,
             tol=args.tol,
             max_pve_drop=args.max_pve_drop,
             # min_sil=args.min_sil,
