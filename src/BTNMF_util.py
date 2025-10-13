@@ -721,7 +721,7 @@ def sweep_btf_grid(
     *,
     restarts: int = 3,
     seeds: Optional[Iterable[int]] = None,
-    min_keep: int = 6,
+    #min_keep: int = 6,
     fit_kwargs: Optional[Dict[str, Any]] = None,
     n_jobs: int = 1,  # NEW: Number of parallel processes
     batch_size: int = 4,  # NEW: Number of (R,C) pairs per batch
@@ -775,7 +775,7 @@ def sweep_btf_grid(
             rc_pairs,
             restarts,
             seeds,
-            min_keep,
+            #min_keep,
             fit_kwargs,
         )
     else:
@@ -786,7 +786,7 @@ def sweep_btf_grid(
             rc_pairs,
             restarts,
             seeds,
-            min_keep,
+            #min_keep,
             fit_kwargs,
             n_jobs,
             batch_size,
@@ -830,7 +830,7 @@ def _process_single_rc_pair(
     X: np.ndarray,
     restarts: int,
     seeds: Optional[Iterable[int]],
-    min_keep: Optional[int],
+    #min_keep: Optional[int],
     fit_kwargs: Optional[Dict[str, Any]],
 ):
     """Process a single (R,C) pair and return the metrics row."""
@@ -869,9 +869,9 @@ def _process_single_rc_pair(
         Xhat = est.reconstruct()
 
         # Defensive check for min_keep
-        if min_keep is None:
-            logger.warning(f"min_keep is None for R={R}, C={C}, using 0")
-            min_keep = 0
+        # if min_keep is None:
+        #     logger.warning(f"min_keep is None for R={R}, C={C}, using 0")
+        #     min_keep = 0
 
         # if min_keep > 0:
         #     logger.info(f"Computing cell mask for R={R}, C={C}")
@@ -879,12 +879,10 @@ def _process_single_rc_pair(
         # else:
         #     mask = None
         # mask = np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
-        U, B, V = est.factors()
-        mask = np.abs(B) >= np.percentile(np.abs(B), 20)
-        pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
+        pve = compute_pve(X, Xhat, loss_name=loss_name, mask=None)
 
         N_all = X.size
-        N_obs = _obs_count(mask, X)
+        N_obs = _obs_count(mask=None, X)
 
         # Defensive checks for N_obs
         if N_obs is None:
@@ -919,7 +917,7 @@ def _process_single_rc_pair(
         # Compute ΔLoss for every block (r,c) in the factorization
         # ΔLoss_rc = Loss_without_block - Loss_full
         # Positive values mean the block is "helpful"
-        ablation_mat = est.compute_all_block_delta_losses(X, mask=mask)
+        ablation_mat = est.compute_all_block_delta_losses(X, mask=None)
 
         # Flatten to a 1-D array and keep only finite entries (ignore NaN/inf)
         ablation_flat = ablation_mat[np.isfinite(ablation_mat)]
@@ -950,8 +948,8 @@ def _process_single_rc_pair(
         # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
         per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
 
-        base = _baseline_array(X, mask)
-        baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=mask)
+        base = _baseline_array(X, mask=None)
+        baseline_loss = neg_loglik_from_loss(loss_name, X, base, mask=None)
 
         # Ensure baseline_loss is a valid number for comparison
         if baseline_loss is None or not np.isfinite(baseline_loss):
@@ -973,7 +971,7 @@ def _process_single_rc_pair(
 
         # --- AIC/BIC-like penalized scores ---
         Xhat = est.reconstruct()
-        AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=mask)
+        AIC, BIC = aic_bic_scores(loss_name, X, Xhat, R, C, mask=None)
 
         return {
             "n_row": R,
@@ -1006,7 +1004,7 @@ def _sweep_btf_grid_sequential(
     rc_pairs: Iterable[Tuple[int, int]],
     restarts: int,
     seeds: Optional[Iterable[int]],
-    min_keep: Optional[int],
+    #min_keep: Optional[int],
     fit_kwargs: Optional[Dict[str, Any]],
 ):
     """Sequential processing of (R,C) pairs."""
@@ -1019,7 +1017,7 @@ def _sweep_btf_grid_sequential(
             X,
             restarts,
             seeds,
-            min_keep,
+            #min_keep,
             fit_kwargs,
         )
         rows.append(row)
@@ -1034,7 +1032,7 @@ def _process_rc_batch(args):
         X,
         restarts,
         seeds,
-        min_keep,
+        #min_keep,
         fit_kwargs,
     ) = args
 
@@ -1048,7 +1046,7 @@ def _process_rc_batch(args):
                 X,
                 restarts,
                 seeds,
-                min_keep,
+                #min_keep,
                 fit_kwargs,
             )
             results.append(row)
@@ -1111,7 +1109,7 @@ def _sweep_btf_grid_parallel(
     rc_pairs: Iterable[Tuple[int, int]],
     restarts: int,
     seeds: Optional[Iterable[int]],
-    min_keep: Optional[int],
+    #min_keep: Optional[int],
     fit_kwargs: Optional[Dict[str, Any]],
     n_jobs: int,
     batch_size: int,
@@ -1141,7 +1139,7 @@ def _sweep_btf_grid_parallel(
             X,
             restarts,
             seeds,
-            min_keep,
+            #min_keep,
             fit_kwargs,
         )
         for batch in batches
@@ -1490,7 +1488,7 @@ def cluster_data_and_explain_blocks(
         C_list,
         restarts=3,
         seeds=range(123, 999),
-        min_keep=None,
+        #min_keep=None,
         fit_kwargs={"max_iter": max_iter, "tol": tol},
         n_jobs=n_jobs,
         batch_size=batch_size,
