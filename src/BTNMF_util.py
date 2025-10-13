@@ -826,12 +826,12 @@ def suggest_min_keep_elbow(est: BinaryTriFactorizationEstimator) -> int:
 def _process_single_rc_pair(
     R: int,
     C: int,
-    est_maker,
-    X,
-    restarts,
-    seeds,
-    min_keep,
-    fit_kwargs,
+    est_maker: Callable[..., BinaryTriFactorizationEstimator],
+    X: np.ndarray,
+    restarts: int,
+    seeds: Optional[Iterable[int]],
+    min_keep: Optional[int],
+    fit_kwargs: Optional[Dict[str, Any]],
 ):
     """Process a single (R,C) pair and return the metrics row."""
 
@@ -997,13 +997,13 @@ def _process_single_rc_pair(
 
 
 def _sweep_btf_grid_sequential(
-    est_maker,
-    X,
-    rc_pairs,
-    restarts,
-    seeds,
-    min_keep,
-    fit_kwargs,
+    est_maker: Callable[..., BinaryTriFactorizationEstimator],
+    X: np.ndarray,
+    rc_pairs: Iterable[Tuple[int, int]],
+    restarts: int,
+    seeds: Optional[Iterable[int]],
+    min_keep: Optional[int],
+    fit_kwargs: Optional[Dict[str, Any]],
 ):
     """Sequential processing of (R,C) pairs."""
     rows = []
@@ -1102,15 +1102,15 @@ def _validate_est_maker_for_multiprocessing(est_maker):
 
 
 def _sweep_btf_grid_parallel(
-    est_maker,
-    X,
-    rc_pairs,
-    restarts,
-    seeds,
-    min_keep,
-    fit_kwargs,
-    n_jobs,
-    batch_size,
+    est_maker: Callable[..., BinaryTriFactorizationEstimator],
+    X: np.ndarray,
+    rc_pairs: Iterable[Tuple[int, int]],
+    restarts: int,
+    seeds: Optional[Iterable[int]],
+    min_keep: Optional[int],
+    fit_kwargs: Optional[Dict[str, Any]],
+    n_jobs: int,
+    batch_size: int,
 ):
     """Parallel processing of (R,C) pairs using multiprocessing."""
 
@@ -1340,6 +1340,7 @@ def _prep_matrix_for_btnmf(
     min_per_col = np.nanmin(M, axis=0)
     neg_cols = min_per_col < 0
     if np.any(neg_cols):
+        logger.warning(f"Negative values detected in columns: {neg_cols}")
         M[:, neg_cols] = M[:, neg_cols] - min_per_col[neg_cols][None, :]
 
     if normalize:
