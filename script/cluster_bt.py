@@ -104,24 +104,24 @@ def parse_args():
         default=0.01,
         help="Max PVE drop for BT-NMF",
     )
-    parser.add_argument(
-        "--min_sil",
-        type=float,
-        default=-0.05,
-        help="Min Silhouette for BT-NMF",
-    )
-    parser.add_argument(
-        "--keep_strategy",
-        type=str,
-        default="delta_then_size",
-        help="Keep strategy for BT-NMF",
-    )
-    parser.add_argument(
-        "--min_keep",
-        type=int,
-        default=6,
-        help="Min keep for BT-NMF",
-    )
+    # parser.add_argument(
+    #     "--min_sil",
+    #     type=float,
+    #     default=-0.05,
+    #     help="Min Silhouette for BT-NMF",
+    # )
+    # parser.add_argument(
+    #     "--keep_strategy",
+    #     type=str,
+    #     default="delta_then_size",
+    #     help="Keep strategy for BT-NMF",
+    # )
+    # parser.add_argument(
+    #     "--min_keep",
+    #     type=int,
+    #     default=6,
+    #     help="Min keep for BT-NMF",
+    # )
     parser.add_argument(
         "--top_k",
         type=int,
@@ -146,11 +146,11 @@ def parse_args():
         default="",
         help="Path to summary file (relative to project root)",
     )
-    parser.add_argument(
-        "--block_id_fn",
-        type=str,
-        default="",
-        help="Path to block id file (relative to project root)",
+    # parser.add_argument(
+    #     "--block_id_fn",
+    #     type=str,
+    #     default="",
+    #     help="Path to block id file (relative to project root)",
     )
     parser.add_argument(
         "--output_fn",
@@ -214,19 +214,19 @@ def main():
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  K row: {args.k_row}")
         logger.info(f"  K col: {args.k_col}")
-        logger.info(f"  Keep strategy: {args.keep_strategy}")
+        # logger.info(f"  Keep strategy: {args.keep_strategy}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Max PVE drop: {args.max_pve_drop}")
-        logger.info(f"  Min Silhouette: {args.min_sil}")
-        logger.info(f"  Min keep: {args.min_keep}")
+        # logger.info(f"  Min Silhouette: {args.min_sil}")
+        #logger.info(f"  Min keep: {args.min_keep}")
         logger.info(f"  Top k: {args.top_k}")
         logger.info(f"  Top rank fn: {args.top_rank_fn}")
         logger.info(f"  N jobs: {args.n_jobs}")
         logger.info(f"  Batch size: {args.batch_size}")
         logger.info(f"  Summary fn: {args.summary_fn}")
         logger.info(f"  Normalize: {args.normalize}")
-        logger.info(f"  Block id fn: {args.block_id_fn}")
-        logger.info(f"  Output fn: {args.output_fn}")
+        # logger.info(f"  Block id fn: {args.block_id_fn}")
+        # logger.info(f"  Output fn: {args.output_fn}")
         logger.info(f"  Model fn: {args.model_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
@@ -242,20 +242,11 @@ def main():
                 inplace=True,
             )
 
-        output_fn = Path(args.output_fn).resolve()
+        # output_fn = Path(args.output_fn).resolve()
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
-        block_id_fn = Path(args.block_id_fn).resolve()
+        # block_id_fn = Path(args.block_id_fn).resolve()
         model_fn = Path(args.model_fn).resolve()
-        #         out = cluster_data_and_explain_blocks(
-        #     M_btnmf,
-        #     row_range=range(8, 17, 2),
-        #     col_range=range(3, 7),
-        #     normalize=False,      # <-- important for M_btnmf
-        #     k_row=2,
-        #     k_col=2,
-        #     max_iter=100,
-        # )
 
         cluster_data_and_explain_blocks(
             df,
@@ -272,13 +263,13 @@ def main():
             keep_strategy=args.keep_strategy,
             tol=args.tol,
             max_pve_drop=args.max_pve_drop,
-            min_sil=args.min_sil,
-            min_keep=args.min_keep,
+            # min_sil=args.min_sil,
+            #min_keep=args.min_keep,
             top_k=args.top_k,
             top_rank_fn=top_rank_fn,
             summary_fn=summary_fn,
-            block_id_fn=block_id_fn,
-            output_fn=output_fn,
+            # block_id_fn=block_id_fn,
+            # output_fn=output_fn,
             model_fn=model_fn,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,

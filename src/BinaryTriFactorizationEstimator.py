@@ -37,7 +37,9 @@ def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
 # ----------------------------
 # Losses
 # ----------------------------
-def gaussian_loss(X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None) -> float:
+def gaussian_loss(
+    X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None
+) -> float:
     if mask is None:
         diff = X - Xhat
     else:
@@ -90,13 +92,15 @@ def allowed_mask_from_stats(
     delta_quantile: float = 0.50,
     min_rows: int = 1,
     min_cols: int = 1,
-):
+) -> np.ndarray:
     R = int(stats["r"].max()) + 1
     C = int(stats["c"].max()) + 1
     allow = np.zeros((R, C), dtype=bool)
 
     if rule == "size_gap":
-        th = elbow_cutoff_by_gap(stats["n_cells"].values, min_floor=min_rows * min_cols)
+        th = elbow_cutoff_by_gap(
+            stats["n_cells"].values, min_floor=min_rows * min_cols
+        )
         keep = stats["n_cells"] >= th
 
     elif rule == "effect_gap":
@@ -271,7 +275,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             UtU = U.T @ U
             VtV = V.T @ V
             # Lipschitz bound for ∇f(B) = Uᵀ(UBVᵀ - X)V + αB
-            L = float(np.linalg.norm(UtU, 2) * np.linalg.norm(VtV, 2) + self.alpha)
+            L = float(
+                np.linalg.norm(UtU, 2) * np.linalg.norm(VtV, 2) + self.alpha
+            )
             eta = 1.0 / max(L, 1e-12)
 
             lam = float(self.block_l1)
@@ -475,13 +481,17 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         """
         mu_new = np.maximum(mu_row + g_row, 1e-9)
         mu_row = np.maximum(mu_row, 1e-9)
-        return (x_row * (np.log(mu_new) - np.log(mu_row)) - (mu_new - mu_row)).sum()
+        return (
+            x_row * (np.log(mu_new) - np.log(mu_row)) - (mu_new - mu_row)
+        ).sum()
 
     def _poisson_delta_ll_col(self, x_col, mu_col, h_col):
         """Column analogue of the Poisson Δ log-likelihood."""
         mu_new = np.maximum(mu_col + h_col, 1e-9)
         mu_col = np.maximum(mu_col, 1e-9)
-        return (x_col * (np.log(mu_new) - np.log(mu_col)) - (mu_new - mu_col)).sum()
+        return (
+            x_col * (np.log(mu_new) - np.log(mu_col)) - (mu_new - mu_col)
+        ).sum()
 
     # helper to compute objective
     def _objective(self, X, Xhat, U, V):
@@ -492,7 +502,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             return 0.5 * np.sum(resid * resid) + penalty
         else:
             MU = np.maximum(Xhat, 1e-9)
-            return float((MU - X * np.log(MU)).sum()) + self.beta * (U.sum() + V.sum())
+            return float((MU - X * np.log(MU)).sum()) + self.beta * (
+                U.sum() + V.sum()
+            )
 
     def _rss(self, X, Xhat):
         return float(np.sum((X - Xhat) ** 2))
@@ -575,9 +587,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         # for the optional “stable assignments” stop (no new attribute needed)
         stable_iters = 0
         stable_patience = 2  # consecutive iters with no membership changes
-
-        # precompute total signal power for PVE (||X||_F^2)
-        total_power = float(np.sum(X * X)) if np.isfinite(X).all() else np.nan
 
         for it in range(self.max_iter):
             t0 = time.perf_counter()
@@ -735,7 +744,11 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 pve = 1.0 - (L_model / max(L_base, eps))
 
             # relative contributions
-            tot_loss = rss + regB + (self.block_l1 * l1B if self.block_l1 > 0 else 0.0)
+            tot_loss = (
+                rss
+                + regB
+                + (self.block_l1 * l1B if self.block_l1 > 0 else 0.0)
+            )
             frac_rss = rss / tot_loss if tot_loss > 0 else 0.0
             frac_reg = regB / tot_loss if tot_loss > 0 else 0.0
             frac_l1 = (
@@ -961,7 +974,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             mu = np.maximum(Xhat[i, :], 1e-9)
             if memberships[i, :].any():
                 mu = np.maximum(
-                    mu - components[memberships[i, :] == 1, :].sum(axis=0), 1e-9
+                    mu - components[memberships[i, :] == 1, :].sum(axis=0),
+                    1e-9,
                 )
 
             memberships[i, :] = 0
@@ -1002,7 +1016,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             mu = np.maximum(Xhat[:, j], 1e-9)
             if memberships[j, :].any():
                 mu = np.maximum(
-                    mu - components[:, memberships[j, :] == 1].sum(axis=1), 1e-9
+                    mu - components[:, memberships[j, :] == 1].sum(axis=1),
+                    1e-9,
                 )
 
             memberships[j, :] = 0
@@ -1038,7 +1053,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             Xhat[:, j] = components @ memberships[j, :]
 
     def check_fitted(self):
-        if self.U_ is None or self.V_ is None or self.B_ is None or self.Xhat_ is None:
+        if (
+            self.U_ is None
+            or self.V_ is None
+            or self.B_ is None
+            or self.Xhat_ is None
+        ):
             raise ValueError("Model has not been fitted yet.")
 
     def factors(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1213,7 +1233,11 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if return_dataframe:
             import pandas as pd
 
-            return pd.DataFrame(results).sort_values("block_id").reset_index(drop=True)
+            return (
+                pd.DataFrame(results)
+                .sort_values("block_id")
+                .reset_index(drop=True)
+            )
         else:
             return {"per_block_stats": results, "baseline": baseline}
 
@@ -1244,7 +1268,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             # Use dedicated TSS/RSS/PVE computation with grand_mean baseline for backward compatibility
             tss_rss_pve = self.compute_tss_rss_pve(X, baseline="grand_mean")
-            explained_variance = tss_rss_pve["pve"] / 100.0  # Convert back to fraction
+            explained_variance = (
+                tss_rss_pve["pve"] / 100.0
+            )  # Convert back to fraction
 
             out.update(
                 dict(
@@ -1268,7 +1294,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 )
                 # classic deviance is 2 * Σ [ x log(x/μ) - (x-μ) ], equal to 2 * Σ term
             deviance = float(2.0 * term.sum())
-            out.update(dict(poisson_nll_like=nll_like, poisson_deviance=deviance))
+            out.update(
+                dict(poisson_nll_like=nll_like, poisson_deviance=deviance)
+            )
 
         return out
 
@@ -1443,7 +1471,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         Fast vectorized path for method == "dominant"; others use the scalar loop.
         """
         # --- Preconditions ---
-        if self.U_ is None or self.V_ is None or self.B_ is None or self.Xhat_ is None:
+        if (
+            self.U_ is None
+            or self.V_ is None
+            or self.B_ is None
+            or self.Xhat_ is None
+        ):
             raise ValueError("Model has not been fitted yet.")
         U, V, B, Xhat = self.U_, self.V_, self.B_, self.Xhat_
         I, J = U.shape[0], V.shape[0]
@@ -1495,9 +1528,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 out["as_frame"] = pd.DataFrame(
                     {
                         "row_i": ii.ravel(),
-                        "row_name": np.array(row_names, dtype=object)[ii.ravel()],
+                        "row_name": np.array(row_names, dtype=object)[
+                            ii.ravel()
+                        ],
                         "col_j": jj.ravel(),
-                        "col_name": np.array(col_names, dtype=object)[jj.ravel()],
+                        "col_name": np.array(col_names, dtype=object)[
+                            jj.ravel()
+                        ],
                         "r_star": r_star.ravel(),
                         "c_star": c_star.ravel(),
                         "block_id": (-1 * np.ones_like(r_star)).ravel(),
@@ -1589,7 +1626,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                     c_star[i, good] = Carg[rbest[good], cols[good]]
 
             # Flattened block id; keep -1 for unassigned
-            block_id = np.where((r_star >= 0) & (c_star >= 0), r_star * C + c_star, -1)
+            block_id = np.where(
+                (r_star >= 0) & (c_star >= 0), r_star * C + c_star, -1
+            )
 
             out = {"r_star": r_star, "c_star": c_star, "block_id": block_id}
             if return_frame:
@@ -1597,9 +1636,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 out["as_frame"] = pd.DataFrame(
                     {
                         "row_i": ii.ravel(),
-                        "row_name": np.array(row_names, dtype=object)[ii.ravel()],
+                        "row_name": np.array(row_names, dtype=object)[
+                            ii.ravel()
+                        ],
                         "col_j": jj.ravel(),
-                        "col_name": np.array(col_names, dtype=object)[jj.ravel()],
+                        "col_name": np.array(col_names, dtype=object)[
+                            jj.ravel()
+                        ],
                         "r_star": r_star.ravel(),
                         "c_star": c_star.ravel(),
                         "block_id": block_id.ravel(),
@@ -1657,14 +1700,18 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                         r_star[i, j], c_star[i, j] = int(gr), int(gc)
                         continue
                     else:
-                        raise RuntimeError(f"No allowed (r,c) for cell (i={i}, j={j}).")
+                        raise RuntimeError(
+                            f"No allowed (r,c) for cell (i={i}, j={j})."
+                        )
 
                 flat_idx = int(np.argmax(scores))
                 rr, cc = divmod(flat_idx, scores.shape[1])
                 r_star[i, j] = int(Ri[rr])
                 c_star[i, j] = int(Cj[cc])
 
-        block_id = np.where((r_star >= 0) & (c_star >= 0), r_star * C + c_star, -1)
+        block_id = np.where(
+            (r_star >= 0) & (c_star >= 0), r_star * C + c_star, -1
+        )
         out = {"r_star": r_star, "c_star": c_star, "block_id": block_id}
 
         if return_frame:
@@ -1821,11 +1868,17 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         J = self.V_.shape[0]
         if X.shape[1] != J:
-            raise ValueError(f"X has {X.shape[1]} features, but model expects {J}.")
+            raise ValueError(
+                f"X has {X.shape[1]} features, but model expects {J}."
+            )
 
         # default method per loss
         if method is None:
-            method = "gaussian_delta" if self.loss == "gaussian" else "poisson_delta"
+            method = (
+                "gaussian_delta"
+                if self.loss == "gaussian"
+                else "poisson_delta"
+            )
 
         return self.assign_unique_blocks(
             X,
@@ -1918,12 +1971,17 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 raise ValueError("Model has not been fitted yet")
             H = self.U_ @ self.B_  # (I,C)
             X = check_array(
-                X, dtype=np.float64, ensure_2d=True, force_all_finite="allow-nan"
+                X,
+                dtype=np.float64,
+                ensure_2d=True,
+                force_all_finite="allow-nan",
             )
             X = np.nan_to_num(X)
             I, C = H.shape
             if X.shape[0] != I:
-                raise ValueError(f"X has {X.shape[0]} rows, but model expects {I}.")
+                raise ValueError(
+                    f"X has {X.shape[0]} rows, but model expects {I}."
+                )
             labels = np.empty(X.shape[1], dtype=int)
             if self.loss == "gaussian":
                 H_norm2 = np.einsum("ic,ic->c", H, H)  # (C,)
@@ -1996,7 +2054,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         # If the number of non-negligible entries is small, keep them all
         if vals.size <= min_keep:
-            logger.info(f"Only {vals.size} non-negligible blocks; keeping them all.")
+            logger.info(
+                f"Only {vals.size} non-negligible blocks; keeping them all."
+            )
             cut = vals[-1]  # the smallest of what's left
             return np.abs(self.B_) >= cut
 
@@ -2016,7 +2076,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         logger.info(f"Keeping {k} blocks with |B| >= {cut}.")
         return np.abs(self.B_) >= cut
 
-    def keep_topk_blocks(self, k):
+    def keep_topk_blocks(self, k: int) -> np.ndarray:
         if self.B_ is None:
             raise ValueError("Model has not been fitted yet")
 
@@ -2043,7 +2103,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     # Fast per-block ablation ΔLoss
     # ----------------------------
 
-    def compute_all_block_delta_losses(self, X: np.ndarray, mask: np.ndarray = None):
+    def compute_all_block_delta_losses(
+        self, X: np.ndarray, mask: np.ndarray = None
+    ):
 
         # If B is larger, trim a view
         U, B, V = self.factors()
@@ -2057,7 +2119,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         dmat = np.zeros((R, C), dtype=float)
         for r in range(R):
             for c in range(C):
-                dmat[r, c] = self.ablate_block_delta_loss(X, r, c, B=B, mask=mask)
+                dmat[r, c] = self.ablate_block_delta_loss(
+                    X, r, c, B=B, mask=mask
+                )
         return dmat
 
     def ablate_block_delta_loss(
@@ -2153,12 +2217,19 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # legacy: whatever your current gap logic does
             logger.info("Computing allowed mask from gap.")
             allowed = (
-                self.allowed_mask_from_gap(min_keep=min_keep) if mask is None else mask
+                self.allowed_mask_from_gap(min_keep=min_keep)
+                if mask is None
+                else mask
             )
         elif keep_strategy == "TopK":
             logger.info("Computing allowed mask from top-k.")
-            allowed = self.keep_topk_blocks(min_keep)
-        else:
+            allowed = self.keep_topk_blocks(k=min_keep)
+        elif keep_strategy in (
+            "size_gap",
+            "effect_gap",
+            "delta_then_size",
+            "quantiles",
+        ):
             # data-driven
             logger.info("Computing allowed mask from stats.")
             stats = self.collect_block_stats(X, mask=None)
@@ -2172,6 +2243,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 min_cols=min_cols,
             )
             logger.info(f"allowed:\n{allowed}")
+        else:
+            raise ValueError(f"Unknown keep_strategy: {keep_strategy}")
 
         assign = self.assign_unique_blocks(
             X,
@@ -2192,10 +2265,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
         item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
         row_order = (
-            pd.Series(store_r, index=norm_data.index).sort_values().index.tolist()
+            pd.Series(store_r, index=norm_data.index)
+            .sort_values()
+            .index.tolist()
         )
         col_order = (
-            pd.Series(item_c, index=norm_data.columns).sort_values().index.tolist()
+            pd.Series(item_c, index=norm_data.columns)
+            .sort_values()
+            .index.tolist()
         )
         return row_order, col_order
 
@@ -2208,78 +2285,135 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         R, C = self.B_.shape
         store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
         item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-        store_assign = pd.DataFrame({"store_r": store_r}, index=norm_data.index)
+        store_assign = pd.DataFrame(
+            {"store_r": store_r}, index=norm_data.index
+        )
         item_assign = pd.DataFrame({"item_c": item_c}, index=norm_data.columns)
         return store_assign, item_assign
 
     def explain_blocks(
         self,
         X: np.ndarray,
-        assign: Dict[str, Any],  # still used to know which blocks are present
+        assign: dict | None,  # optional; only to restrict which blocks to list
         row_names: np.ndarray,
         col_names: np.ndarray,
         top_k: int = 5,
+        b_thresh: float = 0.0,  # ignore blocks with |B_rc| <= b_thresh when assign is None
     ) -> pd.DataFrame:
         """
-        Summarize blocks using the U/V memberships (rectangular masks), not the assign mask.
-        Requires that self.U_, self.V_, self.B_ are already set by fit().
+        Summarize blocks using overlapping U/V memberships.
+        Reports both overlap-counted and 'exclusive' (overlap-adjusted) statistics.
+
+        exclusive weighting: each cell contributes 1/K where
+        K = (# row clusters containing i) * (# col clusters containing j).
         """
         U, B, V = self.U_, self.B_, self.V_
         R, C = B.shape
 
-        # ensure arrays for boolean indexing
         row_names = np.asarray(row_names)
         col_names = np.asarray(col_names)
 
-        # which blocks to report (ignore -1 if present)
-        used = np.unique(assign["block_id"])
-        used = used[used >= 0]
+        # figure out which blocks to report
+        if assign is not None and "block_id" in assign:
+            used = np.unique(np.asarray(assign["block_id"]))
+            used = used[used >= 0]
+            rc_pairs = [divmod(int(b), C) for b in used]
+        else:
+            # all (r, c) that are "live": some members on both sides and |B_rc| > b_thresh
+            rc_pairs = []
+            U_any = (U > 0).any(axis=0)  # shape (R,)
+            V_any = (V > 0).any(axis=0)  # shape (C,)
+            for r in range(R):
+                if not U_any[r]:
+                    continue
+                for c in range(C):
+                    if not V_any[c]:
+                        continue
+                    if abs(B[r, c]) > b_thresh:
+                        rc_pairs.append((r, c))
 
-        rows = []
+        # precompute multiplicities to avoid building a full overlap matrix
+        row_mult = (
+            (U > 0).sum(axis=1).astype(np.int32)
+        )  # (# row clusters per row i)
+        col_mult = (
+            (V > 0).sum(axis=1).astype(np.int32)
+        )  # (# col clusters per col j)
+
         total_cells = X.size
+        rows_out = []
 
-        for b in used:
-            r, c = divmod(int(b), C)
+        for r, c in rc_pairs:
+            u_mask = U[:, r].astype(bool)  # (I,)
+            v_mask = V[:, c].astype(bool)  # (J,)
 
-            # rectangular mask for this block using U/V
-            u_mask = U[:, r].astype(bool)  # shape (I,)
-            v_mask = V[:, c].astype(bool)  # shape (J,)
-            M = u_mask[:, None] & v_mask[None, :]  # shape (I,J)
-
-            n_cells = int(M.sum())
-            if n_cells == 0:
-                # skip empty blocks (can happen if 'used' was built differently)
+            if not u_mask.any() or not v_mask.any():
                 continue
 
-            vals = X[M]
-            B_rc = float(B[r, c])
+            # submatrix for this block
+            X_block = X[np.ix_(u_mask, v_mask)]
+            n_cells = X_block.size
+            if n_cells == 0:
+                continue
 
-            # top-k names (any order; you can sort by something custom if desired)
-            stores_in_r = row_names[u_mask][:top_k].tolist()
-            items_in_c = col_names[v_mask][:top_k].tolist()
+            # overlap-counted stats 
+            mean_overlap = float(X_block.mean())
+            #median_overlap = float(np.median(X_block))
 
-            rows.append(
+            # exclusive stats: weight each (i,j) by 1 / (row_mult[i] * col_mult[j])
+            rm = row_mult[u_mask].astype(float)[:, None]  # (Ir, 1)
+            cm = col_mult[v_mask].astype(float)[None, :]  # (1, Jc)
+            denom = rm * cm  # (Ir, Jc)
+            # guard against zeros (shouldn't happen unless U/V empty)
+            denom[denom == 0] = 1.0
+            W = 1.0 / denom
+            sum_w = float(W.sum())
+            mean_exclusive = (
+                float((W * X_block).sum() / sum_w)
+                if sum_w > 0
+                else mean_overlap
+            )
+            # no canonical "exclusive median"; we keep overlap-based median
+
+            # coverage
+            #coverage_overlap = 100.0 * (n_cells / total_cells)
+            # exclusive coverage (each covered cell counts 1/K)
+            exclusive_coverage = float(W.sum()) / total_cells * 100.0
+
+            # top-k names by average within the block (more meaningful than arbitrary slices)
+            row_means = X_block.mean(axis=1)
+            col_means = X_block.mean(axis=0)
+            top_row_idx = np.argsort(-row_means)[:top_k]
+            top_col_idx = np.argsort(-col_means)[:top_k]
+            stores_in_r = row_names[u_mask][top_row_idx].tolist()
+            items_in_c = col_names[v_mask][top_col_idx].tolist()
+
+            rows_out.append(
                 {
-                    "block_id": int(b),
-                    "r": r,
-                    "c": c,
-                    "B_rc": B_rc,
-                    "n_cells": n_cells,
-                    "coverage_%": 100.0 * (n_cells / total_cells),
-                    "mean": float(vals.mean()),
-                    "median": float(np.median(vals)),
+                    "block_id": int(r * C + c),
+                    "r": int(r),
+                    "c": int(c),
+                    "B_rc": float(B[r, c]),
+                    "n_cells": int(n_cells),
+                    #"coverage_%_overlap": coverage_overlap,
+                    "weighted_coverage_%": exclusive_coverage,
+                    #"mean_overlap": mean_overlap,
+                    #"median_overlap": median_overlap,
+                    "weighted_mean": mean_exclusive,
                     "n_stores_in_r": int(u_mask.sum()),
                     "n_items_in_c": int(v_mask.sum()),
-                    "stores_in_r": stores_in_r,
-                    "items_in_c": items_in_c,
+                    "stores_in_r_topk": stores_in_r,
+                    "items_in_c_topk": items_in_c,
                 }
             )
 
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame(rows_out)
         if not df.empty:
-            # Sort by magnitude of the block weight (often more meaningful than sign)
-            df = df.sort_values("B_rc", ascending=False)
-            # or: df = df.reindex(df["B_rc"].abs().sort_values(ascending=False).index)
+            # Sort by magnitude of the block weight or by exclusive mean—your choice
+            df = df.reindex(
+                df["B_rc"].abs().sort_values(ascending=False).index
+            )
+            # alternative: df = df.sort_values("mean_exclusive", ascending=False)
         return df
 
     @classmethod

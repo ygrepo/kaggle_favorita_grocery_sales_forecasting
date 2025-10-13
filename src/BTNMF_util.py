@@ -873,11 +873,14 @@ def _process_single_rc_pair(
             logger.warning(f"min_keep is None for R={R}, C={C}, using 0")
             min_keep = 0
 
-        if min_keep > 0:
-            logger.info(f"Computing cell mask for R={R}, C={C}")
-            mask = make_gap_cellmask(min_keep=min_keep)(est)
-        else:
-            mask = None
+        # if min_keep > 0:
+        #     logger.info(f"Computing cell mask for R={R}, C={C}")
+        #     mask = make_gap_cellmask(min_keep=min_keep)(est)
+        # else:
+        #     mask = None
+        # mask = np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
+        U, B, V = est.factors()
+        mask = np.abs(B) >= np.percentile(np.abs(B), 20)
         pve = compute_pve(X, Xhat, loss_name=loss_name, mask=mask)
 
         N_all = X.size
@@ -891,25 +894,26 @@ def _process_single_rc_pair(
         mask_coverage = N_obs / N_all if N_all > 0 else np.nan
 
         # --- Assignments (for WCV/BCV and coverage) ---
-        assign = est.assign_unique_blocks(
-            X=X,
-            method=(
-                "gaussian_delta" if est.loss == "gaussian" else "poisson_delta"
-            ),
-            allowed_mask=(
-                np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
-            ),  # drop weakest 20% blocks
-        )
+        # assign = est.assign_unique_blocks(
+        #     X=X,
+        #     method=(
+        #         "gaussian_delta" if est.loss == "gaussian" else "poisson_delta"
+        #     ),
+        #     allowed_mask=mask,
+        #     # allowed_mask=(
+        #     #     np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
+        #     # ),  # drop weakest 20% blocks
+        # )
 
         # --- Silhouette-like (WCV/BCV) ---
-        wcvdf = compute_block_wcv_bcv_silhouette(
-            X, assign, *est.B_.shape, mask=mask
-        )
-        col = wcvdf["silhouette_like"]
-        if not wcvdf.empty and col.notna().any():
-            sil_mean = float(np.nanmean(col))
-        else:
-            sil_mean = np.nan
+        # wcvdf = compute_block_wcv_bcv_silhouette(
+        #     X, assign, *est.B_.shape, mask=mask
+        # )
+        # col = wcvdf["silhouette_like"]
+        # if not wcvdf.empty and col.notna().any():
+        #     sil_mean = float(np.nanmean(col))
+        # else:
+        #     sil_mean = np.nan
 
         # --- Ablations ---
         # Compute ΔLoss for every block (r,c) in the factorization
@@ -965,7 +969,7 @@ def _process_single_rc_pair(
 
         # --- Extras ---
         b_sparsity = sparsity_of_B(est, tol=1e-4)
-        coverage = coverage_from_assign(assign)
+        # coverage = coverage_from_assign(assign)
 
         # --- AIC/BIC-like penalized scores ---
         Xhat = est.reconstruct()
@@ -982,7 +986,7 @@ def _process_single_rc_pair(
             "RMSE": fitres.rmse,
             "Percent_RMSE": fitres.percent_rmse,
             "PVE": pve,
-            "Mean Silhouette": sil_mean,
+            # "Mean Silhouette": sil_mean,
             "BlockContribution_Total": total_block_contribution,
             # "DeltaLoss_PerCell": delta_per_cell,
             "BlockContribution_PerCell": per_cell_block_contribution,
@@ -990,7 +994,7 @@ def _process_single_rc_pair(
             "BlockContribution_FracWeak20": frac_weak,
             "BlockContribution_Gini": gini,
             "B_Sparsity": b_sparsity,
-            "Coverage": coverage,
+            # "Coverage": coverage,
             "AIC": AIC,
             "BIC": BIC,
         }
@@ -1178,15 +1182,15 @@ def _sweep_btf_grid_parallel(
 def pick_best_btf_setting(
     df: pd.DataFrame,
     max_pve_drop: float = 0.01,
-    min_sil: float = -0.05,
+    # min_sil: float = -0.05,
 ) -> Tuple[pd.DataFrame, pd.Series]:
     d = df.copy()
 
     # --- Filter by silhouette (with single back-off) ---
-    if "Mean Silhouette" in d.columns:
-        d1 = d[d["Mean Silhouette"] >= min_sil]
-        if not d1.empty:
-            d = d1  # keep filtered; else keep original d (back off)
+    # if "Mean Silhouette" in d.columns:
+    #     d1 = d[d["Mean Silhouette"] >= min_sil]
+    #     if not d1.empty:
+    #         d = d1  # keep filtered; else keep original d (back off)
 
     # --- Filter by PVE window around best ---
     if "PVE" in d.columns:
@@ -1204,14 +1208,14 @@ def pick_best_btf_setting(
     # --- Sorting: prefer high PVE/structure, then smaller models, then deterministic tie ---
     sort_cols = [
         "PVE",  # maximize
-        "Mean Silhouette",  # maximize
+        # "Mean Silhouette",  # maximize
         "BlockContribution_RelBaseline",  # maximize
         "BlockContribution_Gini",  # maximize
         "BlockContribution_FracWeak20",  # minimize
         "n_row",  # minimize
         "n_col",  # minimize
     ]
-    ascending = [False, False, False, False, True, True, True]
+    ascending = [False, False, False, True, True, True]
 
     # Only use columns that exist; preserve paired asc flags
     cols_use, asc_use = (
@@ -1228,7 +1232,7 @@ def pick_best_btf_setting(
                 "n_col",
                 "BlockContribution_FracWeak20",
                 "PVE",
-                "Mean Silhouette",
+                # "Mean Silhouette",
                 "BlockContribution_RelBaseline",
                 "BlockContribution_Gini",
             ):
@@ -1421,17 +1425,17 @@ def cluster_data_and_explain_blocks(
     keep_strategy: str = "delta_then_size",
     tol: float = 1e-5,
     max_pve_drop: float = 0.01,
-    min_sil: float = -0.05,
-    min_keep: int = 6,
+    # min_sil: float = -0.05,
+    # min_keep: int = 6,
     top_k: Optional[int] = None,
     top_rank_fn: Optional[Path] = None,
     summary_fn: Optional[Path] = None,
-    block_id_fn: Optional[Path] = None,
-    output_fn: Optional[Path] = None,
+    # block_id_fn: Optional[Path] = None,
+    # output_fn: Optional[Path] = None,
     model_fn: Optional[Path] = None,
     n_jobs: int = 1,
     batch_size: int = 4,
-) -> pd.DataFrame:
+) -> dict:
     """
     Works with BOTH:
       • raw feature tables  -> set normalize=True (min-max per column to [0,1])
@@ -1493,9 +1497,7 @@ def cluster_data_and_explain_blocks(
     )
     logger.info(f"Grid search completed. Found {len(grid_df)} combinations")
 
-    ranked_df, best = pick_best_btf_setting(
-        grid_df, max_pve_drop=max_pve_drop, min_sil=min_sil
-    )
+    ranked_df, best = pick_best_btf_setting(grid_df, max_pve_drop=max_pve_drop)
     if top_rank_fn is not None and top_k is not None:
         ranked_df.iloc[:top_k].to_csv(top_rank_fn, index=False)
 
@@ -1506,28 +1508,27 @@ def cluster_data_and_explain_blocks(
     # ----- fit final model -----
     est.fit(X_mat)
     suggested_min_keep_elbow = suggest_min_keep_elbow(est)
-    logger.info(
-        f"Current min_keep: {min_keep}-Suggested min_keep: {suggested_min_keep_elbow}"
-    )
-    logger.info(f"keep_strategy: {keep_strategy}")
-    if keep_strategy == "TopK":
-        min_keep = min(min_keep, suggested_min_keep_elbow)
-    else:
-        min_keep = suggested_min_keep_elbow
+    logger.info(f"Suggested min_keep: {suggested_min_keep_elbow}")
+    # logger.info(f"keep_strategy: {keep_strategy}")
+    # if keep_strategy == "TopK":
+    #     min_keep = min(min_keep, suggested_min_keep_elbow)
+    # else:
 
-    assign = est.filter_blocks(
-        X=X_mat,
-        min_keep=min_keep,
-        keep_strategy=keep_strategy,
-        return_frame=False,
-    )
+    # min_keep = suggested_min_keep_elbow
+
+    # assign = est.filter_blocks(
+    #     X=X_mat,
+    #     min_keep=min_keep,
+    #     keep_strategy=keep_strategy,
+    #     return_frame=False,
+    # )
 
     col_names = np.array(feat_cols)
     # optional summary
     if summary_fn is not None:
         summary = est.explain_blocks(
             X=X_mat,
-            assign=assign,
+            assign=None,
             row_names=row_names,
             col_names=col_names,
             top_k=5,
@@ -1537,21 +1538,21 @@ def cluster_data_and_explain_blocks(
     # diagnostics
     U, B, V = est.factors()
 
-    block_ids = assign["block_id"]
-    out = _build_assign_df(row_names, block_ids, df, id_cols=("store_item",))
+    # block_ids = assign["block_id"]
+    # out = _build_assign_df(row_names, block_ids, df, id_cols=("store_item",))
 
-    if block_id_fn is not None:
-        np.save(block_id_fn, np.asarray(out["block_id"]))
+    # if block_id_fn is not None:
+    #     np.save(block_id_fn, np.asarray(out["block_id"]))
 
-    unique_assignments = np.unique(out["block_id"])
-    logger.info(
-        f"unique block assignments (first 20): {unique_assignments[:20]}  "
-        f"count: {unique_assignments.size}"
-    )
+    # unique_assignments = np.unique(out["block_id"])
+    # logger.info(
+    #     f"unique block assignments (first 20): {unique_assignments[:20]}  "
+    #     f"count: {unique_assignments.size}"
+    # )
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")
 
-    cluster_data_and_explain_blocks = {
+    results = {
         # factorization results
         "U": U,
         "V": V,
@@ -1566,10 +1567,10 @@ def cluster_data_and_explain_blocks(
     if model_fn is not None:
 
         with open(model_fn, "wb") as f:
-            pickle.dump(cluster_data_and_explain_blocks, f)
+            pickle.dump(results, f)
         logger.info(f"Saved model to {model_fn}")
 
-    if output_fn is not None:
-        save_csv_or_parquet(out, output_fn)
+    # if output_fn is not None:
+    #     save_csv_or_parquet(out, output_fn)
 
-    return out
+    return results
