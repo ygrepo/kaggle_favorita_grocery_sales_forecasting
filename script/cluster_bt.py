@@ -151,7 +151,7 @@ def parse_args():
     #     type=str,
     #     default="",
     #     help="Path to block id file (relative to project root)",
-    )
+    # )
     parser.add_argument(
         "--output_fn",
         type=str,
@@ -218,7 +218,7 @@ def main():
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Max PVE drop: {args.max_pve_drop}")
         # logger.info(f"  Min Silhouette: {args.min_sil}")
-        #logger.info(f"  Min keep: {args.min_keep}")
+        # logger.info(f"  Min keep: {args.min_keep}")
         logger.info(f"  Top k: {args.top_k}")
         logger.info(f"  Top rank fn: {args.top_rank_fn}")
         logger.info(f"  N jobs: {args.n_jobs}")
@@ -264,7 +264,7 @@ def main():
             tol=args.tol,
             max_pve_drop=args.max_pve_drop,
             # min_sil=args.min_sil,
-            #min_keep=args.min_keep,
+            # min_keep=args.min_keep,
             top_k=args.top_k,
             top_rank_fn=top_rank_fn,
             summary_fn=summary_fn,
