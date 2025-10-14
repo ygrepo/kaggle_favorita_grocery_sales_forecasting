@@ -1314,7 +1314,7 @@ def _normalize_matrix(
         X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
         raise ValueError("Negative values detected in columns: {neg_cols}")
     if not normalize:
-        return X.values, X.index.to_numpy(), X.columns.tolist()
+        return X.values, X.index.to_list(), X.columns.tolist()
 
     # infer id cols
     if id_cols is None:
