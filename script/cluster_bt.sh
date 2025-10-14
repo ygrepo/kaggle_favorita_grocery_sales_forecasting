@@ -13,7 +13,7 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_input_clustered.parquet"
-DATA_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.csv"
+DATA_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.parquet"
 
 TOP_RANK_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_top_rank.csv"
 SUMMARY_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_summary.csv"
