@@ -807,7 +807,6 @@ def suggest_min_keep_elbow(est: BinaryTriFactorizationEstimator) -> int:
     U, V, B = est.U_, est.V_, est.B_
     nr = U.sum(axis=0).astype(float)  # (R,)
     nc = V.sum(axis=0).astype(float)  # (C,)
-    R, C = B.shape
 
     # block "energy"
     E = (B**2) * (nr[:, None] * nc[None, :])  # (R,C)
@@ -1505,8 +1504,8 @@ def cluster_data_and_explain_blocks(
 
     # ----- fit final model -----
     est.fit(X_mat)
-    suggested_min_keep_elbow = suggest_min_keep_elbow(est)
-    logger.info(f"Suggested min_keep: {suggested_min_keep_elbow}")
+    # suggested_min_keep_elbow = suggest_min_keep_elbow(est)
+    # logger.info(f"Suggested min_keep: {suggested_min_keep_elbow}")
     # logger.info(f"keep_strategy: {keep_strategy}")
     # if keep_strategy == "TopK":
     #     min_keep = min(min_keep, suggested_min_keep_elbow)
