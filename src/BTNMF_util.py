@@ -1299,7 +1299,7 @@ def _normalize_matrix(
     df: pd.DataFrame,
     id_cols: list[str] | None,
     normalize: bool,
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray | list[str], list[str]]:
     """
     Returns: X_mat (I×J nonnegative), row_names (I,), feat_cols (len=J)
     - If normalize=True: per-column min-max to [0,1] after shifting to nonnegative.
@@ -1314,6 +1314,7 @@ def _normalize_matrix(
         X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
         raise ValueError("Negative values detected in columns: {neg_cols}")
     if not normalize:
+        logger.info(f"rows: {X.index.tolist()} cols: {X.columns.tolist()}.")
         return X.values, X.index.to_list(), X.columns.tolist()
 
     # infer id cols
