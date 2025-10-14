@@ -234,14 +234,6 @@ def main():
 
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
-        if df.columns.str.contains("robust_").any():
-            logger.info("Dropping existing robust_* columns")
-            df.drop(
-                columns=[c for c in df.columns if c.startswith("robust_")],
-                errors="ignore",
-                inplace=True,
-            )
-
         # output_fn = Path(args.output_fn).resolve()
         top_rank_fn = Path(args.top_rank_fn).resolve()
         summary_fn = Path(args.summary_fn).resolve()
