@@ -1295,7 +1295,7 @@ def normalize_data_and_fit_estimator(
     return est, assign
 
 
-def _prep_matrix_for_btnmf(
+def _normalize_matrix(
     df: pd.DataFrame,
     id_cols: list[str] | None,
     normalize: bool,
@@ -1306,6 +1306,15 @@ def _prep_matrix_for_btnmf(
     - If normalize=False: assume already nonnegative & comparably scaled (e.g., M_btnmf).
     """
     X = df.copy()
+    # ensure nonnegative
+    min_per_col = np.nanmin(X.values, axis=0)
+    neg_cols = min_per_col < 0
+    if np.any(neg_cols):
+        logger.warning(f"Negative values detected in columns: {neg_cols}")
+        X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
+        raise ValueError("Negative values detected in columns: {neg_cols}")
+    if not normalize:
+        return X.values, X.index.to_numpy(), X.columns.tolist()
 
     # infer id cols
     if id_cols is None:
@@ -1336,20 +1345,12 @@ def _prep_matrix_for_btnmf(
     M = X[feat_cols].to_numpy(dtype=np.float32)
     M = np.where(np.isfinite(M), M, 0.0)
 
-    # ensure nonnegative
-    min_per_col = np.nanmin(M, axis=0)
-    neg_cols = min_per_col < 0
-    if np.any(neg_cols):
-        logger.warning(f"Negative values detected in columns: {neg_cols}")
-        M[:, neg_cols] = M[:, neg_cols] - min_per_col[neg_cols][None, :]
-
-    if normalize:
-        # per-column min-max to [0,1]
-        col_min = np.nanmin(M, axis=0)
-        M0 = M - col_min
-        col_max = np.nanmax(M0, axis=0)
-        col_max[col_max == 0] = 1.0
-        M = M0 / col_max
+    # per-column min-max to [0,1]
+    col_min = np.nanmin(M, axis=0)
+    M0 = M - col_min
+    col_max = np.nanmax(M0, axis=0)
+    col_max[col_max == 0] = 1.0
+    M = M0 / col_max
 
     # clip any tiny numeric junk
     M = np.clip(M, 0.0, None)
@@ -1413,7 +1414,7 @@ def cluster_data_and_explain_blocks(
 
     id_cols = ["store_item"]
 
-    X_mat, row_names, feat_cols = _prep_matrix_for_btnmf(
+    X_mat, row_names, feat_cols = _normalize_matrix(
         df, id_cols=id_cols, normalize=normalize
     )
 
