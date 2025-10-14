@@ -12,14 +12,22 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_input_clustered.parquet"
+#DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_input_clustered.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.csv"
+
+TOP_RANK_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_top_rank.csv"
+SUMMARY_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_summary.csv"
+#BLOCK_ID_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_block_id.npy"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.csv"
+MODEL_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_model.pickle"
 
 
-TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
-SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
-BLOCK_ID_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
-MODEL_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_model.pickle"
+
+# TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
+# SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
+# BLOCK_ID_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
+# OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
+# MODEL_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_model.pickle"
 
 
 

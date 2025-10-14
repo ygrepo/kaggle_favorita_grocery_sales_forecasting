@@ -9,7 +9,6 @@ from src.BinaryTriFactorizationEstimator import (
     poisson_nll,
 )
 from src.data_utils import normalize_data
-from src.utils import save_csv_or_parquet
 from dataclasses import dataclass
 from src.utils import get_logger
 from pathlib import Path
@@ -1358,54 +1357,6 @@ def _prep_matrix_for_btnmf(
     return M, row_names, feat_cols
 
 
-def _build_assign_df(
-    row_names: np.ndarray,
-    block_ids: np.ndarray,
-    df: pd.DataFrame,
-    id_cols: tuple = ("store_item",),
-) -> pd.DataFrame:
-    """
-    Create tidy (key, block_id) frame aligned to BTNMF row order,
-    robust to 1D/2D block_ids and tuple row_names.
-    """
-    # --- collapse block_ids ---
-    bid = np.asarray(block_ids)
-    if bid.ndim == 1:
-        bid = bid.astype(int)
-    elif bid.ndim == 2:
-        I, J = bid.shape
-        out = np.full(I, -1, dtype=int)
-        for i in range(I):
-            vals = bid[i][bid[i] >= 0]
-            if vals.size:
-                u, c = np.unique(vals, return_counts=True)
-                out[i] = int(u[np.argmax(c)])
-        bid = out
-    else:
-        raise ValueError("block_ids must be 1-D or 2-D")
-
-    rn = np.asarray(row_names, dtype=object).ravel()
-
-    if id_cols == ("store_item",):
-        assign_df = pd.DataFrame(
-            {"store_item": rn.astype(str), "block_id": bid}
-        )
-        if "store_item" not in df.columns and {"store", "item"}.issubset(
-            df.columns
-        ):
-            df = df.assign(
-                store_item=df["store"].astype(str)
-                + "_"
-                + df["item"].astype(str)
-            )
-        df_out = df.copy()
-        df_out["store_item"] = df_out["store_item"].astype(str)
-        return df_out.merge(assign_df, on="store_item", how="left")
-
-    else:
-        raise ValueError(f"Unsupported id_cols={id_cols}")
-
-
 def cluster_data_and_explain_blocks(
     df: pd.DataFrame,
     row_range: range,
@@ -1419,7 +1370,7 @@ def cluster_data_and_explain_blocks(
     max_iter: int = 50,
     k_row: int = 1,
     k_col: int = 1,
-    keep_strategy: str = "delta_then_size",
+    # keep_strategy: str = "delta_then_size",
     tol: float = 1e-5,
     max_pve_drop: float = 0.01,
     # min_sil: float = -0.05,
