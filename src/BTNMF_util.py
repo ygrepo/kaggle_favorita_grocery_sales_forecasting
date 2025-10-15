@@ -1413,17 +1413,24 @@ def _normalize_matrix(
         raise ValueError("No numeric feature columns found to cluster on.")
 
     # row names
-    if id_cols == ["store", "item"]:
-        row_names = (
-            X["store"].astype(str) + "▮" + X["item"].astype(str)
-        ).to_numpy()
-    elif id_cols == ["store_item"]:
-        row_names = X["store_item"].astype(str).to_numpy()
-    else:
-        row_names = X.index.astype(str).to_numpy()
+    if "store" not in X.index:
+        raise ValueError("store not in columns")
+    if "item" not in X.columns:
+        raise ValueError("item not in columns")
+    row_names = X.index.tolist()
+    col_names = X.columns.tolist()
+
+    # if id_cols == ["store", "item"]:
+    #     row_names = (
+    #         X["store"].astype(str) + "▮" + X["item"].astype(str)
+    #     ).to_numpy()
+    # elif id_cols == ["store_item"]:
+    #     row_names = X["store_item"].astype(str).to_numpy()
+    # else:
+    #     row_names = X.index.astype(str).to_numpy()
 
     # matrix
-    M = X[col_names].to_numpy(dtype=np.float32)
+    M = X.values
     M = np.where(np.isfinite(M), M, 0.0)
 
     # per-column min-max to [0,1]

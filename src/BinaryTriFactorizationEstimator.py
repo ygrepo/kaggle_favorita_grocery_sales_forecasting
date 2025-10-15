@@ -519,32 +519,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             frob=float(np.linalg.norm(arr)) if arr.size else 0.0,
         )
 
-    # def _cond_spd(self, A):
-    #     # A is small (R×R or C×C); add tiny diag to avoid crashes in logging
-    #     eps = 1e-12
-    #     try:
-    #         w = np.linalg.eigvalsh(A + eps * np.eye(A.shape[0]))
-    #         w = np.clip(w, eps, None)
-    #         return float(w.max() / w.min())
-    #     except Exception:
-    #         return float("inf")
-
-    # def _grad_B_gaussian(self, X, U, V, B, alpha):
-    #     # ∇_B 0.5||X - U B Vᵀ||² + (alpha/2)||B||²  = Uᵀ(U B Vᵀ - X)V + alpha B
-    #     E = (U @ B) @ V.T - X
-    #     return U.T @ E @ V + alpha * B
-
-    # def _hamming_changes(self, A_new, A_prev):
-    #     return int(np.sum(A_new != A_prev))
-
-    # def _describe_scores(self, s):
-    #     if s.size == 0:
-    #         return dict(max=float("-inf"), p95=float("-inf"), pos_frac=0.0)
-    #     maxv = float(np.max(s))
-    #     p95 = float(np.percentile(s, 95))
-    #     pos_frac = float(np.mean(s > 0))
-    #     return dict(max=maxv, p95=p95, pos_frac=pos_frac)
-
     # -------- Fit --------
     def fit(self, X, y=None):
         """
