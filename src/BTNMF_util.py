@@ -1387,12 +1387,12 @@ def _normalize_matrix(
     """
     X = df.copy()
     # ensure nonnegative
-    min_per_col = np.nanmin(X.values, axis=0)
-    neg_cols = min_per_col < 0
-    if np.any(neg_cols):
-        logger.warning(f"Negative values detected in columns: {neg_cols}")
-        X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
-        raise ValueError("Negative values detected in columns: {neg_cols}")
+    # min_per_col = np.nanmin(X.values, axis=0)
+    # neg_cols = min_per_col < 0
+    # if np.any(neg_cols):
+    #     logger.warning(f"Negative values detected in columns: {neg_cols}")
+    #     X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
+    #     raise ValueError("Negative values detected in columns: {neg_cols}")
     if not normalize:
         logger.info(f"rows: {X.index.tolist()} cols: {X.columns.tolist()}.")
         return X.values, X.index.to_list(), X.columns.tolist()
