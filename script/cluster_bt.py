@@ -117,12 +117,6 @@ def parse_args():
         help="Top k for BT-NMF",
     )
     parser.add_argument(
-        "--normalize",
-        type=str2bool,
-        default=True,
-        help="Whether to normalize the data",
-    )
-    parser.add_argument(
         "--top_rank_fn",
         type=str,
         default="",
@@ -165,6 +159,18 @@ def parse_args():
         help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
+        "--empty_cluster_penalty",
+        type=float,
+        default=0.0,
+        help="Penalty for empty clusters",
+    )
+    parser.add_argument(
+        "--min_cluster_size",
+        type=int,
+        default=2,
+        help="Minimum cluster size",
+    )
+    parser.add_argument(
         "--log_level",
         type=str,
         default="INFO",
@@ -198,13 +204,14 @@ def main():
         logger.info(f"  K col: {args.k_col}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Max PVE drop: {args.max_pve_drop}")
+        logger.info(f"  Empty cluster penalty: {args.empty_cluster_penalty}")
+        logger.info(f"  Min cluster size: {args.min_cluster_size}")
         logger.info(f"  Patience: {args.patience}")
         logger.info(f"  Top k: {args.top_k}")
         logger.info(f"  Top rank fn: {args.top_rank_fn}")
         logger.info(f"  N jobs: {args.n_jobs}")
         logger.info(f"  Batch size: {args.batch_size}")
         logger.info(f"  Summary fn: {args.summary_fn}")
-        logger.info(f"  Normalize: {args.normalize}")
         logger.info(f"  Model fn: {args.model_fn}")
         logger.info(f"  Log level: {args.log_level}")
 
@@ -236,6 +243,8 @@ def main():
             model_fn=model_fn,
             n_jobs=args.n_jobs,
             batch_size=args.batch_size,
+            empty_cluster_penalty=args.empty_cluster_penalty,
+            min_cluster_size=args.min_cluster_size,
         )
         logger.info("Data clustering completed successfully")
     except Exception as e:

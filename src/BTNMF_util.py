@@ -1430,6 +1430,8 @@ def cluster_data_and_explain_blocks(
     patience: int = 2,
     tol: float = 1e-5,
     max_pve_drop: float = 0.01,
+    empty_cluster_penalty: float = 0.0,
+    min_cluster_size: int = 2,
     top_k: Optional[int] = None,
     top_rank_fn: Optional[Path] = None,
     summary_fn: Optional[Path] = None,
@@ -1460,6 +1462,9 @@ def cluster_data_and_explain_blocks(
         max_iter=max_iter,
         patience=patience,
         tol=tol,
+        prune_empty_clusters=True,
+        empty_cluster_penalty=empty_cluster_penalty,
+        min_cluster_size=min_cluster_size,
     )
 
     # ----- INPUT PREP -----

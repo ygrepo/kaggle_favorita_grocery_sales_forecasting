@@ -54,8 +54,9 @@ MAX_PVE_DROP=0.01
 TOP_K=100
 # K_ROW=0
 # K_COL=0
-NORMALIZE="True"
 PATIENCE=10
+EMPTY_CLUSTER_PENALTY=1.0
+MIN_CLUSTER_SIZE=2
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -84,13 +85,14 @@ while [[ $# -gt 0 ]]; do
     --max_pve_drop) MAX_PVE_DROP="$2"; shift 2 ;;
     --top_k) TOP_K="$2"; shift 2 ;;
     --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
-    --normalize) NORMALIZE="$2"; shift 2 ;;
     --n_jobs) N_JOBS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
     --model_fn) MODEL_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
+    --Empty_cluster_penalty) EMPTY_CLUSTER_PENALTY="$2"; shift 2 ;;
+    --min_cluster_size) MIN_CLUSTER_SIZE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -117,9 +119,10 @@ echo "K col: $K_COL" | tee -a "$LOG_FILE"
 echo "Max PVE drop: $MAX_PVE_DROP" | tee -a "$LOG_FILE"
 echo "Top k: $TOP_K" | tee -a "$LOG_FILE"
 echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
+echo "Empty cluster penalty: $EMPTY_CLUSTER_PENALTY" | tee -a "$LOG_FILE"
+echo "Min cluster size: $MIN_CLUSTER_SIZE" | tee -a "$LOG_FILE"
 echo "N jobs: $N_JOBS" | tee -a "$LOG_FILE"
 echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
-echo "Normalize: $NORMALIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
 echo "Model fn: $MODEL_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
@@ -143,12 +146,13 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --max_pve_drop "$MAX_PVE_DROP" \
   --top_k "$TOP_K" \
   --top_rank_fn "$TOP_RANK_FN" \
-  --normalize "$NORMALIZE" \
   --n_jobs "$N_JOBS" \
   --batch_size "$BATCH_SIZE" \
   --summary_fn "$SUMMARY_FN" \
   --model_fn "$MODEL_FN" \
   --log_fn "$LOG_FILE" \
+  --empty_cluster_penalty "$EMPTY_CLUSTER_PENALTY" \
+  --min_cluster_size "$MIN_CLUSTER_SIZE" \
   --log_level "$LOG_LEVEL" 
 exit_code=$?
 set -e
