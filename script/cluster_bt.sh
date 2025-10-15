@@ -51,7 +51,7 @@ TOP_K=100
 K_ROW=0
 K_COL=0
 #KEEP_STRATEGY="TopK"
-NORMALIZE="False"
+NORMALIZE="True"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

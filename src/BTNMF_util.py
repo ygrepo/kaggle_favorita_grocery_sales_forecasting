@@ -1295,6 +1295,86 @@ def normalize_data_and_fit_estimator(
     return est, assign
 
 
+# def _normalize_matrix(
+#     df: pd.DataFrame,
+#     id_cols: list[str] | None,
+#     normalize: bool,
+#     *,                 # force keyword-only for safety
+#     allow_shift_negatives: bool = True,   # auto-shift if negatives exist
+# ) -> tuple[np.ndarray, np.ndarray | list[str], list[str]]:
+#     """
+#     Returns:
+#       - X_mat: (I, J) float32, nonnegative (min-max to [0,1] if normalize=True)
+#       - row_names: (I,) array of str (store▮item if present)
+#       - feat_cols: list[str] of numeric columns used
+#     """
+#     X = df.copy()
+
+#     # ---- infer id cols (before selecting features) ----
+#     if id_cols is None:
+#         if {"store", "item"}.issubset(X.columns):
+#             id_cols = ["store", "item"]
+#         elif "store_item" in X.columns:
+#             id_cols = ["store_item"]
+#         else:
+#             id_cols = []
+
+#     # ---- pick numeric feature columns only ----
+#     feat_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+#     feat_cols = [c for c in feat_cols if c not in id_cols]
+#     if not feat_cols:
+#         raise ValueError("No numeric feature columns found to cluster on.")
+
+#     # ---- row names ----
+#     if id_cols == ["store", "item"]:
+#         row_names = (X["store"].astype(str) + "▮" + X["item"].astype(str)).to_numpy()
+#     elif id_cols == ["store_item"]:
+#         row_names = X["store_item"].astype(str).to_numpy()
+#     else:
+#         row_names = X.index.astype(str).to_numpy()
+
+#     # ---- numeric matrix ----
+#     M = X.loc[:, feat_cols].to_numpy(dtype=np.float32)
+
+#     # replace non-finite BEFORE stats
+#     M = np.where(np.isfinite(M), M, np.nan)
+
+#     # handle negatives (on numeric only)
+#     col_min = np.nanmin(M, axis=0)
+#     has_neg = np.any(col_min < 0)
+#     if has_neg:
+#         if allow_shift_negatives:
+#             # shift each column so its min becomes 0
+#             shift = np.minimum(col_min, 0.0)
+#             M = M - shift[None, :]
+#         else:
+#             neg_list = [feat_cols[i] for i, v in enumerate(col_min) if v < 0]
+#             raise ValueError(f"Negative values detected in columns: {neg_list}")
+
+#     # fill remaining NaNs with column medians (robust) before scaling
+#     col_med = np.nanmedian(M, axis=0)
+#     # if a column is all-NaN, fall back to 0
+#     col_med = np.where(np.isfinite(col_med), col_med, 0.0)
+#     inds = np.isnan(M)
+#     if np.any(inds):
+#         M[inds] = np.take(col_med, np.where(inds)[1])
+
+#     if not normalize:
+#         # already nonnegative & comparable scale
+#         M = np.clip(M, 0.0, None).astype(np.float32)
+#         return M, row_names, feat_cols
+
+#     # ---- per-column MinMax to [0,1] ----
+#     col_min = np.nanmin(M, axis=0)
+#     M0 = M - col_min
+#     col_max = np.nanmax(M0, axis=0)
+#     col_max[col_max <= 0] = 1.0  # constant/all-NaN -> zeros after scaling
+#     M = (M0 / col_max).astype(np.float32)
+#     M = np.clip(M, 0.0, 1.0)
+
+#     return M, row_names, feat_cols
+
+
 def _normalize_matrix(
     df: pd.DataFrame,
     id_cols: list[str] | None,
