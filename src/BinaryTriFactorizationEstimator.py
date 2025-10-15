@@ -1,5 +1,5 @@
 # Implementation: Binary Multi-Hard Tri-Factorization (scikit-learn style)
-# with Gaussian/Poisson losses
+# with Gaussian losses
 import numpy as np
 from typing import Optional, Tuple, Dict, List, Any, Callable
 import pandas as pd
@@ -70,26 +70,11 @@ def gaussian_loss(
     return float(np.sum(diff * diff))
 
 
-def poisson_nll(
-    X: np.ndarray, Xhat: np.ndarray, mask: np.ndarray = None, eps=1e-9
-) -> float:
-    # NLL(μ; x) = μ - x*log μ (+ const)
-    if mask is None:
-        x = X
-        mu = np.maximum(Xhat, eps)
-    else:
-        x = X[mask]
-        mu = np.maximum(Xhat[mask], eps)
-    return float(np.sum(mu - x * np.log(mu)))
-
-
 def model_loss(
     X: np.ndarray, Xhat: np.ndarray, loss_name, mask: np.ndarray = None
 ) -> float:
     if loss_name == "gaussian":
         return gaussian_loss(X, Xhat, mask)
-    elif loss_name == "poisson":
-        return poisson_nll(X, Xhat, mask)
     else:
         raise ValueError(f"Unknown loss: {loss_name}")
 
@@ -383,67 +368,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         return B
 
-    def _update_B_poisson(
-        self,
-        X: np.ndarray,
-        U: np.ndarray,
-        V: np.ndarray,
-        B: np.ndarray,
-        n_inner: int = 15,
-    ) -> np.ndarray:
-        r"""
-        Poisson/KL update of B with fixed U, V (B ≥ 0).
-
-        Objective (generalized KL divergence with L2/L1 on B):
-            minimize_B   D_KL(X || U B Vᵀ)  +  (α/2) ||B||_F^2  +  λ ||B||_1        (★)
-
-        where the generalized KL term is
-            D_KL(X || M) = ⟨ M, 1 ⟩ - ⟨ X, log M ⟩ + const,   with M = U B Vᵀ, M>0.
-
-        Gradients of the KL part w.r.t. B:
-            ∂/∂B ⟨ M, 1 ⟩         = Uᵀ 1 V
-            ∂/∂B ⟨ X, log M ⟩     = Uᵀ (X ⊘ M) V                                     (1)
-
-        Multiplicative update (elementwise), obtained from splitting (+) and (−) parts:
-            B ← B ⊙   [ Uᵀ (X ⊘ (U B Vᵀ)) V ]  ⊘  [ Uᵀ 1 V  +  α  +  λ ]            (2)
-
-        Notes:
-        • α ≥ 0 is L2 (ridge) on B, incorporated additively in the denominator.
-        • λ ≥ 0 (self.block_l1) is the nonnegative-L1 shrinkage, also added to the denominator.
-        • ⊙ and ⊘ are Hadamard (elementwise) product and division.
-        • Shapes: X∈ℝ^{m×n}, U∈ℝ^{m×k}, V∈ℝ^{n×ℓ}, B∈ℝ^{k×ℓ}; Uᵀ 1 V matches B.
-        """
-        # small floors to keep M = U B Vᵀ and B strictly positive (needed for KL)
-        epsM = 1e-9
-        epsB = 1e-12
-
-        # ensure B > 0 to start
-        B = np.maximum(B, epsB)
-
-        ones = np.ones_like(X, dtype=X.dtype)
-
-        for _ in range(n_inner):
-            # M = U B Vᵀ  (Poisson mean / KL "model" matrix)
-            M = (U @ B) @ V.T
-            M = np.maximum(M, epsM)  # avoid divide-by-zero and log(0)
-
-            # Numerator in (2): Uᵀ ( X ⊘ M ) V     [from the '−⟨X, log M⟩' term in (1)]
-            numer = U.T @ (X / M) @ V
-
-            # Denominator in (2):
-            #   Uᵀ 1 V      [from the '+⟨M, 1⟩' term in (1)]
-            # + α           [ridge on B]
-            # + λ           [L1 shrinkage on nonnegative B]
-            denom = (U.T @ ones @ V) + self.alpha + self.block_l1
-
-            # Elementwise multiplicative step (2)
-            B *= numer / np.maximum(denom, epsB)
-
-            # Re-enforce positivity (keeps KL well-defined and stable)
-            B = np.maximum(B, epsB)
-
-        return B
-
     def _log_membership_histogram(
         self, M: np.ndarray, name: str, top_bins: int = 10
     ) -> None:
@@ -549,11 +473,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         # init B
         if self.loss == "gaussian":
             B = self._update_B_gaussian(X, U, V)
-        elif self.loss == "poisson":
-            B = np.abs(rng.normal(0.5, 0.1, size=(R, C))) + 0.1
-            B = self._update_B_poisson(X, U, V, B, n_inner=20)
         else:
-            raise ValueError("loss must be 'gaussian' or 'poisson'")
+            raise ValueError("loss must be 'gaussian'")
 
         if self.history_flag:
             self.loss_history_ = []
@@ -588,7 +509,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             if self.loss == "gaussian":
                 B = self._update_B_gaussian(X, U, V)
             else:
-                B = self._update_B_poisson(X, U, V, B, n_inner=self.b_inner)
+                raise NotImplementedError("Poisson B-step not implemented yet")
             tB1 = time.perf_counter()
 
             # --- Precompute shared quantities ---
@@ -618,17 +539,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                         axis=0,
                     )
                 else:
-                    self._greedy_update_poisson(
-                        X=X,
-                        Xhat=Xhat,
-                        memberships=U,
-                        idx=i,
-                        components=G,
-                        scorer_fn=self._poisson_delta_ll_row,
-                        beta=self.beta,
-                        k_limit=self.k_row,
-                        axis=0,
-                    )
+                    raise NotImplementedError("U-step not implemented yet")
+
             tU1 = time.perf_counter()
 
             # refresh after U
@@ -659,17 +571,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                         axis=1,
                     )
                 else:
-                    self._greedy_update_poisson(
-                        X=X,
-                        Xhat=Xhat,
-                        memberships=V,
-                        idx=j,
-                        components=H,
-                        scorer_fn=self._poisson_delta_ll_col,
-                        beta=self.beta,
-                        k_limit=self.k_col,
-                        axis=1,
-                    )
+                    raise NotImplementedError("V-step not implemented yet")
             tV1 = time.perf_counter()
 
             # membership dynamics
@@ -720,17 +622,10 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 L_model = float(np.sum((X - Xhat) ** 2))
                 L_base = float(np.sum((X - mu) ** 2))
                 pve = 1.0 - (L_model / max(L_base, eps))
-            else:  # poisson (mean-rate baseline, constants cancel in ratio)
-                mu = float(np.mean(X))
-
-                # Poisson NLL without constants: sum(λ - x*log λ); safe log
-                def _pois_nll(x, lam):
-                    lam_safe = np.maximum(lam, eps)
-                    return float(np.sum(lam_safe - x * np.log(lam_safe)))
-
-                L_model = _pois_nll(X, np.maximum(Xhat, eps))
-                L_base = _pois_nll(X, mu)
-                pve = 1.0 - (L_model / max(L_base, eps))
+            else:
+                raise NotImplementedError(
+                    "PVE for Poisson not implemented yet"
+                )
 
             # relative contributions
             tot_loss = (
@@ -919,129 +814,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 self._v_forced += 1
             else:
                 self._v_positive += 1
-
-            Xhat[:, j] = components @ memberships[j, :]
-
-    def _greedy_update_poisson(
-        self,
-        X: np.ndarray,
-        Xhat: np.ndarray,
-        memberships: np.ndarray,  # U (m×R) if axis=0, V (n×C) if axis=1
-        idx: int,  # row index i if axis=0, col index j if axis=1
-        components: np.ndarray,  # G (R×n) if axis=0, H (m×C) if axis=1
-        scorer_fn,  # self._poisson_delta_ll_row or _col
-        beta: float,
-        k_limit: int | None,
-        axis: int,  # 0 = row update, 1 = col update
-    ) -> None:
-        """
-        Greedy Poisson-membership update for one row (axis=0) or one column (axis=1).
-
-        What it does :
-        ------------
-        - For a single row i (axis=0) or column j (axis=1), we re-assign its
-        cluster memberships under a **Poisson log-likelihood objective**.
-        - Start from the current reconstruction slice mu = Xhat[i,:] or Xhat[:,j].
-        - Remove the contribution of this row/column's existing memberships so we
-        can start fresh.
-        - Iteratively consider adding each candidate component (row of G or column
-        of H). For each candidate, compute its **log-likelihood gain** using
-        scorer_fn:
-            Δℓ = Δ log P(X | mu + component) - β.
-        - Greedily add the component with the largest positive Δℓ, update mu, and
-        repeat until no component gives positive gain or the membership budget
-        k_limit is reached.
-        - If nothing was chosen, force-add the single best component.
-        - Finally, update the reconstruction slice in Xhat for this row/column.
-
-        Intuition:
-        ----------
-        This is a sparse, greedy MAP step: assign a row/column to the set of
-        clusters that most improve its Poisson log-likelihood, but penalize each
-        assignment by β to prevent overfitting.
-        """
-
-        if axis == 0:
-            # -------- ROW UPDATE (i = idx) --------
-            i = idx
-            mu = np.maximum(Xhat[i, :], 1e-9)
-            if memberships[i, :].any():
-                mu = np.maximum(
-                    mu - components[memberships[i, :] == 1, :].sum(axis=0),
-                    1e-9,
-                )
-
-            memberships[i, :] = 0
-            used = np.zeros(components.shape[0], dtype=bool)
-            picks = 0
-            x_slice = X[i, :]
-
-            while (k_limit is None) or (picks < k_limit):
-                scores = np.array(
-                    [
-                        scorer_fn(x_slice, mu, components[r, :]) - beta
-                        for r in range(components.shape[0])
-                    ]
-                )
-                scores[used] = -np.inf
-                r_star = int(np.argmax(scores))
-                if scores[r_star] <= 0:
-                    break
-                memberships[i, r_star] = 1
-                mu = mu + components[r_star, :]
-                used[r_star] = True
-                picks += 1
-
-            if memberships[i, :].sum() == 0:
-                scores = np.array(
-                    [
-                        scorer_fn(x_slice, mu, components[r, :]) - beta
-                        for r in range(components.shape[0])
-                    ]
-                )
-                memberships[i, int(np.argmax(scores))] = 1
-
-            Xhat[i, :] = memberships[i, :] @ components
-
-        else:
-            # -------- COLUMN UPDATE (j = idx) --------
-            j = idx
-            mu = np.maximum(Xhat[:, j], 1e-9)
-            if memberships[j, :].any():
-                mu = np.maximum(
-                    mu - components[:, memberships[j, :] == 1].sum(axis=1),
-                    1e-9,
-                )
-
-            memberships[j, :] = 0
-            used = np.zeros(components.shape[1], dtype=bool)
-            picks = 0
-            x_slice = X[:, j]
-
-            while (k_limit is None) or (picks < k_limit):
-                scores = np.array(
-                    [
-                        scorer_fn(x_slice, mu, components[:, c]) - beta
-                        for c in range(components.shape[1])
-                    ]
-                )
-                scores[used] = -np.inf
-                c_star = int(np.argmax(scores))
-                if scores[c_star] <= 0:
-                    break
-                memberships[j, c_star] = 1
-                mu = mu + components[:, c_star]
-                used[c_star] = True
-                picks += 1
-
-            if memberships[j, :].sum() == 0:
-                scores = np.array(
-                    [
-                        scorer_fn(x_slice, mu, components[:, c]) - beta
-                        for c in range(components.shape[1])
-                    ]
-                )
-                memberships[j, int(np.argmax(scores))] = 1
 
             Xhat[:, j] = components @ memberships[j, :]
 
@@ -1275,19 +1047,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 )
             )
         else:
-            MU = np.maximum(Xhat, 1e-12)
-            # NLL-like objective (same form used in fit)
-            nll_like = float((MU - X * np.log(MU)).sum())
-            # Poisson deviance (saturated vs. model), defined with x log(x/μ) and x=0 handled as limit
-            with np.errstate(divide="ignore", invalid="ignore"):
-                term = np.where(
-                    X > 0, X * (np.log(X) - np.log(MU)) - (X - MU), -(X - MU)
-                )
-                # classic deviance is 2 * Σ [ x log(x/μ) - (x-μ) ], equal to 2 * Σ term
-            deviance = float(2.0 * term.sum())
-            out.update(
-                dict(poisson_nll_like=nll_like, poisson_deviance=deviance)
-            )
+            raise NotImplementedError("PVE for Poisson not implemented yet")
 
         return out
 
@@ -1346,101 +1106,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if N_CHAR_MAX is not None and N_CHAR_MAX > 0 and len(s) > N_CHAR_MAX:
             return s[: N_CHAR_MAX - 3] + "..."
         return s
-
-    # def show_memberships(
-    #     self,
-    #     *,
-    #     max_rows: int = 10,
-    #     max_cols: int = 10,
-    #     row_names=None,
-    #     col_names=None,
-    #     only_multi: bool = True,
-    # ) -> dict:
-    #     """Show cluster membership statistics and examples (rows & columns)."""
-    #     import numpy as np
-
-    #     self.check_fitted()
-    #     U, V = self.U_, self.V_
-    #     I, J = U.shape[0], V.shape[0]
-
-    #     if row_names is None:
-    #         row_names = [f"row_{i}" for i in range(I)]
-    #     if col_names is None:
-    #         col_names = [f"col_{j}" for j in range(J)]
-
-    #     # membership counts per entity
-    #     row_counts = U.sum(axis=1)  # (# clusters per row)
-    #     col_counts = V.sum(axis=1)  # (# clusters per column)
-
-    #     # quick hists (how many entities have k active clusters)
-    #     row_hist = np.bincount(
-    #         row_counts.astype(int), minlength=max(1, int(row_counts.max()) + 1)
-    #     ).tolist()
-    #     col_hist = np.bincount(
-    #         col_counts.astype(int), minlength=max(1, int(col_counts.max()) + 1)
-    #     ).tolist()
-
-    #     stats = {
-    #         "row_stats": {
-    #             "total_rows": int(row_counts.size),
-    #             "multi_membership_rows": int((row_counts > 1).sum()),
-    #             "rows_frac_gt1": float((row_counts > 1).mean()),
-    #             "mean_clusters_per_row": float(row_counts.mean()),
-    #             "max_clusters_per_row": int(row_counts.max()),
-    #             "rows_with_no_clusters": int((row_counts == 0).sum()),
-    #             "hist_counts_by_k": row_hist,  # index k -> count of rows with k clusters
-    #         },
-    #         "col_stats": {
-    #             "total_cols": int(col_counts.size),
-    #             "multi_membership_cols": int((col_counts > 1).sum()),
-    #             "cols_frac_gt1": float((col_counts > 1).mean()),
-    #             "mean_clusters_per_col": float(col_counts.mean()),
-    #             "max_clusters_per_col": int(col_counts.max()),
-    #             "cols_with_no_clusters": int((col_counts == 0).sum()),
-    #             "hist_counts_by_k": col_hist,  # index k -> count of cols with k clusters
-    #         },
-    #     }
-
-    #     # choose which entities to show
-    #     row_mask = row_counts > 1 if only_multi else np.ones(I, dtype=bool)
-    #     col_mask = col_counts > 1 if only_multi else np.ones(J, dtype=bool)
-
-    #     multi_rows = np.flatnonzero(row_mask)[:max_rows]
-    #     multi_cols = np.flatnonzero(col_mask)[:max_cols]
-
-    #     # graceful fallback if none meet the filter
-    #     if multi_rows.size == 0 and I > 0:
-    #         multi_rows = np.arange(min(I, max_rows))
-    #     if multi_cols.size == 0 and J > 0:
-    #         multi_cols = np.arange(min(J, max_cols))
-
-    #     row_examples = []
-    #     for i in multi_rows:
-    #         clusters = np.flatnonzero(U[i]).tolist()
-    #         row_examples.append(
-    #             {
-    #                 "row_index": int(i),
-    #                 "row_name": str(row_names[i]),
-    #                 "num_clusters": len(clusters),
-    #                 "cluster_ids": clusters,
-    #             }
-    #         )
-
-    #     col_examples = []
-    #     for j in multi_cols:
-    #         clusters = np.flatnonzero(V[j]).tolist()
-    #         col_examples.append(
-    #             {
-    #                 "col_index": int(j),
-    #                 "col_name": str(col_names[j]),
-    #                 "num_clusters": len(clusters),
-    #                 "cluster_ids": clusters,
-    #             }
-    #         )
-
-    #     stats["row_examples"] = row_examples
-    #     stats["col_examples"] = col_examples
-    #     return stats
 
     def assign_unique_blocks(
         self,
@@ -1775,7 +1440,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         - Precompute G = B @ V^T (size R × J).
         - For each row x in X, choose r that maximizes the per-row score:
             * Gaussian:  -0.5 * ||x - G[r]||^2
-            * Poisson:   sum_j [ x_j * log(mu_rj) - mu_rj ],  mu_rj = max(G[r,j], 1e-9)
 
         Parameters
         ----------
@@ -1818,18 +1482,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 scores = x_dot_G - 0.5 * G_norm2
                 labels[i] = int(np.argmax(scores))
 
-        elif self.loss == "poisson":
-            # Ensure positivity for Poisson mean
-            MU = np.maximum(G, 1e-9)  # shape (R, J)
-            LOG_MU = np.log(MU)
-            for i, x in enumerate(X):
-                # loglik_r = sum_j [ x_j * log(mu_rj) - mu_rj ]
-                # (x may have zeros/negatives if preprocessed; clip at 0 for Poisson)
-                x_clip = np.maximum(x, 0.0)
-                scores = x_clip @ LOG_MU.T - MU.sum(axis=1)
-                labels[i] = int(np.argmax(scores))
         else:
-            raise ValueError("Unknown loss; expected 'gaussian' or 'poisson'.")
+            raise ValueError("Unknown loss; expected 'gaussian'.")
 
         return labels
 
@@ -2123,42 +1777,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             return_frame=return_frame,
         )
         return assign["as_frame"] if return_frame else assign
-
-    # def get_row_col_orders(
-    #     self,
-    #     assign: Dict[str, Any],
-    #     norm_data: pd.DataFrame,
-    # ) -> Tuple[List[int], List[int]]:
-    #     r_star, c_star = assign["r_star"], assign["c_star"]
-    #     R, C = self.B_.shape
-    #     store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
-    #     item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-    #     row_order = (
-    #         pd.Series(store_r, index=norm_data.index)
-    #         .sort_values()
-    #         .index.tolist()
-    #     )
-    #     col_order = (
-    #         pd.Series(item_c, index=norm_data.columns)
-    #         .sort_values()
-    #         .index.tolist()
-    #     )
-    #     return row_order, col_order
-
-    # def get_store_item_assignments(
-    #     self,
-    #     assign: Dict[str, Any],
-    #     norm_data: pd.DataFrame,
-    # ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    #     r_star, c_star = assign["r_star"], assign["c_star"]
-    #     R, C = self.B_.shape
-    #     store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
-    #     item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-    #     store_assign = pd.DataFrame(
-    #         {"store_r": store_r}, index=norm_data.index
-    #     )
-    #     item_assign = pd.DataFrame({"item_c": item_c}, index=norm_data.columns)
-    #     return store_assign, item_assign
 
     def explain_blocks(
         self,
