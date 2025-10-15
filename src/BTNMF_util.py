@@ -1385,7 +1385,6 @@ def _normalize_matrix(
     - If normalize=True: per-column min-max to [0,1] after shifting to nonnegative.
     - If normalize=False: assume already nonnegative & comparably scaled (e.g., M_btnmf).
     """
-    X = df.copy()
     # ensure nonnegative
     # min_per_col = np.nanmin(X.values, axis=0)
     # neg_cols = min_per_col < 0
@@ -1393,9 +1392,9 @@ def _normalize_matrix(
     #     logger.warning(f"Negative values detected in columns: {neg_cols}")
     #     X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
     #     raise ValueError("Negative values detected in columns: {neg_cols}")
-    if not normalize:
-        logger.info(f"rows: {X.index.tolist()} cols: {X.columns.tolist()}.")
-        return X.values, X.index.to_list(), X.columns.tolist()
+    # if not normalize:
+    #     logger.info(f"rows: {X.index.tolist()} cols: {X.columns.tolist()}.")
+    #     return X.values, X.index.to_list(), X.columns.tolist()
 
     # infer id cols
     if id_cols is None:
@@ -1407,18 +1406,19 @@ def _normalize_matrix(
             id_cols = []
 
     # numeric feature columns
-    col_names = X.select_dtypes(include=[np.number]).columns.tolist()
-    col_names = [c for c in col_names if c not in id_cols]
-    if not col_names:
-        raise ValueError("No numeric feature columns found to cluster on.")
+    # col_names = df.select_dtypes(include=[np.number]).columns.tolist()
+    # col_names = [c for c in col_names if c not in id_cols]
+    # if not col_names:
+    #     raise ValueError("No numeric feature columns found to cluster on.")
 
+    logger.info(f"{df}")
     # row names
-    if "store" not in X.index:
+    if "store" not in df.index:
         raise ValueError("store not in index")
-    if "item" not in X.columns:
+    if "item" not in df.columns:
         raise ValueError("item not in columns")
-    row_names = X.index.tolist()
-    col_names = X.columns.tolist()
+    row_names = df.index.tolist()
+    col_names = df.columns.tolist()
 
     # if id_cols == ["store", "item"]:
     #     row_names = (
@@ -1430,7 +1430,7 @@ def _normalize_matrix(
     #     row_names = X.index.astype(str).to_numpy()
 
     # matrix
-    M = X.values
+    M = df.values
     M = np.where(np.isfinite(M), M, 0.0)
 
     # per-column min-max to [0,1]
