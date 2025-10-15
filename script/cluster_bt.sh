@@ -45,12 +45,9 @@ B_INNER=35
 MAX_ITER=200  
 TOL=1E-6
 MAX_PVE_DROP=0.01 
-#MIN_SIL=-0.05  
-#MIN_KEEP=10  
 TOP_K=100
 K_ROW=0
 K_COL=0
-#KEEP_STRATEGY="TopK"
 NORMALIZE="True"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -78,17 +75,12 @@ while [[ $# -gt 0 ]]; do
     --max_iter) MAX_ITER="$2"; shift 2 ;;
     --tol) TOL="$2"; shift 2 ;;
     --max_pve_drop) MAX_PVE_DROP="$2"; shift 2 ;;
-    #--min_sil) MIN_SIL="$2"; shift 2 ;;
-    #--min_keep) MIN_KEEP="$2"; shift 2 ;;
     --top_k) TOP_K="$2"; shift 2 ;;
     --top_rank_fn) TOP_RANK_FN="$2"; shift 2 ;;
-    #--keep_strategy) KEEP_STRATEGY="$2"; shift 2 ;;
     --normalize) NORMALIZE="$2"; shift 2 ;;
     --n_jobs) N_JOBS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
-    #--block_id_fn) BLOCK_ID_FN="$2"; shift 2 ;;
-    #--output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --model_fn) MODEL_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
@@ -115,18 +107,13 @@ echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
 echo "K row: $K_ROW" | tee -a "$LOG_FILE"
 echo "K col: $K_COL" | tee -a "$LOG_FILE"
-#echo "Keep strategy: $KEEP_STRATEGY" | tee -a "$LOG_FILE"
 echo "Max PVE drop: $MAX_PVE_DROP" | tee -a "$LOG_FILE"
-#echo "Min Silhouette: $MIN_SIL" | tee -a "$LOG_FILE"
-#echo "Min keep: $MIN_KEEP" | tee -a "$LOG_FILE"
 echo "Top k: $TOP_K" | tee -a "$LOG_FILE"
 echo "Top rank fn: $TOP_RANK_FN" | tee -a "$LOG_FILE"
 echo "N jobs: $N_JOBS" | tee -a "$LOG_FILE"
 echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Normalize: $NORMALIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
-#echo "Block id fn: $BLOCK_ID_FN" | tee -a "$LOG_FILE"
-#echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Model fn: $MODEL_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"

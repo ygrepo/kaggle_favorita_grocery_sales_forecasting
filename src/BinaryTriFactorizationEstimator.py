@@ -34,6 +34,29 @@ def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
     return int(np.argmax(counts))  # ties → lowest index
 
 
+def chol_solve_with_jitter(
+    A: np.ndarray, B: np.ndarray, jitter: float = 1e-12
+) -> Tuple[np.ndarray, float]:
+    """Solve A X = Bmat with Cholesky; add tiny jitter if needed. Returns (X, jitter_total)."""
+    total = 0.0
+    A_work = A  # operate in-place on the provided matrix
+    for _ in range(3):
+        try:
+            L = np.linalg.cholesky(A_work)
+            Y = np.linalg.solve(L, B)
+            Xsol = np.linalg.solve(L.T, Y)
+            return Xsol, total
+        except np.linalg.LinAlgError:
+            logger.warning(f"Cholesky failed, adding jitter={jitter:.1e}")
+            diag_incr = jitter
+            A_work.flat[:: A_work.shape[0] + 1] += diag_incr
+            total += diag_incr
+            jitter *= 10.0
+    # Final fallback (should be rare)
+    Xsol = np.linalg.solve(A_work, B)
+    return Xsol, total
+
+
 # ----------------------------
 # Losses
 # ----------------------------
@@ -246,7 +269,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         return Z
 
     # # -------- B updates --------
-    def _update_B_gaussian(self, X, U, V) -> np.ndarray:
+    def _update_B_gaussian(
+        self, X: np.ndarray, U: np.ndarray, V: np.ndarray
+    ) -> np.ndarray:
         """
         Gaussian B-update.
 
@@ -337,27 +362,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         # Right-hand side
         M = U.T @ X @ V
 
-        # Solve (UᵀU+αI) Y = M  via Cholesky (with jitter tracking)
-        def chol_solve_with_jitter(A, Bmat):
-            """Solve A X = Bmat with Cholesky; add tiny jitter if needed. Returns (X, jitter_total)."""
-            jitter = 1e-12
-            total = 0.0
-            A_work = A  # operate in-place on the provided matrix
-            for _ in range(3):
-                try:
-                    L = np.linalg.cholesky(A_work)
-                    Y = np.linalg.solve(L, Bmat)
-                    Xsol = np.linalg.solve(L.T, Y)
-                    return Xsol, total
-                except np.linalg.LinAlgError:
-                    diag_incr = jitter
-                    A_work.flat[:: A_work.shape[0] + 1] += diag_incr
-                    total += diag_incr
-                    jitter *= 10.0
-            # Final fallback (should be rare)
-            Xsol = np.linalg.solve(A_work, Bmat)
-            return Xsol, total
-
         # Left solve: (UᵀU+αI)^{-1} M
         Y, jU = chol_solve_with_jitter(UtU, M)
         # Right solve: B = Y (VᵀV+αI)^{-1}  via solving transposed system
@@ -379,7 +383,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         return B
 
-    def _update_B_poisson(self, X, U, V, B, n_inner: int = 15) -> np.ndarray:
+    def _update_B_poisson(
+        self,
+        X: np.ndarray,
+        U: np.ndarray,
+        V: np.ndarray,
+        B: np.ndarray,
+        n_inner: int = 15,
+    ) -> np.ndarray:
         r"""
         Poisson/KL update of B with fixed U, V (B ≥ 0).
 
@@ -1335,100 +1346,100 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             return s[: N_CHAR_MAX - 3] + "..."
         return s
 
-    def show_memberships(
-        self,
-        *,
-        max_rows: int = 10,
-        max_cols: int = 10,
-        row_names=None,
-        col_names=None,
-        only_multi: bool = True,
-    ) -> dict:
-        """Show cluster membership statistics and examples (rows & columns)."""
-        import numpy as np
+    # def show_memberships(
+    #     self,
+    #     *,
+    #     max_rows: int = 10,
+    #     max_cols: int = 10,
+    #     row_names=None,
+    #     col_names=None,
+    #     only_multi: bool = True,
+    # ) -> dict:
+    #     """Show cluster membership statistics and examples (rows & columns)."""
+    #     import numpy as np
 
-        self.check_fitted()
-        U, V = self.U_, self.V_
-        I, J = U.shape[0], V.shape[0]
+    #     self.check_fitted()
+    #     U, V = self.U_, self.V_
+    #     I, J = U.shape[0], V.shape[0]
 
-        if row_names is None:
-            row_names = [f"row_{i}" for i in range(I)]
-        if col_names is None:
-            col_names = [f"col_{j}" for j in range(J)]
+    #     if row_names is None:
+    #         row_names = [f"row_{i}" for i in range(I)]
+    #     if col_names is None:
+    #         col_names = [f"col_{j}" for j in range(J)]
 
-        # membership counts per entity
-        row_counts = U.sum(axis=1)  # (# clusters per row)
-        col_counts = V.sum(axis=1)  # (# clusters per column)
+    #     # membership counts per entity
+    #     row_counts = U.sum(axis=1)  # (# clusters per row)
+    #     col_counts = V.sum(axis=1)  # (# clusters per column)
 
-        # quick hists (how many entities have k active clusters)
-        row_hist = np.bincount(
-            row_counts.astype(int), minlength=max(1, int(row_counts.max()) + 1)
-        ).tolist()
-        col_hist = np.bincount(
-            col_counts.astype(int), minlength=max(1, int(col_counts.max()) + 1)
-        ).tolist()
+    #     # quick hists (how many entities have k active clusters)
+    #     row_hist = np.bincount(
+    #         row_counts.astype(int), minlength=max(1, int(row_counts.max()) + 1)
+    #     ).tolist()
+    #     col_hist = np.bincount(
+    #         col_counts.astype(int), minlength=max(1, int(col_counts.max()) + 1)
+    #     ).tolist()
 
-        stats = {
-            "row_stats": {
-                "total_rows": int(row_counts.size),
-                "multi_membership_rows": int((row_counts > 1).sum()),
-                "rows_frac_gt1": float((row_counts > 1).mean()),
-                "mean_clusters_per_row": float(row_counts.mean()),
-                "max_clusters_per_row": int(row_counts.max()),
-                "rows_with_no_clusters": int((row_counts == 0).sum()),
-                "hist_counts_by_k": row_hist,  # index k -> count of rows with k clusters
-            },
-            "col_stats": {
-                "total_cols": int(col_counts.size),
-                "multi_membership_cols": int((col_counts > 1).sum()),
-                "cols_frac_gt1": float((col_counts > 1).mean()),
-                "mean_clusters_per_col": float(col_counts.mean()),
-                "max_clusters_per_col": int(col_counts.max()),
-                "cols_with_no_clusters": int((col_counts == 0).sum()),
-                "hist_counts_by_k": col_hist,  # index k -> count of cols with k clusters
-            },
-        }
+    #     stats = {
+    #         "row_stats": {
+    #             "total_rows": int(row_counts.size),
+    #             "multi_membership_rows": int((row_counts > 1).sum()),
+    #             "rows_frac_gt1": float((row_counts > 1).mean()),
+    #             "mean_clusters_per_row": float(row_counts.mean()),
+    #             "max_clusters_per_row": int(row_counts.max()),
+    #             "rows_with_no_clusters": int((row_counts == 0).sum()),
+    #             "hist_counts_by_k": row_hist,  # index k -> count of rows with k clusters
+    #         },
+    #         "col_stats": {
+    #             "total_cols": int(col_counts.size),
+    #             "multi_membership_cols": int((col_counts > 1).sum()),
+    #             "cols_frac_gt1": float((col_counts > 1).mean()),
+    #             "mean_clusters_per_col": float(col_counts.mean()),
+    #             "max_clusters_per_col": int(col_counts.max()),
+    #             "cols_with_no_clusters": int((col_counts == 0).sum()),
+    #             "hist_counts_by_k": col_hist,  # index k -> count of cols with k clusters
+    #         },
+    #     }
 
-        # choose which entities to show
-        row_mask = row_counts > 1 if only_multi else np.ones(I, dtype=bool)
-        col_mask = col_counts > 1 if only_multi else np.ones(J, dtype=bool)
+    #     # choose which entities to show
+    #     row_mask = row_counts > 1 if only_multi else np.ones(I, dtype=bool)
+    #     col_mask = col_counts > 1 if only_multi else np.ones(J, dtype=bool)
 
-        multi_rows = np.flatnonzero(row_mask)[:max_rows]
-        multi_cols = np.flatnonzero(col_mask)[:max_cols]
+    #     multi_rows = np.flatnonzero(row_mask)[:max_rows]
+    #     multi_cols = np.flatnonzero(col_mask)[:max_cols]
 
-        # graceful fallback if none meet the filter
-        if multi_rows.size == 0 and I > 0:
-            multi_rows = np.arange(min(I, max_rows))
-        if multi_cols.size == 0 and J > 0:
-            multi_cols = np.arange(min(J, max_cols))
+    #     # graceful fallback if none meet the filter
+    #     if multi_rows.size == 0 and I > 0:
+    #         multi_rows = np.arange(min(I, max_rows))
+    #     if multi_cols.size == 0 and J > 0:
+    #         multi_cols = np.arange(min(J, max_cols))
 
-        row_examples = []
-        for i in multi_rows:
-            clusters = np.flatnonzero(U[i]).tolist()
-            row_examples.append(
-                {
-                    "row_index": int(i),
-                    "row_name": str(row_names[i]),
-                    "num_clusters": len(clusters),
-                    "cluster_ids": clusters,
-                }
-            )
+    #     row_examples = []
+    #     for i in multi_rows:
+    #         clusters = np.flatnonzero(U[i]).tolist()
+    #         row_examples.append(
+    #             {
+    #                 "row_index": int(i),
+    #                 "row_name": str(row_names[i]),
+    #                 "num_clusters": len(clusters),
+    #                 "cluster_ids": clusters,
+    #             }
+    #         )
 
-        col_examples = []
-        for j in multi_cols:
-            clusters = np.flatnonzero(V[j]).tolist()
-            col_examples.append(
-                {
-                    "col_index": int(j),
-                    "col_name": str(col_names[j]),
-                    "num_clusters": len(clusters),
-                    "cluster_ids": clusters,
-                }
-            )
+    #     col_examples = []
+    #     for j in multi_cols:
+    #         clusters = np.flatnonzero(V[j]).tolist()
+    #         col_examples.append(
+    #             {
+    #                 "col_index": int(j),
+    #                 "col_name": str(col_names[j]),
+    #                 "num_clusters": len(clusters),
+    #                 "cluster_ids": clusters,
+    #             }
+    #         )
 
-        stats["row_examples"] = row_examples
-        stats["col_examples"] = col_examples
-        return stats
+    #     stats["row_examples"] = row_examples
+    #     stats["col_examples"] = col_examples
+    #     return stats
 
     def assign_unique_blocks(
         self,
@@ -2112,41 +2123,41 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         )
         return assign["as_frame"] if return_frame else assign
 
-    def get_row_col_orders(
-        self,
-        assign: Dict[str, Any],
-        norm_data: pd.DataFrame,
-    ) -> Tuple[List[int], List[int]]:
-        r_star, c_star = assign["r_star"], assign["c_star"]
-        R, C = self.B_.shape
-        store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
-        item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-        row_order = (
-            pd.Series(store_r, index=norm_data.index)
-            .sort_values()
-            .index.tolist()
-        )
-        col_order = (
-            pd.Series(item_c, index=norm_data.columns)
-            .sort_values()
-            .index.tolist()
-        )
-        return row_order, col_order
+    # def get_row_col_orders(
+    #     self,
+    #     assign: Dict[str, Any],
+    #     norm_data: pd.DataFrame,
+    # ) -> Tuple[List[int], List[int]]:
+    #     r_star, c_star = assign["r_star"], assign["c_star"]
+    #     R, C = self.B_.shape
+    #     store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
+    #     item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
+    #     row_order = (
+    #         pd.Series(store_r, index=norm_data.index)
+    #         .sort_values()
+    #         .index.tolist()
+    #     )
+    #     col_order = (
+    #         pd.Series(item_c, index=norm_data.columns)
+    #         .sort_values()
+    #         .index.tolist()
+    #     )
+    #     return row_order, col_order
 
-    def get_store_item_assignments(
-        self,
-        assign: Dict[str, Any],
-        norm_data: pd.DataFrame,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        r_star, c_star = assign["r_star"], assign["c_star"]
-        R, C = self.B_.shape
-        store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
-        item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-        store_assign = pd.DataFrame(
-            {"store_r": store_r}, index=norm_data.index
-        )
-        item_assign = pd.DataFrame({"item_c": item_c}, index=norm_data.columns)
-        return store_assign, item_assign
+    # def get_store_item_assignments(
+    #     self,
+    #     assign: Dict[str, Any],
+    #     norm_data: pd.DataFrame,
+    # ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    #     r_star, c_star = assign["r_star"], assign["c_star"]
+    #     R, C = self.B_.shape
+    #     store_r = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
+    #     item_c = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
+    #     store_assign = pd.DataFrame(
+    #         {"store_r": store_r}, index=norm_data.index
+    #     )
+    #     item_assign = pd.DataFrame({"item_c": item_c}, index=norm_data.columns)
+    #     return store_assign, item_assign
 
     def explain_blocks(
         self,
