@@ -1306,7 +1306,7 @@ def normalize_data_and_fit_estimator(
 #     Returns:
 #       - X_mat: (I, J) float32, nonnegative (min-max to [0,1] if normalize=True)
 #       - row_names: (I,) array of str (store▮item if present)
-#       - feat_cols: list[str] of numeric columns used
+#       - col_names: list[str] of numeric columns used
 #     """
 #     X = df.copy()
 
@@ -1320,9 +1320,9 @@ def normalize_data_and_fit_estimator(
 #             id_cols = []
 
 #     # ---- pick numeric feature columns only ----
-#     feat_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-#     feat_cols = [c for c in feat_cols if c not in id_cols]
-#     if not feat_cols:
+#     col_names = X.select_dtypes(include=[np.number]).columns.tolist()
+#     col_names = [c for c in col_names if c not in id_cols]
+#     if not col_names:
 #         raise ValueError("No numeric feature columns found to cluster on.")
 
 #     # ---- row names ----
@@ -1334,7 +1334,7 @@ def normalize_data_and_fit_estimator(
 #         row_names = X.index.astype(str).to_numpy()
 
 #     # ---- numeric matrix ----
-#     M = X.loc[:, feat_cols].to_numpy(dtype=np.float32)
+#     M = X.loc[:, col_names].to_numpy(dtype=np.float32)
 
 #     # replace non-finite BEFORE stats
 #     M = np.where(np.isfinite(M), M, np.nan)
@@ -1348,7 +1348,7 @@ def normalize_data_and_fit_estimator(
 #             shift = np.minimum(col_min, 0.0)
 #             M = M - shift[None, :]
 #         else:
-#             neg_list = [feat_cols[i] for i, v in enumerate(col_min) if v < 0]
+#             neg_list = [col_names[i] for i, v in enumerate(col_min) if v < 0]
 #             raise ValueError(f"Negative values detected in columns: {neg_list}")
 
 #     # fill remaining NaNs with column medians (robust) before scaling
@@ -1362,7 +1362,7 @@ def normalize_data_and_fit_estimator(
 #     if not normalize:
 #         # already nonnegative & comparable scale
 #         M = np.clip(M, 0.0, None).astype(np.float32)
-#         return M, row_names, feat_cols
+#         return M, row_names, col_names
 
 #     # ---- per-column MinMax to [0,1] ----
 #     col_min = np.nanmin(M, axis=0)
@@ -1372,7 +1372,7 @@ def normalize_data_and_fit_estimator(
 #     M = (M0 / col_max).astype(np.float32)
 #     M = np.clip(M, 0.0, 1.0)
 
-#     return M, row_names, feat_cols
+#     return M, row_names, col_names
 
 
 def _normalize_matrix(
@@ -1381,7 +1381,7 @@ def _normalize_matrix(
     normalize: bool,
 ) -> tuple[np.ndarray, np.ndarray | list[str], list[str]]:
     """
-    Returns: X_mat (I×J nonnegative), row_names (I,), feat_cols (len=J)
+    Returns: X_mat (I×J nonnegative), row_names (I,), col_names (len=J)
     - If normalize=True: per-column min-max to [0,1] after shifting to nonnegative.
     - If normalize=False: assume already nonnegative & comparably scaled (e.g., M_btnmf).
     """
@@ -1407,9 +1407,9 @@ def _normalize_matrix(
             id_cols = []
 
     # numeric feature columns
-    feat_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-    feat_cols = [c for c in feat_cols if c not in id_cols]
-    if not feat_cols:
+    col_names = X.select_dtypes(include=[np.number]).columns.tolist()
+    col_names = [c for c in col_names if c not in id_cols]
+    if not col_names:
         raise ValueError("No numeric feature columns found to cluster on.")
 
     # row names
@@ -1423,7 +1423,7 @@ def _normalize_matrix(
         row_names = X.index.astype(str).to_numpy()
 
     # matrix
-    M = X[feat_cols].to_numpy(dtype=np.float32)
+    M = X[col_names].to_numpy(dtype=np.float32)
     M = np.where(np.isfinite(M), M, 0.0)
 
     # per-column min-max to [0,1]
@@ -1436,7 +1436,8 @@ def _normalize_matrix(
     # clip any tiny numeric junk
     M = np.clip(M, 0.0, None)
 
-    return M, row_names, feat_cols
+    logger.info(f"Shape: {M.shape}")
+    return M, row_names, col_names
 
 
 def cluster_data_and_explain_blocks(
@@ -1495,7 +1496,7 @@ def cluster_data_and_explain_blocks(
 
     id_cols = ["store_item"]
 
-    X_mat, row_names, feat_cols = _normalize_matrix(
+    X_mat, row_names, col_names = _normalize_matrix(
         df, id_cols=id_cols, normalize=normalize
     )
 
@@ -1553,7 +1554,7 @@ def cluster_data_and_explain_blocks(
     #     return_frame=False,
     # )
 
-    col_names = np.array(feat_cols)
+    col_names = np.array(col_names)
     # optional summary
     if summary_fn is not None:
         summary = est.explain_blocks(

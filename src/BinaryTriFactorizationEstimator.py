@@ -580,7 +580,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         logger.info(
             f"R={R},C={C},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
-            f"alpha={self.alpha},beta={self.beta},block_l1={self.block_l1},tol={self.tol},\n"
+            f"alpha={self.alpha},beta={self.beta},block_l1={self.block_l1},tol={self.tol}"
             f"max_iter={self.max_iter},loss={self.loss}"
         )
         logger.debug(f"Nan/inf report:{self._nan_inf_report('X', X)}")
