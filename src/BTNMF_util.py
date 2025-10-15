@@ -1387,10 +1387,10 @@ def _normalize_matrix(
     """
 
     logger.info(f"{df}")
-    logger.info("Index name:", df.index.name)
-    logger.info("Columns name:", df.columns.name)
-    logger.info("Index values:", df.index.tolist()[:5])
-    logger.info("Column values:", df.columns.tolist()[:5])
+    logger.info(f"Index name: {df.index.name}")
+    logger.info(f"Columns name: {df.columns.name}")
+    logger.info(f"Index values: {df.index.tolist()[:5]}")
+    logger.info(f"Column values: {df.columns.tolist()[:5]}")
 
     # row names
     if "store" not in df.index:
