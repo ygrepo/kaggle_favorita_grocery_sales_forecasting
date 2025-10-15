@@ -213,7 +213,6 @@ def main():
             df,
             row_range=args.row_range,
             col_range=args.col_range,
-            normalize=args.normalize,
             alpha=args.alpha,
             beta=args.beta,
             block_l1=args.block_l1,
