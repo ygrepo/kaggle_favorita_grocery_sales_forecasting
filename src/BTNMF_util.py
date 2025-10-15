@@ -6,7 +6,6 @@ from src.BinaryTriFactorizationEstimator import (
     BinaryTriFactorizationEstimator,
     model_loss,
     gaussian_loss,
-    poisson_nll,
 )
 from src.data_utils import normalize_data
 from dataclasses import dataclass
