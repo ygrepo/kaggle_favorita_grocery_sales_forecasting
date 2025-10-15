@@ -1,7 +1,7 @@
 # Implementation: Binary Multi-Hard Tri-Factorization (scikit-learn style)
 # with Gaussian losses
 import numpy as np
-from typing import Optional, Tuple, Dict, List, Any, Callable
+from typing import Optional, Tuple, Dict, Any, Callable
 import pandas as pd
 from sklearn.base import BaseEstimator, ClusterMixin
 from sklearn.utils.validation import check_array
@@ -9,29 +9,6 @@ from src.utils import get_logger
 import time
 
 logger = get_logger(__name__)
-
-
-def _mode_ignore_minus1(vec: np.ndarray, K: int) -> int:
-    r"""
-    Compute the mode of a vector, ignoring -1 values.
-
-    Parameters
-    ----------
-    vec : (N,) int array
-        Vector to compute the mode of.
-    K : int
-        Number of clusters.
-
-    Returns
-    -------
-    mode : int
-        Most frequent non-negative value in vec, or -1 if all values are negative.
-    """
-    v = vec[vec >= 0]
-    if v.size == 0:
-        return -1
-    counts = np.bincount(v, minlength=K)
-    return int(np.argmax(counts))  # ties → lowest index
 
 
 def chol_solve_with_jitter(
@@ -173,6 +150,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         block_l1: float = 0.0,
         b_inner: int = 15,
         patience: int = 2,
+        prune_empty_clusters: bool = True,
+        empty_cluster_penalty: float = 0.0,
+        min_cluster_size: int = 1,
     ):
         """
         Parameters
@@ -217,6 +197,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         self.block_l1 = block_l1
         self.b_inner = b_inner
         self.patience = patience
+        self.prune_empty_clusters = prune_empty_clusters
+        self.empty_cluster_penalty = empty_cluster_penalty
+        self.min_cluster_size = min_cluster_size
 
         # Learned attributes (filled after fit)
         self.U_ = None  # (I,R) binary
@@ -253,7 +236,71 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             Z[empty, rng.integers(0, R, size=empty.sum())] = 1
         return Z
 
-    # # -------- B updates --------
+    def _log_cluster_utilization(self, U, V):
+        """Log cluster utilization statistics"""
+        row_sizes = U.sum(axis=0)
+        col_sizes = V.sum(axis=0)
+
+        empty_rows = np.sum(row_sizes == 0)
+        empty_cols = np.sum(col_sizes == 0)
+
+        logger.info(
+            f"Cluster utilization: {empty_rows}/{self.n_row_clusters} empty row clusters, "
+            f"{empty_cols}/{self.n_col_clusters} empty col clusters"
+        )
+
+        if empty_rows > 0:
+            logger.info(f"Row cluster sizes: {row_sizes}")
+        if empty_cols > 0:
+            logger.info(f"Col cluster sizes: {col_sizes}")
+
+    def _prune_empty_clusters(self):
+        """
+        Remove empty clusters and resize matrices accordingly.
+        Returns the number of clusters removed.
+        """
+        if not self.prune_empty_clusters:
+            return 0, 0
+
+        # Find clusters with sufficient membership
+        row_cluster_sizes = self.U_.sum(axis=0)
+        col_cluster_sizes = self.V_.sum(axis=0)
+
+        active_row_clusters = np.where(
+            row_cluster_sizes >= self.min_cluster_size
+        )[0]
+        active_col_clusters = np.where(
+            col_cluster_sizes >= self.min_cluster_size
+        )[0]
+
+        n_removed_rows = self.n_row_clusters - len(active_row_clusters)
+        n_removed_cols = self.n_col_clusters - len(active_col_clusters)
+
+        if n_removed_rows > 0 or n_removed_cols > 0:
+            logger.info(
+                f"Pruning empty clusters: {n_removed_rows} row clusters, {n_removed_cols} col clusters"
+            )
+
+            # Update matrices
+            self.U_ = self.U_[:, active_row_clusters]
+            self.V_ = self.V_[:, active_col_clusters]
+            self.B_ = self.B_[np.ix_(active_row_clusters, active_col_clusters)]
+
+            # Update cluster counts
+            self.n_row_clusters = len(active_row_clusters)
+            self.n_col_clusters = len(active_col_clusters)
+
+            # Recompute reconstruction
+            self.Xhat_ = self.U_ @ self.B_ @ self.V_.T
+
+            logger.info(
+                f"Final cluster counts after pruning: R={self.n_row_clusters}, C={self.n_col_clusters}"
+            )
+
+        return n_removed_rows, n_removed_cols
+
+        # # -------- B updates --------
+
     def _update_B_gaussian(
         self, X: np.ndarray, U: np.ndarray, V: np.ndarray
     ) -> np.ndarray:
@@ -268,8 +315,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             minimize 0.5||X - U B Vᵀ||_F^2 + (α/2)||B||_F^2 + λ||B||_1
             with step size from a Lipschitz bound.
         """
-        import logging
-
         R, C = self.n_row_clusters, self.n_col_clusters
 
         # Ensure float64 for stable linear algebra
@@ -409,38 +454,36 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         )
         logger.info(f"  counts: {bins_str}")
 
-    # -------- Toggle scoring (marginal gain) --------
-    def _poisson_delta_ll_row(self, x_row, mu_row, g_row):
-        """
-        Exact Δ log-likelihood for Poisson when toggling a row-bit:
-          sum_j [ x log(mu+g) - (mu+g) - (x log mu - mu) ]
-        """
-        mu_new = np.maximum(mu_row + g_row, 1e-9)
-        mu_row = np.maximum(mu_row, 1e-9)
-        return (
-            x_row * (np.log(mu_new) - np.log(mu_row)) - (mu_new - mu_row)
-        ).sum()
-
-    def _poisson_delta_ll_col(self, x_col, mu_col, h_col):
-        """Column analogue of the Poisson Δ log-likelihood."""
-        mu_new = np.maximum(mu_col + h_col, 1e-9)
-        mu_col = np.maximum(mu_col, 1e-9)
-        return (
-            x_col * (np.log(mu_new) - np.log(mu_col)) - (mu_new - mu_col)
-        ).sum()
-
     # helper to compute objective
     def _objective(self, X, Xhat, U, V):
         if self.loss == "gaussian":
             resid = X - Xhat
             penalty = self.beta * (U.sum() + V.sum())
-            # objective used for optimization:
+
+            # Add penalty for empty clusters
+            if self.empty_cluster_penalty > 0:
+                n_empty_rows = np.sum(U.sum(axis=0) == 0)
+                n_empty_cols = np.sum(V.sum(axis=0) == 0)
+                empty_penalty = self.empty_cluster_penalty * (
+                    n_empty_rows + n_empty_cols
+                )
+                penalty += empty_penalty
+
             return 0.5 * np.sum(resid * resid) + penalty
         else:
-            MU = np.maximum(Xhat, 1e-9)
-            return float((MU - X * np.log(MU)).sum()) + self.beta * (
-                U.sum() + V.sum()
-            )
+            raise NotImplementedError("Poisson loss not implemented yet")
+
+    # def _objective(self, X, Xhat, U, V):
+    #     if self.loss == "gaussian":
+    #         resid = X - Xhat
+    #         penalty = self.beta * (U.sum() + V.sum())
+    #         # objective used for optimization:
+    #         return 0.5 * np.sum(resid * resid) + penalty
+    #     else:
+    #         MU = np.maximum(Xhat, 1e-9)
+    #         return float((MU - X * np.log(MU)).sum()) + self.beta * (
+    #             U.sum() + V.sum()
+    #         )
 
     def _rss(self, X, Xhat):
         return float(np.sum((X - Xhat) ** 2))
@@ -672,6 +715,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             prev = loss
             loss_prev = loss
 
+        self._log_cluster_utilization(U, V)
+
         # save
         self.U_, self.V_, self.B_, self.Xhat_ = (
             U.astype(np.int8),
@@ -679,6 +724,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             B,
             Xhat,
         )
+
+        # Prune empty clusters if requested
+        n_removed_rows, n_removed_cols = self._prune_empty_clusters()
+
+        # Update final cluster counts in logs
+        R_final, C_final = self.n_row_clusters, self.n_col_clusters
+
         # --- final diagnostics (last accepted iteration) ---
         rows_forced_pct = 100.0 * (self._u_forced / max(1, I))
         rows_pos_pct = 100.0 * (self._u_positive / max(1, I))
@@ -686,7 +738,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         cols_pos_pct = 100.0 * (self._v_positive / max(1, J))
 
         logger.info(
-            f"Final pick summary,R={R},C={C},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
+            f"Final summary: Started with R={R},C={C}, ended with R={R_final},C={C_final}\n"
+            f"Removed {n_removed_rows} row clusters, {n_removed_cols} col clusters\n"
+            f"Final pick summary,R={R_final},C={C_final},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
             f"rows: forced={self._u_forced}/{I},({rows_forced_pct:.2f}%)\n"
             f"positive={self._u_positive}/{I},({rows_pos_pct:.2f}%)\n"
             f"cols: forced={self._v_forced}/{J},({cols_forced_pct:.2f}%)\n"
