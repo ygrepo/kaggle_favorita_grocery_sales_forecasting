@@ -1377,8 +1377,6 @@ def normalize_data_and_fit_estimator(
 
 def _normalize_matrix(
     df: pd.DataFrame,
-    id_cols: list[str] | None,
-    normalize: bool,
 ) -> tuple[np.ndarray, np.ndarray | list[str], list[str]]:
     """
     Returns: X_mat (I×J nonnegative), row_names (I,), col_names (len=J)
@@ -1393,22 +1391,13 @@ def _normalize_matrix(
     logger.info(f"Column values: {df.columns.tolist()[:5]}")
 
     # row names
-    if "store" not in df.index:
+    if "store" not in df.index.name:
         raise ValueError("store not in index")
-    if "item" not in df.columns:
+    if "item" not in df.columns.name:
         raise ValueError("item not in columns")
+
     row_names = df.index.tolist()
     col_names = df.columns.tolist()
-
-    # if id_cols == ["store", "item"]:
-    #     row_names = (
-    #         X["store"].astype(str) + "▮" + X["item"].astype(str)
-    #     ).to_numpy()
-    # elif id_cols == ["store_item"]:
-    #     row_names = X["store_item"].astype(str).to_numpy()
-    # else:
-    #     row_names = X.index.astype(str).to_numpy()
-
     # matrix
     M = df.values
     M = np.where(np.isfinite(M), M, 0.0)
@@ -1478,14 +1467,8 @@ def cluster_data_and_explain_blocks(
         tol=tol,
     )
 
-    # ----- INPUT PREP (new) -----
-    # auto-detect id cols; min-max if normalize=True
-
-    id_cols = ["store_item"]
-
-    X_mat, row_names, col_names = _normalize_matrix(
-        df, id_cols=id_cols, normalize=normalize
-    )
+    # ----- INPUT PREP -----
+    X_mat, row_names, col_names = _normalize_matrix(df)
 
     # small stats
     num_total = X_mat.size
