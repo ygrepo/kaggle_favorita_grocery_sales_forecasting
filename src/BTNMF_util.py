@@ -1385,33 +1385,13 @@ def _normalize_matrix(
     - If normalize=True: per-column min-max to [0,1] after shifting to nonnegative.
     - If normalize=False: assume already nonnegative & comparably scaled (e.g., M_btnmf).
     """
-    # ensure nonnegative
-    # min_per_col = np.nanmin(X.values, axis=0)
-    # neg_cols = min_per_col < 0
-    # if np.any(neg_cols):
-    #     logger.warning(f"Negative values detected in columns: {neg_cols}")
-    #     X[neg_cols] = X[neg_cols] - min_per_col[neg_cols][None, :]
-    #     raise ValueError("Negative values detected in columns: {neg_cols}")
-    # if not normalize:
-    #     logger.info(f"rows: {X.index.tolist()} cols: {X.columns.tolist()}.")
-    #     return X.values, X.index.to_list(), X.columns.tolist()
-
-    # infer id cols
-    if id_cols is None:
-        if {"store", "item"}.issubset(X.columns):
-            id_cols = ["store", "item"]
-        elif "store_item" in X.columns:
-            id_cols = ["store_item"]
-        else:
-            id_cols = []
-
-    # numeric feature columns
-    # col_names = df.select_dtypes(include=[np.number]).columns.tolist()
-    # col_names = [c for c in col_names if c not in id_cols]
-    # if not col_names:
-    #     raise ValueError("No numeric feature columns found to cluster on.")
 
     logger.info(f"{df}")
+    logger.info("Index name:", df.index.name)
+    logger.info("Columns name:", df.columns.name)
+    logger.info("Index values:", df.index.tolist()[:5])
+    logger.info("Column values:", df.columns.tolist()[:5])
+
     # row names
     if "store" not in df.index:
         raise ValueError("store not in index")
