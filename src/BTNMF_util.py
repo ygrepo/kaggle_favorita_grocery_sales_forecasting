@@ -1414,7 +1414,7 @@ def _normalize_matrix(
 
     # row names
     if "store" not in X.index:
-        raise ValueError("store not in columns")
+        raise ValueError("store not in index")
     if "item" not in X.columns:
         raise ValueError("item not in columns")
     row_names = X.index.tolist()
