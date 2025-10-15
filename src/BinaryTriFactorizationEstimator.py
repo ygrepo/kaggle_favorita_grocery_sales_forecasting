@@ -152,18 +152,19 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
     def __init__(
         self,
-        n_row_clusters,
-        n_col_clusters,
-        k_row=2,
-        k_col=2,
-        loss="gaussian",
-        alpha=1e-3,
-        beta=0.0,
-        max_iter=30,
-        tol=1e-4,
-        random_state=0,
-        block_l1=0.0,
-        b_inner=15,
+        n_row_clusters: int,
+        n_col_clusters: int,
+        k_row: Optional[int] = None,
+        k_col: Optional[int] = None,
+        loss: str = "gaussian",
+        alpha: float = 1e-3,
+        beta: float = 0.0,
+        max_iter: int = 30,
+        tol: float = 1e-4,
+        random_state: int = 0,
+        block_l1: float = 0.0,
+        b_inner: int = 15,
+        patience: int = 2,
     ):
         """
         Parameters
@@ -172,9 +173,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             Number of row clusters
         n_col_clusters : int
             Number of column clusters
-        k_row : int or None, default=2
+        k_row : int or None, default=None
             Max active clusters per row. None for data-driven stopping.
-        k_col : int or None, default=2
+        k_col : int or None, default=None
             Max active clusters per column. None for data-driven stopping.
         loss : str, default="gaussian"
             Loss function: "gaussian" or "poisson"
@@ -192,6 +193,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             L1 regularization on B matrix (0 = off)
         b_inner : int, default=15
             Inner prox steps for B when block_l1 > 0
+        patience : int, default=2
+            Number of iterations to wait for improvement before early stopping
         """
         self.n_row_clusters = n_row_clusters
         self.n_col_clusters = n_col_clusters
@@ -205,6 +208,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         self.random_state = random_state
         self.block_l1 = block_l1
         self.b_inner = b_inner
+        self.patience = patience
 
         # Learned attributes (filled after fit)
         self.U_ = None  # (I,R) binary
@@ -434,14 +438,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     ) -> None:
         """
         Log a compact histogram of per-entity membership counts for a binary assignment matrix M.
-        - For U (stores×row_clusters), call with name="stores"
-        - For V (items×col_clusters),  call with name="items"
         """
         if M.size == 0:
-            logger.info("{name}: empty membership matrix")
+            logger.info(f"{name}: empty membership matrix")
             return
 
-        # Each row of M corresponds to one entity (store or item); sum across clusters
+        # Each row of M corresponds to one entity (row or column); sum across clusters
         counts = np.asarray(M.sum(axis=1)).astype(int).ravel()
         n = counts.size
         kmax = int(counts.max(initial=0))
@@ -465,11 +467,10 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             bins_str += f"  (>{K}:{tail})"
 
         logger.info(
-            f"{name} memberships — n={n}  "
-            f"Row_clusters:{self.n_row_clusters}-"
-            f"Col_clusters:{self.n_col_clusters}  "
-            f"mean={mean:.2f}  median={med:.2f}  "
-            f"p90={p90:.2f}  p95={p95:.2f}  p99={p99:.2f}"
+            f"{name} memberships — n={n}\n"
+            f"R:{self.n_row_clusters},C:{self.n_col_clusters}\n"
+            f"mean={mean:.2f},median={med:.2f}\n"
+            f"p90={p90:.2f},p95={p95:.2f},p99={p99:.2f}\n"
         )
         logger.info(f"  counts: {bins_str}")
 
@@ -509,7 +510,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
     def _rss(self, X, Xhat):
         return float(np.sum((X - Xhat) ** 2))
 
-    def _nan_inf_report(self, name, arr):
+    def _nan_inf_report(self, name: str, arr: np.ndarray) -> dict:
         return dict(
             name=name,
             has_nan=bool(np.isnan(arr).any()),
@@ -518,31 +519,31 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             frob=float(np.linalg.norm(arr)) if arr.size else 0.0,
         )
 
-    def _cond_spd(self, A):
-        # A is small (R×R or C×C); add tiny diag to avoid crashes in logging
-        eps = 1e-12
-        try:
-            w = np.linalg.eigvalsh(A + eps * np.eye(A.shape[0]))
-            w = np.clip(w, eps, None)
-            return float(w.max() / w.min())
-        except Exception:
-            return float("inf")
+    # def _cond_spd(self, A):
+    #     # A is small (R×R or C×C); add tiny diag to avoid crashes in logging
+    #     eps = 1e-12
+    #     try:
+    #         w = np.linalg.eigvalsh(A + eps * np.eye(A.shape[0]))
+    #         w = np.clip(w, eps, None)
+    #         return float(w.max() / w.min())
+    #     except Exception:
+    #         return float("inf")
 
-    def _grad_B_gaussian(self, X, U, V, B, alpha):
-        # ∇_B 0.5||X - U B Vᵀ||² + (alpha/2)||B||²  = Uᵀ(U B Vᵀ - X)V + alpha B
-        E = (U @ B) @ V.T - X
-        return U.T @ E @ V + alpha * B
+    # def _grad_B_gaussian(self, X, U, V, B, alpha):
+    #     # ∇_B 0.5||X - U B Vᵀ||² + (alpha/2)||B||²  = Uᵀ(U B Vᵀ - X)V + alpha B
+    #     E = (U @ B) @ V.T - X
+    #     return U.T @ E @ V + alpha * B
 
-    def _hamming_changes(self, A_new, A_prev):
-        return int(np.sum(A_new != A_prev))
+    # def _hamming_changes(self, A_new, A_prev):
+    #     return int(np.sum(A_new != A_prev))
 
-    def _describe_scores(self, s):
-        if s.size == 0:
-            return dict(max=float("-inf"), p95=float("-inf"), pos_frac=0.0)
-        maxv = float(np.max(s))
-        p95 = float(np.percentile(s, 95))
-        pos_frac = float(np.mean(s > 0))
-        return dict(max=maxv, p95=p95, pos_frac=pos_frac)
+    # def _describe_scores(self, s):
+    #     if s.size == 0:
+    #         return dict(max=float("-inf"), p95=float("-inf"), pos_frac=0.0)
+    #     maxv = float(np.max(s))
+    #     p95 = float(np.percentile(s, 95))
+    #     pos_frac = float(np.mean(s > 0))
+    #     return dict(max=maxv, p95=p95, pos_frac=pos_frac)
 
     # -------- Fit --------
     def fit(self, X, y=None):
@@ -578,16 +579,15 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         prev = loss_prev
 
         logger.info(
-            f"BTriF start I={I} J={J} R={R} C={C} k_row={self.k_row} k_col={self.k_col} "
-            f"alpha={self.alpha} beta={self.beta} block_l1={self.block_l1} tol={self.tol} "
-            f"max_iter={self.max_iter} loss={self.loss}"
+            f"R={R},C={C},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
+            f"alpha={self.alpha},beta={self.beta},block_l1={self.block_l1},tol={self.tol},\n"
+            f"max_iter={self.max_iter},loss={self.loss}"
         )
-        logger.debug(f"sanity_init {self._nan_inf_report('X', X)}")
+        logger.debug(f"Nan/inf report:{self._nan_inf_report('X', X)}")
 
         # for the optional “stable assignments” stop (no new attribute needed)
-        stable_iters = 0
-        stable_patience = 2  # consecutive iters with no membership changes
-
+        n_iters = 0
+        self.patience = 2  # consecutive iters with no membership changes
         for it in range(self.max_iter):
             t0 = time.perf_counter()
 
@@ -613,6 +613,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             if self.loss == "gaussian":
                 G_norm2 = np.einsum("rj,rj->r", G, G)
+            else:
+                G_norm2 = None
 
             # --- U-step ---
             tU0 = time.perf_counter()
@@ -653,6 +655,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             if self.loss == "gaussian":
                 H_norm2 = np.einsum("ic,ic->c", H, H)
+            else:
+                H_norm2 = None
 
             # --- V-step ---
             tV0 = time.perf_counter()
@@ -690,10 +694,10 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             col_on = float(V.sum(1).mean())
 
             # optional stability-based stop
-            stable_iters = stable_iters + 1 if (dU == 0 and dV == 0) else 0
-            if stable_iters >= stable_patience:
+            n_iters = n_iters + 1 if (dU == 0 and dV == 0) else 0
+            if n_iters >= self.patience:
                 logger.info(
-                    f"{R}-{C}-it:{it:02d} Early stopping (stable assignments for {stable_iters} iters)"
+                    f"it:{it:02d},R:{R},C:{C} Early stopping (stable assignments for {n_iters} iters)"
                 )
                 break
 
@@ -714,7 +718,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             if rolled_back:
                 logger.warning(
-                    f"{R}-{C}-it:{it:02d} rollback (loss_new={loss_new:.6e} > baseline={loss_baseline:.6e})"
+                    f"it:{it:02d},{R},{C} Rollback (new loss    ={loss_new:.6e} > baseline={loss_baseline:.6e})"
                 )
 
             # diagnostics (Gaussian regs shown; l1 only if enabled)
@@ -761,27 +765,29 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                 self.loss_history_.append(loss)
 
             logger.info(
-                f"{R}-{C}-it:{it:02d} loss={loss:.6e} rss={rss:.6e} PVE={pve:.2%} RMSE={rmse:.3f} "
-                f"regB={regB:.3e} l1B={l1B:.3e} | frac_rss={frac_rss:.2%} frac_reg={frac_reg:.2%} frac_l1={frac_l1:.2%} "
-                f"dU={dU} dV={dV} "
-                f"averag_clusters_per_row={row_on:.2f} averag_clusters_per_col={col_on:.2f} "
-                f"U_forced={self._u_forced} U_pos={self._u_positive} "
-                f"V_forced={self._v_forced} V_pos={self._v_positive}"
+                f"it:{it:02d},R:{R},C:{C},loss={loss:.6e},rss={rss:.6e},PVE={pve:.2%},RMSE={rmse:.3f}\n"
+                f"RegB={regB:.3e},L1B={l1B:.3e},Frac_rss={frac_rss:.2%}, Frac_reg={frac_reg:.2%}, Frac_l1={frac_l1:.2%}\n"
+                f"dU={dU},dV={dV}\n"
+                f"Averag_row_clusters={row_on:.2f},averag_col_clusters={col_on:.2f}\n"
+                f"U_forced={self._u_forced},U_pos={self._u_positive}\n"
+                f"V_forced={self._v_forced},V_pos={self._v_positive}"
             )
             logger.debug(
-                f"time B={tB1-tB0:.3f}s U={tU1-tU0:.3f}s V={tV1-tV0:.3f}s iter_total={time.perf_counter()-t0:.3f}s"
+                f"iter_total={time.perf_counter()-t0:.3f}s,time B={tB1-tB0:.3f}s,U={tU1-tU0:.3f}s,V={tV1-tV0:.3f}s"
             )
 
             if it % 10 == 0:
                 logger.debug(
-                    f"sanity_iter{it} {self._nan_inf_report('B', B)} {self._nan_inf_report('Xhat', Xhat)}"
+                    f"it:{it},{self._nan_inf_report('B', B)},{self._nan_inf_report('Xhat', Xhat)}"
                 )
 
             # relative-improvement early stop
             if np.isfinite(prev):
                 rel = (prev - loss) / max(1.0, abs(prev))
                 if (prev >= loss) and (rel < self.tol):
-                    logger.info(f"{R}-{C}-it:{it} Early stopping  {rel:.6f}")
+                    logger.info(
+                        f"it:{it},R:{R},C:{C} Early stopping (rel_impr={rel:.6f} < tol={self.tol})"
+                    )
                     break
             prev = loss
             loss_prev = loss
@@ -800,10 +806,10 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         cols_pos_pct = 100.0 * (self._v_positive / max(1, J))
 
         logger.info(
-            f"Final pick summary — rows: forced={self._u_forced}/{I} ({rows_forced_pct:.2f}%) "
-            f"positive={self._u_positive}/{I} ({rows_pos_pct:.2f}%) | "
-            f"cols: forced={self._v_forced}/{J} ({cols_forced_pct:.2f}%) "
-            f"positive={self._v_positive}/{J} ({cols_pos_pct:.2f}%)"
+            f"Final pick summary — rows: forced={self._u_forced}/{I},({rows_forced_pct:.2f}%)\n"
+            f"Positive={self._u_positive}/{I},({rows_pos_pct:.2f}%)\n"
+            f"Cols: forced={self._v_forced}/{J},({cols_forced_pct:.2f}%)\n"
+            f"Positive={self._v_positive}/{J},({cols_pos_pct:.2f}%)"
         )
 
         # After the training loop, before saving/returning
@@ -822,14 +828,17 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         Xhat: np.ndarray,
         memberships: np.ndarray,  # U (I×R) if axis=0, or V (J×C) if axis=1
         idx: int,
-        components: np.ndarray,  # G (R×J) if axis=0, or H (I×C) if axis=1
+        components: (
+            np.ndarray | None
+        ),  # G (R×J) if axis=0, or H (I×C) if axis=1
         comp_norm2: np.ndarray,  # ||t_k||^2 per template
         k_limit: int | None,
         beta: float,
         axis: int,  # 0=row update, 1=col update
     ) -> None:
-        import logging
-
+        """
+        Greedy Gaussian-membership update for one row (axis=0) or one column (axis=1).
+        """
         if axis == 0:
             # -------- ROW UPDATE (U) --------
             i = idx
@@ -843,9 +852,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             s = components @ base
             s = s - 0.5 * comp_norm2 - beta
 
-            if logger.isEnabledFor(logging.DEBUG):
-                smax = float(np.max(s)) if s.size else float("-inf")
-                logger.debug(f"U[i={i}] smax={smax:.3e}")
+            smax = float(np.max(s)) if s.size else float("-inf")
+            logger.debug(f"U[i={i}] smax={smax:.3e}")
 
             used = np.zeros(components.shape[0], dtype=bool)
 
@@ -892,9 +900,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             s = components.T @ base
             s = s - 0.5 * comp_norm2 - beta
 
-            if logger.isEnabledFor(logging.DEBUG):
-                smax = float(np.max(s)) if s.size else float("-inf")
-                logger.debug(f"V[j={j}] smax={smax:.3e}")
+            smax = float(np.max(s)) if s.size else float("-inf")
+            logger.debug(f"V[j={j}] smax={smax:.3e}")
 
             used = np.zeros(components.shape[1], dtype=bool)
 
@@ -1132,7 +1139,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         X: np.ndarray,
         baseline: str = "column_mean",
         return_dataframe: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, Any] | pd.DataFrame:
         """
         Compute TSS, RSS, and PVE statistics per block ID.
 
@@ -1231,8 +1238,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             )
 
         if return_dataframe:
-            import pandas as pd
-
             return (
                 pd.DataFrame(results)
                 .sort_values("block_id")
@@ -1760,7 +1765,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         if self.U_ is None:
             raise ValueError("Model has not been fitted yet")
 
-        I, R = self.U_.shape
+        I, _ = self.U_.shape
         labels = np.full(I, -1, dtype=int)
         # argmax on boolean chooses the FIRST True; if none True → 0, so guard with any()
         for i in range(I):
@@ -1887,128 +1892,6 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             min_abs_B=min_abs_B,
             on_empty=on_empty,
         )
-
-    def primary_row_labels(
-        self,
-        X: np.ndarray,
-        *,
-        rule: str = "mode",  # "mode" | "first" | "argmax"
-        method: str | None = None,  # passed to predict_blocks when rule="mode"
-        allowed_mask: np.ndarray | None = None,
-        min_abs_B: float | None = None,
-        on_empty: str = "fallback",
-    ) -> np.ndarray:
-        """
-        One label per row (store), using different rules:
-
-        - rule="mode":    Take the most frequent r among the per-cell r_star for that row.
-                            (Uses assign_unique_blocks under the hood.)
-        - rule="first":   First active bit from U_ (your current labels_ behavior).
-        - rule="argmax":  Argmax cluster by prototype score (same logic as predict).
-
-        Returns
-        -------
-        labels : (I,) int array of row-cluster indices; -1 if no decision possible.
-        """
-        if rule == "first":
-            return self._get_row_labels()
-
-        if rule == "argmax":
-            return self.predict(X)
-
-        if rule != "mode":
-            raise ValueError("rule must be 'mode', 'first', or 'argmax'")
-
-        # mode of r_star across columns
-        out = self.predict_blocks(
-            X,
-            method=method,
-            allowed_mask=allowed_mask,
-            min_abs_B=min_abs_B,
-            on_empty=on_empty,
-        )
-        r_star = out["r_star"]  # (I,J)
-        R = self.B_.shape[0]
-
-        labels = np.apply_along_axis(_mode_ignore_minus1, 1, r_star, R)
-        return labels
-
-    def primary_column_labels(
-        self,
-        X: np.ndarray,
-        *,
-        rule: str = "mode",  # "mode" | "first" | "argmax"
-        method: str | None = None,
-        allowed_mask: np.ndarray | None = None,
-        min_abs_B: float | None = None,
-        on_empty: str = "fallback",
-    ) -> np.ndarray:
-        """
-        One label per column (item).
-
-        - rule="mode":    Take most frequent c among per-cell c_star for that column.
-        - rule="first":   First active bit from V_.
-        - rule="argmax":  Choose c that best explains the column vs. U,B (mirror of predict).
-
-        Returns
-        -------
-        labels : (J,) int array of column-cluster indices; -1 if no decision possible.
-        """
-        if rule == "first":
-            if self.V_ is None:
-                raise ValueError("Model has not been fitted yet")
-            J, C = self.V_.shape
-            labs = np.full(J, -1, dtype=int)
-            for j in range(J):
-                if self.V_[j].any():
-                    labs[j] = int(np.argmax(self.V_[j]))
-            return labs
-
-        if rule == "argmax":
-            # Prototype for columns is H = U @ B  (I×C). For a column x (I,),
-            # pick c maximizing Gaussian/Poisson score against H[:,c].
-            if self.U_ is None or self.B_ is None:
-                raise ValueError("Model has not been fitted yet")
-            H = self.U_ @ self.B_  # (I,C)
-            X = check_array(
-                X,
-                dtype=np.float64,
-                ensure_2d=True,
-                force_all_finite="allow-nan",
-            )
-            X = np.nan_to_num(X)
-            I, C = H.shape
-            if X.shape[0] != I:
-                raise ValueError(
-                    f"X has {X.shape[0]} rows, but model expects {I}."
-                )
-            labels = np.empty(X.shape[1], dtype=int)
-            if self.loss == "gaussian":
-                H_norm2 = np.einsum("ic,ic->c", H, H)  # (C,)
-                for j in range(X.shape[1]):
-                    x = X[:, j]
-                    scores = H.T @ x - 0.5 * H_norm2
-                    labels[j] = int(np.argmax(scores))
-            else:
-                MU = np.maximum(H, 1e-9)  # (I,C)
-                LOG_MU = np.log(MU)
-                for j in range(X.shape[1]):
-                    x = np.maximum(X[:, j], 0.0)
-                    labels[j] = int(np.argmax(x @ LOG_MU - MU.sum(axis=0)))
-            return labels
-
-        # rule="mode"
-        out = self.predict_blocks(
-            X,
-            method=method,
-            allowed_mask=allowed_mask,
-            min_abs_B=min_abs_B,
-            on_empty=on_empty,
-        )
-        c_star = out["c_star"]  # (I,J)
-        C = self.B_.shape[1]
-        labels = np.apply_along_axis(_mode_ignore_minus1, 0, c_star, C)
-        return labels
 
     def allowed_mask_from_gap(
         self, *, min_keep: int = 4, eps: float = 1e-12
@@ -2356,9 +2239,9 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             if n_cells == 0:
                 continue
 
-            # overlap-counted stats 
+            # overlap-counted stats
             mean_overlap = float(X_block.mean())
-            #median_overlap = float(np.median(X_block))
+            # median_overlap = float(np.median(X_block))
 
             # exclusive stats: weight each (i,j) by 1 / (row_mult[i] * col_mult[j])
             rm = row_mult[u_mask].astype(float)[:, None]  # (Ir, 1)
@@ -2376,7 +2259,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             # no canonical "exclusive median"; we keep overlap-based median
 
             # coverage
-            #coverage_overlap = 100.0 * (n_cells / total_cells)
+            # coverage_overlap = 100.0 * (n_cells / total_cells)
             # exclusive coverage (each covered cell counts 1/K)
             exclusive_coverage = float(W.sum()) / total_cells * 100.0
 
@@ -2395,10 +2278,10 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                     "c": int(c),
                     "B_rc": float(B[r, c]),
                     "n_cells": int(n_cells),
-                    #"coverage_%_overlap": coverage_overlap,
+                    # "coverage_%_overlap": coverage_overlap,
                     "weighted_coverage_%": exclusive_coverage,
-                    #"mean_overlap": mean_overlap,
-                    #"median_overlap": median_overlap,
+                    # "mean_overlap": mean_overlap,
+                    # "median_overlap": median_overlap,
                     "weighted_mean": mean_exclusive,
                     "n_stores_in_r": int(u_mask.sum()),
                     "n_items_in_c": int(v_mask.sum()),
