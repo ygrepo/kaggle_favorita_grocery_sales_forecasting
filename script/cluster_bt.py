@@ -93,6 +93,12 @@ def parse_args():
         help="K col for BT-NMF",
     )
     parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="Patience for BT-NMF",
+    )
+    parser.add_argument(
         "--tol",
         type=float,
         default=1e-5,
@@ -192,6 +198,7 @@ def main():
         logger.info(f"  K col: {args.k_col}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Max PVE drop: {args.max_pve_drop}")
+        logger.info(f"  Patience: {args.patience}")
         logger.info(f"  Top k: {args.top_k}")
         logger.info(f"  Top rank fn: {args.top_rank_fn}")
         logger.info(f"  N jobs: {args.n_jobs}")
@@ -220,6 +227,7 @@ def main():
             max_iter=args.max_iter,
             k_row=args.k_row,
             k_col=args.k_col,
+            patience=args.patience,
             tol=args.tol,
             max_pve_drop=args.max_pve_drop,
             top_k=args.top_k,

@@ -565,14 +565,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         logger.info(
             f"R={R},C={C},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
-            f"alpha={self.alpha},beta={self.beta},block_l1={self.block_l1},tol={self.tol}"
+            f"alpha={self.alpha},beta={self.beta},block_l1={self.block_l1},tol={self.tol}\n"
+            f"b_inner={self.b_inner},patience={self.patience}\n"
             f"max_iter={self.max_iter},loss={self.loss}"
         )
         logger.debug(f"Nan/inf report:{self._nan_inf_report('X', X)}")
 
         # for the optional “stable assignments” stop (no new attribute needed)
         n_iters = 0
-        self.patience = 2  # consecutive iters with no membership changes
         for it in range(self.max_iter):
             t0 = time.perf_counter()
 
@@ -791,10 +791,11 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         cols_pos_pct = 100.0 * (self._v_positive / max(1, J))
 
         logger.info(
-            f"Final pick summary — rows: forced={self._u_forced}/{I},({rows_forced_pct:.2f}%)\n"
-            f"Positive={self._u_positive}/{I},({rows_pos_pct:.2f}%)\n"
-            f"Cols: forced={self._v_forced}/{J},({cols_forced_pct:.2f}%)\n"
-            f"Positive={self._v_positive}/{J},({cols_pos_pct:.2f}%)"
+            f"Final pick summary,R={R},C={C},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
+            f"rows: forced={self._u_forced}/{I},({rows_forced_pct:.2f}%)\n"
+            f"positive={self._u_positive}/{I},({rows_pos_pct:.2f}%)\n"
+            f"cols: forced={self._v_forced}/{J},({cols_forced_pct:.2f}%)\n"
+            f"positive={self._v_positive}/{J},({cols_pos_pct:.2f}%)"
         )
 
         # After the training loop, before saving/returning

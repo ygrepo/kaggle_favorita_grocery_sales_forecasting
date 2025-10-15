@@ -1428,6 +1428,7 @@ def cluster_data_and_explain_blocks(
     max_iter: int = 50,
     k_row: int = 1,
     k_col: int = 1,
+    patience: int = 2,
     tol: float = 1e-5,
     max_pve_drop: float = 0.01,
     top_k: Optional[int] = None,
@@ -1458,6 +1459,7 @@ def cluster_data_and_explain_blocks(
         block_l1=block_l1,
         b_inner=b_inner,
         max_iter=max_iter,
+        patience=patience,
         tol=tol,
     )
 
