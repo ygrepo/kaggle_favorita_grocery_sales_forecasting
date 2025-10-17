@@ -30,8 +30,11 @@ MODEL_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_model.pickle"
 # MODEL_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_model.pickle"
 
 
-ROW_RANGE=5,8,10
-COL_RANGE=5,8,10
+ROW_RANGE=10
+COL_RANGE=10
+
+# ROW_RANGE=5,8,10
+# COL_RANGE=5,8,10
 
 # ROW_RANGE=10
 # COL_RANGE=20
