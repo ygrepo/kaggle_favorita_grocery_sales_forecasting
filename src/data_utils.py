@@ -656,11 +656,10 @@ def build_growth_features_for_clustering(
     min_support_trend: int = 5,
     min_support_season: int = 26,
     drop_if_nan_frac_ge: float = 0.95,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns:
-      scaled_feats  : scaled (nonnegative, [0,1]) features
-      feats   : raw feature table (with NaNs preserved pre-scaling)
+      feats   : raw feature table (with NaNs preserved)
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
 
@@ -771,7 +770,7 @@ def build_growth_features_for_clustering(
 
     feats = feats.merge(pd.DataFrame(rows), on=key, how="left")
 
-    # ---- diagnostics & column pruning BEFORE scaling ----
+    # ---- diagnostics & column pruning ----
     logger.info("Computing diagnostics...")
     diag_rows = []
     num_cols_all = [
@@ -804,33 +803,23 @@ def build_growth_features_for_clustering(
         )
 
     # Fixed: Proper column selection
-    feats_kept = feats[[key] + keep_cols].copy()
+    feats = feats[[key] + keep_cols]
 
     # Select numeric feature matrix
-    X = feats_kept.drop(columns=[key]).apply(pd.to_numeric, errors="coerce")
+    X = feats.drop(columns=[key]).apply(pd.to_numeric, errors="coerce")
     X = X.replace([np.inf, -np.inf], np.nan)
     num_cols = X.columns
 
-    # Build scaler pipeline: median impute -> MinMax to [0,1]
-    scaler_pipe = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", MinMaxScaler(feature_range=(0, 1), clip=True)),
-        ]
+    # Fit on current data
+    imputer = SimpleImputer(strategy="median")
+    X = imputer.fit_transform(X)
+
+    # Put back into a DataFrame
+    feats = pd.DataFrame(X, index=feats.index, columns=num_cols).astype(
+        "float32"
     )
 
-    # Fit on current data (fit on TRAIN ONLY in real workflows)
-    X_scaled_arr = scaler_pipe.fit_transform(X)
-
-    # Put back into a DataFrame and cast for BTNMF
-    X_scaled = pd.DataFrame(
-        X_scaled_arr, index=feats_kept.index, columns=num_cols
-    ).astype("float32")
-
-    # Reattach key columns
-    feats_scaled = pd.concat([feats_kept[[key]], X_scaled], axis=1)
-
-    return feats_scaled, feats, diag
+    return feats, diag
 
 
 def zscore_with_axis(
