@@ -1412,6 +1412,7 @@ def _normalize_matrix(
     M = np.clip(M, 0.0, None)
 
     logger.info(f"Shape: {M.shape}")
+    logger.info(f"Normalized:{M}")
     return M, row_names, col_names
 
 
