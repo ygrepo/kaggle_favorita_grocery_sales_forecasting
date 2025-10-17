@@ -38,12 +38,12 @@ COL_RANGE=5,8,10
 # ROW_RANGE=90,120,140
 # COL_RANGE=230,240,250
 
-# ALPHA=1e-2 #0.5
-# BETA=0.1 #0.001
-# BLOCK_L1=0.01 #0
-ALPHA=1e-3      # Back to original
-BETA=0.005      # Much smaller than 0.1
-BLOCK_L1=0.0    # Start with 0, add gradually if needed
+ALPHA=1e-2 #0.5
+BETA=0.1 #0.001
+BLOCK_L1=0.01 #0
+# ALPHA=1e-3      # Back to original
+# BETA=0.005      # Much smaller than 0.1
+# BLOCK_L1=0.0    # Start with 0, add gradually if needed
 K_ROW=2         # Explicitly allow some overlap
 K_COL=2         # Explicitly allow some overlap
 
