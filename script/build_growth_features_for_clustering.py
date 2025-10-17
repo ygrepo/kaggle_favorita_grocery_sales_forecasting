@@ -40,6 +40,12 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
+        "--output_scaled_features_fn",
+        type=str,
+        default="",
+        help="Path to output scaled features file (relative to project root)",
+    )
+    parser.add_argument(
         "--output_features_fn",
         type=str,
         default="",
@@ -83,6 +89,9 @@ def main():
         # Log configuration
         logger.info("Starting with configuration:")
         logger.info(f"  Data fn: {args.data_fn}")
+        logger.info(
+            f"  Output scaled features fn: {args.output_scaled_features_fn}"
+        )
         logger.info(f"  Output feature fn: {args.output_features_fn}")
         logger.info(f"  Tau: {args.tau}")
         logger.info(f"  Smooth window: {args.smooth_window}")
@@ -93,10 +102,12 @@ def main():
 
         df = read_csv_or_parquet(data_fn)
 
-        features_df, diag = build_growth_features_for_clustering(
-            df,
-            tau=args.tau,
-            smooth_window=args.smooth_window,
+        scaled_features_df, features_df, diag = (
+            build_growth_features_for_clustering(
+                df,
+                tau=args.tau,
+                smooth_window=args.smooth_window,
+            )
         )
         # See which columns were pruned (near-empty) and their support
         logger.info(diag.sort_values("nan_frac", ascending=False).head(10))
@@ -107,6 +118,10 @@ def main():
             logger.warning(
                 "Long-horizon features were dropped due to low support (short history)."
             )
+
+        scaled_features_fn = Path(args.output_scaled_features_fn).resolve()
+
+        save_csv_or_parquet(scaled_features_df, scaled_features_fn)
 
         features_fn = Path(args.output_features_fn).resolve()
         save_csv_or_parquet(features_df, features_fn)

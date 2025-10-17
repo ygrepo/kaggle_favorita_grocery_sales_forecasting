@@ -649,17 +649,17 @@ def build_growth_features_for_clustering(
     key: str = "store_item",
     tau: float = 0.01,
     smooth_window: int = 4,
-    # feature support/quality controls
     min_support_ac1: int = 4,
     min_support_ac4: int = 6,
     min_support_ac12: int = 14,
     min_support_trend: int = 5,
     min_support_season: int = 26,
     drop_if_nan_frac_ge: float = 0.95,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Returns:
-      feats   : raw feature table (with NaNs preserved)
+      scaled_feats  : scaled (nonnegative, [0,1]) features
+      feats   : raw feature table (with NaNs preserved pre-scaling)
       diag    : diagnostics per feature (support, nan frac, dropped flag)
     """
 
@@ -770,7 +770,7 @@ def build_growth_features_for_clustering(
 
     feats = feats.merge(pd.DataFrame(rows), on=key, how="left")
 
-    # ---- diagnostics & column pruning ----
+    # ---- diagnostics & column pruning BEFORE scaling ----
     logger.info("Computing diagnostics...")
     diag_rows = []
     num_cols_all = [
@@ -803,23 +803,23 @@ def build_growth_features_for_clustering(
         )
 
     # Fixed: Proper column selection
-    feats = feats[[key] + keep_cols]
+    feats_kept = feats[[key] + keep_cols].copy()
 
     # Select numeric feature matrix
-    X = feats.drop(columns=[key]).apply(pd.to_numeric, errors="coerce")
+    X = feats_kept.drop(columns=[key]).apply(pd.to_numeric, errors="coerce")
     X = X.replace([np.inf, -np.inf], np.nan)
     num_cols = X.columns
 
     # Fit on current data
     imputer = SimpleImputer(strategy="median")
-    X = imputer.fit_transform(X)
+    X_scaled_arr = imputer.fit_transform(X)
 
-    # Put back into a DataFrame
-    feats = pd.DataFrame(X, index=feats.index, columns=num_cols).astype(
-        "float32"
-    )
+    # Put back into a DataFrame and cast for BTNMF
+    scaled_feats = pd.DataFrame(
+        X_scaled_arr, index=feats_kept.index, columns=num_cols
+    ).astype("float32")
 
-    return feats, diag
+    return scaled_feats, feats, diag
 
 
 def zscore_with_axis(
