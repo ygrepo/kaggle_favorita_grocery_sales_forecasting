@@ -40,10 +40,10 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
-        "--output_scaled_features_fn",
+        "--output_imputed_features_fn",
         type=str,
         default="",
-        help="Path to output scaled features file (relative to project root)",
+        help="Path to output imputed features file (relative to project root)",
     )
     parser.add_argument(
         "--output_features_fn",
@@ -90,9 +90,9 @@ def main():
         logger.info("Starting with configuration:")
         logger.info(f"  Data fn: {args.data_fn}")
         logger.info(
-            f"  Output scaled features fn: {args.output_scaled_features_fn}"
+            f"  Output imputed features fn: {args.output_imputed_features_fn}"
         )
-        logger.info(f"  Output feature fn: {args.output_features_fn}")
+        logger.info(f"  Output features fn: {args.output_features_fn}")
         logger.info(f"  Tau: {args.tau}")
         logger.info(f"  Smooth window: {args.smooth_window}")
         logger.info(f"  Log fn: {args.log_fn}")
@@ -102,7 +102,7 @@ def main():
 
         df = read_csv_or_parquet(data_fn)
 
-        scaled_features_df, features_df, diag = (
+        imputed_features_df, features_df, diag = (
             build_growth_features_for_clustering(
                 df,
                 tau=args.tau,
@@ -119,9 +119,9 @@ def main():
                 "Long-horizon features were dropped due to low support (short history)."
             )
 
-        scaled_features_fn = Path(args.output_scaled_features_fn).resolve()
+        imputed_features_fn = Path(args.output_imputed_features_fn).resolve()
 
-        save_csv_or_parquet(scaled_features_df, scaled_features_fn)
+        save_csv_or_parquet(imputed_features_df, imputed_features_fn)
 
         features_fn = Path(args.output_features_fn).resolve()
         save_csv_or_parquet(features_df, features_fn)

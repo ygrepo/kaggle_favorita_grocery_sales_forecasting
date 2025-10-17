@@ -15,7 +15,7 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_weekly_growth_rate.parquet"
 
-OUTPUT_SCALED_FEATURES_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_scaled_features.parquet"
+OUTPUT_IMPUTED_FEATURES_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
 OUTPUT_FEATURES_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_features.parquet"
 
 TAU=0.05
@@ -30,7 +30,7 @@ LOG_LEVEL="DEBUG"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
-    --output_scaled_features_fn) OUTPUT_SCALED_FEATURES_FN="$2"; shift 2 ;;
+    --output_imputed_features_fn) OUTPUT_IMPUTED_FEATURES_FN="$2"; shift 2 ;;
     --output_features_fn) OUTPUT_FEATURES_FN="$2"; shift 2 ;;
     --tau) TAU="$2"; shift 2 ;;
     --smooth_window) SMOOTH_WINDOW="$2"; shift 2 ;;
@@ -48,7 +48,7 @@ mkdir -p "$LOG_DIR"
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
-echo "Output scaled features fn: $OUTPUT_SCALED_FEATURES_FN" | tee -a "$LOG_FILE"
+echo "Output imputed features fn: $OUTPUT_IMPUTED_FEATURES_FN" | tee -a "$LOG_FILE"
 echo "Output features fn: $OUTPUT_FEATURES_FN" | tee -a "$LOG_FILE"
 echo "Tau: $TAU" | tee -a "$LOG_FILE"
 echo "Smooth window: $SMOOTH_WINDOW" | tee -a "$LOG_FILE"
@@ -59,7 +59,7 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 set +e
 python "${SCRIPT_DIR}/build_growth_features_for_clustering.py" \
   --data_fn "$DATA_FN" \
-  --output_scaled_features_fn "$OUTPUT_SCALED_FEATURES_FN" \
+  --output_imputed_features_fn "$OUTPUT_IMPUTED_FEATURES_FN" \
   --output_features_fn "$OUTPUT_FEATURES_FN" \
   --tau "$TAU" \
   --smooth_window "$SMOOTH_WINDOW" \

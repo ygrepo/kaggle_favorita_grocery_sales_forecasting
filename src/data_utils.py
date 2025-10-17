@@ -770,7 +770,7 @@ def build_growth_features_for_clustering(
 
     feats = feats.merge(pd.DataFrame(rows), on=key, how="left")
 
-    # ---- diagnostics & column pruning BEFORE scaling ----
+    # ---- diagnostics & column pruning BEFORE imputation ----
     logger.info("Computing diagnostics...")
     diag_rows = []
     num_cols_all = [
@@ -812,14 +812,17 @@ def build_growth_features_for_clustering(
 
     # Fit on current data
     imputer = SimpleImputer(strategy="median")
-    X_scaled_arr = imputer.fit_transform(X)
+    X_imp = imputer.fit_transform(X)
 
     # Put back into a DataFrame and cast for BTNMF
-    scaled_feats = pd.DataFrame(
-        X_scaled_arr, index=feats_kept.index, columns=num_cols
+    imputed_feats = pd.DataFrame(
+        X_imp, index=feats_kept.index, columns=num_cols
     ).astype("float32")
 
-    return scaled_feats, feats, diag
+    # Reattach key columns
+    imputed_feats = pd.concat([feats_kept[[key]], imputed_feats], axis=1)
+
+    return imputed_feats, feats, diag
 
 
 def zscore_with_axis(
