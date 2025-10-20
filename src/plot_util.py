@@ -1,3 +1,5 @@
+from src.utils import get_logger
+
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 import seaborn as sns
@@ -10,13 +12,516 @@ from typing import Sequence, Union, Mapping
 import math
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-import logging
 from pathlib import Path
+
+from typing import Optional, Tuple, Callable
+from scipy.cluster.hierarchy import linkage, leaves_list
 
 Number = Union[int, float]
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+
+def plot_store_sku_heatmap(
+    df: pd.DataFrame,
+    *,
+    figsize: Tuple[int, int] = (8, 6),
+    tick_fontsize: int = 10,
+    label_fontsize: int = 12,
+    title_fontsize: int = 16,
+    fn: Optional[Path] = None,
+):
+    # Create the heatmap
+    plt.figure(figsize=figsize)
+
+    # Create heatmap with custom styling
+    sns.heatmap(
+        df.values,
+        annot=True,  # Show values in cells
+        fmt=".3f",  # Format numbers to 4 decimal places
+        cmap="RdBu_r",  # Color scheme (red-blue reversed)
+        center=0,  # Center colormap at 0
+        cbar_kws={"label": "Growth Rate"},
+        linewidths=0.5,  # Add grid lines
+        square=False,
+    )  # Don't force square cells
+
+    # Customize the plot
+    plt.title(
+        "Store-SKU Heatmap", fontsize=title_fontsize, fontweight="bold", pad=20
+    )
+    plt.xlabel("SKU", fontsize=label_fontsize, fontweight="bold")
+    plt.ylabel("Store", fontsize=label_fontsize, fontweight="bold")
+
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=45, ha="right", fontsize=tick_fontsize)
+    plt.yticks(rotation=0, fontsize=tick_fontsize)
+
+    plt.tight_layout()
+    if fn:
+        logger.info(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300)
+    plt.show()
+    plt.close()
+
+
+def multi_membership_order(
+    M, method="average", metric="cosine", optimal_ordering=True
+) -> np.ndarray:
+    jitter = 1e-9 * np.random.RandomState(0).randn(*M.shape)
+    Z = linkage(
+        M + jitter,
+        method=method,
+        metric=metric,
+        optimal_ordering=optimal_ordering,
+    )
+    return leaves_list(Z)
+
+
+def plot_graded_overlapping_patches_df(
+    df: pd.DataFrame,  # pandas DataFrame: rows = stores, cols = items
+    U: np.ndarray,  # (n_rows, R)
+    V: np.ndarray,  # (n_cols, C)
+    *,
+    center: Optional[float] = None,
+    cmap: str = "RdBu_r",
+    figsize: Tuple[int, int] = (8, 6),
+    tick_fontsize: int = 10,
+    label_fontsize: int = 12,
+    title_fontsize: int = 16,
+    # ---- NEW annotation controls ----
+    annotate: str = "pct",  # 'none' | 'abs' | 'pct' | 'zscore'
+    median_mode: str = "global",  # 'global' | 'row' | 'col'
+    min_abs: float = 0.005,  # only used when annotate='abs'
+    min_pct: float = 1.0,  # % threshold when annotate='pct'
+    min_z: float = 0.5,  # |z| threshold when annotate='zscore'
+    fn: Optional[Path] = None,
+):
+    """
+    Graded-overlap heatmap (no GridSpec) with optional per-cell annotation:
+      abs:  value - median
+      pct: (value - median) / median
+      zscore: (value - median) / MAD*1.4826 (robust)
+    """
+    X = df.values
+    row_names = df.index.to_list()
+    col_names = df.columns.to_list()
+
+    n_rows, n_cols = X.shape
+    assert U.shape[0] == n_rows, "U rows must match X_df.index"
+    assert V.shape[0] == n_cols, "V cols must match X_df.columns"
+
+    # --- membership-similarity order ---
+    row_order = multi_membership_order(U)
+    col_order = multi_membership_order(V)
+    logger.info(f"row_order: {row_order}")
+    logger.info(f"col_order: {col_order}")
+
+    # reorder
+    Xr = X[np.ix_(row_order, col_order)]
+
+    # sensible center for colormap
+    if center is None:
+        center = np.nanmedian(X) if np.nanmin(X) >= 0 else 0.0
+
+    # ---------- build annotation matrix (strings) ----------
+    labels = None
+    if annotate.lower() != "none":
+        # medians aligned with the reordered matrix
+        if median_mode == "global":
+            med = np.nanmedian(X)
+            diff = Xr - med
+            med_den = med
+        elif median_mode == "row":
+            med_row = np.nanmedian(X, axis=1, keepdims=True)
+            med = med_row[row_order, :]
+            diff = Xr - med
+            med_den = med
+        elif median_mode == "col":
+            med_col = np.nanmedian(X, axis=0, keepdims=True)
+            med = med_col[:, col_order]
+            diff = Xr - med
+            med_den = med
+        else:
+            raise ValueError("median_mode must be 'global', 'row', or 'col'")
+
+        # format strings with thresholds to avoid clutter
+        labels = np.empty_like(Xr, dtype=object)
+        labels[:] = ""
+
+        if annotate == "abs":
+            mask = np.abs(diff) >= float(min_abs)
+            labels[mask] = np.where(
+                diff[mask] >= 0,
+                np.char.add("+", np.char.mod("%.3f", diff[mask])),
+                np.char.mod("%.3f", diff[mask]),
+            )
+        elif annotate == "pct":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                pct = 100.0 * diff / med_den
+            mask = np.isfinite(pct) & (np.abs(pct) >= float(min_pct))
+            labels[mask] = np.where(
+                pct[mask] >= 0,
+                np.char.add("+", np.char.mod("%.1f%%", pct[mask])),
+                np.char.mod("%.1f%%", pct[mask]),
+            )
+        elif annotate == "zscore":
+            # robust z using MAD per chosen median_mode
+            if median_mode == "global":
+                mad = np.nanmedian(np.abs(X - med))
+                scale = (mad * 1.4826) or np.nan
+                z = (Xr - med) / scale
+            elif median_mode == "row":
+                mad_row = np.nanmedian(
+                    np.abs(X - med_row), axis=1, keepdims=True
+                )
+                scale = mad_row[row_order, :] * 1.4826
+                z = (Xr - med) / np.where(scale == 0, np.nan, scale)
+            else:  # 'col'
+                mad_col = np.nanmedian(
+                    np.abs(X - med_col), axis=0, keepdims=True
+                )
+                scale = mad_col[:, col_order] * 1.4826
+                z = (Xr - med) / np.where(scale == 0, np.nan, scale)
+
+            mask = np.isfinite(z) & (np.abs(z) >= float(min_z))
+            labels[mask] = np.where(
+                z[mask] >= 0,
+                np.char.add("+", np.char.mod("%.2fσ", z[mask])),
+                np.char.mod("%.2fσ", z[mask]),
+            )
+        else:
+            raise ValueError(
+                "annotate must be 'none', 'abs', 'pct', or 'zscore'"
+            )
+
+    # ---- draw ----
+    fig, ax = plt.subplots(figsize=figsize)
+    row_labels = [str(row_names[i]) for i in row_order]
+    col_labels = [str(col_names[j]) for j in col_order]
+
+    sns.heatmap(
+        Xr,
+        cmap=cmap,
+        center=center,
+        cbar=True,
+        ax=ax,
+        yticklabels=row_labels,
+        xticklabels=col_labels,
+        annot=labels,
+        fmt="",
+        # annot_kws={"fontsize": max(6, fontsize - 1)},
+    )
+    ax.tick_params(axis="x", rotation=45, labelsize=tick_fontsize)
+    ax.tick_params(axis="y", rotation=0, labelsize=tick_fontsize)
+    ax.set_ylabel("store", fontsize=label_fontsize, fontweight="bold")
+    ax.set_xlabel("item", fontsize=label_fontsize, fontweight="bold")
+    ax.set_title(
+        "Graded overlapping patches (membership-ordered)",
+        fontsize=title_fontsize,
+        fontweight="bold",
+        pad=20,
+    )
+
+    plt.tight_layout()
+    if fn:
+        logger.info(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300)
+    plt.show()
+
+    plt.close(fig)
+
+
+def _order_by_memberships(
+    M: np.ndarray, method="average", metric="cosine"
+) -> np.ndarray:
+    """Return a dendrogram leaf order based only on memberships M."""
+    rng = np.random.RandomState(0)
+    Z = linkage(
+        M + 1e-9 * rng.randn(*M.shape),
+        method=method,
+        metric=metric,
+        optimal_ordering=True,
+    )
+    return leaves_list(Z)
+
+
+def _format_annot_matrix(
+    Xr: np.ndarray, value_fmt: str | Callable[[float], str]
+) -> np.ndarray:
+    """Build string matrix for seaborn annot from Xr."""
+    labels = np.empty_like(Xr, dtype=object)
+    if callable(value_fmt):
+        it = np.nditer(Xr, flags=["multi_index"])
+        for x in it:
+            i, j = it.multi_index
+            v = x.item()
+            labels[i, j] = (
+                ""
+                if (v is None or (isinstance(v, float) and np.isnan(v)))
+                else value_fmt(v)
+            )
+    else:
+        # string format (e.g., '.3f', '.2%')
+        mask = ~np.isnan(Xr)
+        labels[:] = ""
+        labels[mask] = np.char.mod(f"%{value_fmt}", Xr[mask])
+    return labels
+
+
+def plot_by_store_memberships(
+    df: pd.DataFrame,  # pandas DataFrame: rows=stores, cols=items
+    U: np.ndarray,  # (n_rows, R)
+    *,
+    center: Optional[float] = None,
+    cmap: str = "RdBu_r",
+    figsize: Tuple[int, int] = (8, 6),
+    tick_fontsize: int = 10,
+    label_fontsize: int = 12,
+    title_fontsize: int = 16,
+    sort_cols_by_mean_after: bool = False,
+    show_values: bool = True,
+    value_fmt: str | Callable[[float], str] = ".3f",
+    x_rotation: int = 45,
+    y_rotation: int = 45,
+    fn: Optional[Path] = None,
+):
+    """Reorder rows using ONLY store memberships U; columns unchanged (or mean-sorted)."""
+    X = df.values
+    row_names = df.index.to_list()
+    col_names = df.columns.to_list()
+    n_rows, n_cols = X.shape
+    assert U.shape[0] == n_rows, "U rows must match X_df.index"
+
+    row_order = _order_by_memberships(U)
+    Xr = X[row_order, :]
+
+    if sort_cols_by_mean_after:
+        col_order = np.argsort(-np.nanmean(Xr, axis=0))  # descending
+    else:
+        col_order = np.arange(n_cols)
+
+    Xr = Xr[:, col_order]
+    if center is None:
+        center = np.nanmedian(X) if np.nanmin(X) >= 0 else 0.0
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    annot = None
+    fmt = ""
+    if show_values:
+        annot = _format_annot_matrix(Xr, value_fmt)
+        fmt = ""  # strings already formatted
+
+    sns.heatmap(
+        Xr,
+        cmap=cmap,
+        center=center,
+        cbar=True,
+        ax=ax,
+        yticklabels=[str(row_names[i]) for i in row_order],
+        xticklabels=[str(col_names[j]) for j in col_order],
+        annot=annot,
+        fmt=fmt,
+    )
+
+    # --- ticks: do it once, after heatmap ---
+    ax.tick_params(axis="x", labelsize=tick_fontsize, labelrotation=x_rotation)
+    ax.tick_params(axis="y", labelsize=tick_fontsize, labelrotation=y_rotation)
+
+    # Optional: align tick labels nicely
+    for lbl in ax.get_xticklabels():
+        lbl.set_horizontalalignment("right")
+    for lbl in ax.get_yticklabels():
+        lbl.set_horizontalalignment("right")  # helps when y_rotation != 0
+
+    ax.set_ylabel("store", fontsize=label_fontsize, fontweight="bold")
+    ax.set_xlabel("SKU", fontsize=label_fontsize, fontweight="bold")
+
+    ax.set_title(
+        "Heatmap ordered by STORE memberships (rows only)",
+        fontsize=title_fontsize,
+        fontweight="bold",
+        pad=20,
+    )
+    plt.tight_layout()
+    if fn:
+        logger.info(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300, bbox_inches="tight", format="png")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_by_item_memberships(
+    df: pd.DataFrame,  # pandas DataFrame: rows=stores, cols=items
+    V: np.ndarray,  # (n_cols, C)
+    *,
+    center: Optional[float] = None,
+    cmap: str = "RdBu_r",
+    figsize: Tuple[int, int] = (8, 6),
+    tick_fontsize: int = 10,
+    label_fontsize: int = 12,
+    title_fontsize: int = 16,
+    sort_rows_by_mean_after: bool = False,
+    show_values: bool = True,
+    value_fmt: str | Callable[[float], str] = ".3f",
+    x_rotation: int = 45,
+    y_rotation: int = 45,
+    fn: Optional[Path] = None,
+):
+    """Reorder columns using ONLY item memberships V; rows unchanged (or mean-sorted)."""
+    X = df.values
+    row_names = df.index.to_list()
+    col_names = df.columns.to_list()
+    n_rows, n_cols = X.shape
+    assert V.shape[0] == n_cols, "V rows must match X_df.columns"
+
+    col_order = _order_by_memberships(V)
+    Xr = X[:, col_order]
+
+    if sort_rows_by_mean_after:
+        row_order = np.argsort(-np.nanmean(Xr, axis=1))  # descending
+    else:
+        row_order = np.arange(n_rows)
+
+    Xr = Xr[row_order, :]
+    if center is None:
+        center = np.nanmedian(X) if np.nanmin(X) >= 0 else 0.0
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    annot = None
+    fmt = ""
+    if show_values:
+        annot = _format_annot_matrix(Xr, value_fmt)
+        fmt = ""  # we already formatted strings
+
+    sns.heatmap(
+        Xr,
+        cmap=cmap,
+        center=center,
+        cbar=True,
+        ax=ax,
+        yticklabels=[str(row_names[i]) for i in row_order],
+        xticklabels=[str(col_names[j]) for j in col_order],
+        annot=annot,
+        fmt=fmt,
+    )
+    ax.tick_params(axis="x", labelsize=tick_fontsize, labelrotation=x_rotation)
+    ax.tick_params(axis="y", labelsize=tick_fontsize, labelrotation=y_rotation)
+    ax.set_ylabel("store", fontsize=label_fontsize, fontweight="bold")
+    ax.set_xlabel("SKU", fontsize=label_fontsize, fontweight="bold")
+    # Optional: align tick labels nicely
+    for lbl in ax.get_xticklabels():
+        lbl.set_horizontalalignment("right")
+    for lbl in ax.get_yticklabels():
+        lbl.set_horizontalalignment("right")  # helps when y_rotation != 0
+
+    ax.set_title(
+        "Heatmap ordered by SKU memberships (columns only)",
+        fontsize=title_fontsize,
+        fontweight="bold",
+        pad=20,
+    )
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight", format="png")
+    # plt.savefig(fn, dpi=300, bbox_inches="tight", format="png")
+    plt.show()
+    plt.close()
+
+
+def plot_U_V(
+    U: np.ndarray,  # (n_rows, R)
+    V: np.ndarray,  # (n_cols, C)
+    row_names: Sequence[str],  # len = n_rows
+    col_names: Sequence[str],  # len = n_cols
+    *,
+    figsize: Tuple[int, int] = (12, 5),
+    label_fontsize: int = 12,
+    title_fontsize: int = 16,
+    fn: Optional[Path] = None,
+):
+    row_names = np.asarray(row_names)
+    col_names = np.asarray(col_names)
+
+    # If the first column label is a header like "store", drop it to match item rows
+    if (len(col_names) == V.shape[0] + 1) and (
+        str(col_names[0]).lower() == "store"
+    ):
+        item_labels = col_names[1:]
+    else:
+        item_labels = col_names[: V.shape[0]]
+
+    # Labels
+    u_cluster_labels = [f"C{j+1}" for j in range(U.shape[1])]
+    v_cluster_labels = [f"C{k+1}" for k in range(V.shape[1])]
+    store_labels = [str(s) for s in row_names]
+    item_labels = [str(x) for x in item_labels]
+
+    # Black/white colormap; force 0 -> white, 1 -> black
+    bw = ListedColormap(["#FFFFFF", "#000000"])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+    # --- U (stores) ---
+    sns.heatmap(
+        U,
+        annot=True,
+        fmt=".0f",  # robust for int/float 0/1
+        cmap=bw,
+        vmin=0,
+        vmax=1,
+        cbar=False,  # remove colorbar
+        xticklabels=u_cluster_labels,
+        yticklabels=store_labels,
+        ax=ax1,
+        square=True,
+        linewidths=0.2,
+        linecolor="#CCCCCC",
+    )
+    ax1.set_title(
+        "Store Cluster Memberships (U)",
+        fontsize=title_fontsize,
+        fontweight="bold",
+    )
+    ax1.set_xlabel(
+        "Row (store) clusters", fontsize=label_fontsize, fontweight="bold"
+    )
+    ax1.set_ylabel("Store", fontsize=label_fontsize, fontweight="bold")
+
+    # --- V (items/SKUs) ---
+    sns.heatmap(
+        V,
+        annot=True,
+        fmt=".0f",
+        cmap=bw,
+        vmin=0,
+        vmax=1,
+        cbar=False,  # remove colorbar
+        xticklabels=v_cluster_labels,
+        yticklabels=item_labels,
+        ax=ax2,
+        square=True,
+        linewidths=0.2,
+        linecolor="#CCCCCC",
+    )
+    ax2.set_title(
+        "SKU Cluster Memberships (V)",
+        fontsize=title_fontsize,
+        fontweight="bold",
+    )
+    ax2.set_xlabel(
+        "Column (SKU) clusters", fontsize=label_fontsize, fontweight="bold"
+    )
+    ax2.set_ylabel("SKU", fontsize=label_fontsize, fontweight="bold")
+
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
 
 
 def plot_loss_with_comparison(
@@ -35,7 +540,10 @@ def plot_loss_with_comparison(
         if show_ci:
             mean = grouped.mean()
             stderr = grouped.apply(sem)
-            ci_range = t.ppf(0.975, df.groupby("epoch").count()[loss_col] - 1) * stderr
+            ci_range = (
+                t.ppf(0.975, df.groupby("epoch").count()[loss_col] - 1)
+                * stderr
+            )
             ci_low = mean - ci_range
             ci_high = mean + ci_range
         else:
@@ -60,11 +568,18 @@ def plot_loss_with_comparison(
     )
     if show_ci and ci_tr_low is not None:
         ax_tr.fill_between(
-            epochs, ci_tr_low, ci_tr_high, color="blue", alpha=0.15, label="95% CI"
+            epochs,
+            ci_tr_low,
+            ci_tr_high,
+            color="blue",
+            alpha=0.15,
+            label="95% CI",
         )
 
     if hist_df_previous is not None:
-        prev_median_tr = hist_df_previous.groupby("epoch")["train_loss"].median()
+        prev_median_tr = hist_df_previous.groupby("epoch")[
+            "train_loss"
+        ].median()
         ax_tr.plot(
             epochs,
             prev_median_tr,
@@ -75,7 +590,9 @@ def plot_loss_with_comparison(
 
     ax_tr.set_title("Train Loss by Epoch", fontsize=16, fontweight="bold")
     ax_tr.set_ylabel("Train Loss", fontsize=14)
-    ax_tr.axvline(x=xvline, color="green", linestyle="--", label=f"Epoch {xvline}")
+    ax_tr.axvline(
+        x=xvline, color="green", linestyle="--", label=f"Epoch {xvline}"
+    )
 
     # ---- Validation Loss Plot ----
     ax_te.plot(epochs, med_te, color="orange", label="Median Val (Current)")
@@ -84,11 +601,18 @@ def plot_loss_with_comparison(
     )
     if show_ci and ci_te_low is not None:
         ax_te.fill_between(
-            epochs, ci_te_low, ci_te_high, color="orange", alpha=0.15, label="95% CI"
+            epochs,
+            ci_te_low,
+            ci_te_high,
+            color="orange",
+            alpha=0.15,
+            label="95% CI",
         )
 
     if hist_df_previous is not None:
-        prev_median_te = hist_df_previous.groupby("epoch")["test_loss"].median()
+        prev_median_te = hist_df_previous.groupby("epoch")[
+            "test_loss"
+        ].median()
         ax_te.plot(
             epochs,
             prev_median_te,
@@ -130,7 +654,11 @@ def plot_all_sids_losses(hist_df, overall_title=None, fn=None):
     for sid in sids:
         df_sid = hist_df[hist_df["store_item"] == sid]
         ax_tr.plot(
-            df_sid["epoch"], df_sid["train_loss"], marker="o", linewidth=1, label=sid
+            df_sid["epoch"],
+            df_sid["train_loss"],
+            marker="o",
+            linewidth=1,
+            label=sid,
         )
     ax_tr.set_title("Train Loss by Epoch", fontsize=16, fontweight="bold")
     ax_tr.set_ylabel("Train Loss", fontsize=14)
@@ -139,7 +667,11 @@ def plot_all_sids_losses(hist_df, overall_title=None, fn=None):
     for sid in sids:
         df_sid = hist_df[hist_df["store_item"] == sid]
         ax_te.plot(
-            df_sid["epoch"], df_sid["test_loss"], marker="o", linewidth=1, label=sid
+            df_sid["epoch"],
+            df_sid["test_loss"],
+            marker="o",
+            linewidth=1,
+            label=sid,
         )
     ax_te.set_title("Validation Loss by Epoch", fontsize=16, fontweight="bold")
     ax_te.set_xlabel("Epoch", fontsize=14)
@@ -247,7 +779,9 @@ def plot_median_iqr_loss(hist_df, overall_title=None, fn=None, xvline=None):
         color="blue",
         label="Training Loss per Epoch (All Store–Item Pairs)",
     )
-    ax_tr.fill_between(epochs, q1_train, q3_train, color="blue", alpha=0.6, label="IQR")
+    ax_tr.fill_between(
+        epochs, q1_train, q3_train, color="blue", alpha=0.6, label="IQR"
+    )
     ax_tr.set_title("Train Loss by Epoch", fontsize=16, fontweight="bold")
     ax_tr.set_ylabel("Train Loss", fontsize=14)
 
@@ -258,7 +792,9 @@ def plot_median_iqr_loss(hist_df, overall_title=None, fn=None, xvline=None):
         color="orange",
         label="Validation Loss per Epoch (All Store–Item Pairs)",
     )
-    ax_te.fill_between(epochs, q1_val, q3_val, color="orange", alpha=0.6, label="IQR")
+    ax_te.fill_between(
+        epochs, q1_val, q3_val, color="orange", alpha=0.6, label="IQR"
+    )
     ax_te.set_title("Validation Loss by Epoch", fontsize=16, fontweight="bold")
     ax_te.set_xlabel("Epoch", fontsize=14)
     ax_te.set_ylabel("Validation Loss", fontsize=14)
@@ -268,7 +804,9 @@ def plot_median_iqr_loss(hist_df, overall_title=None, fn=None, xvline=None):
         ax.tick_params(axis="x", which="major", length=6, labelsize=12)
         ax.tick_params(axis="y", which="major", length=6, labelsize=12)
         ax.legend(fontsize=12)
-        ax.axvline(x=xvline, linestyle="--", color="green", label=f"Epoch {xvline}")
+        ax.axvline(
+            x=xvline, linestyle="--", color="green", label=f"Epoch {xvline}"
+        )
 
     if overall_title:
         fig.suptitle(overall_title, fontsize=20, fontweight="bold")
@@ -380,7 +918,11 @@ def plot_loss_per_sid(
 
 
 def plot_sales_histogram(
-    df: pd.DataFrame, sid: str, bins: int = 50, log_scale: bool = False, fn: str = None
+    df: pd.DataFrame,
+    sid: str,
+    bins: int = 50,
+    log_scale: bool = False,
+    fn: str = None,
 ):
     """
     Plot histogram of unit_sales for a specific store_item (sid).
@@ -402,8 +944,12 @@ def plot_sales_histogram(
         sales = np.log10(sales)
 
     plt.figure(figsize=(10, 6))
-    sns.histplot(sales, bins=bins, kde=True, color="skyblue", edgecolor="black")
-    plt.title(f"Distribution of Unit Sales for {sid}", fontsize=24, fontweight="bold")
+    sns.histplot(
+        sales, bins=bins, kde=True, color="skyblue", edgecolor="black"
+    )
+    plt.title(
+        f"Distribution of Unit Sales for {sid}", fontsize=24, fontweight="bold"
+    )
     plt.xlabel(
         "log10(Unit Sales)" if log_scale else "Unit Sales",
         fontsize=16,
@@ -449,10 +995,14 @@ def plot_final_percent_mav_per_sid(
 
     _, ax = plt.subplots(figsize=(12, 5))
     ax.plot(x, df["final_train_percent_mav"], marker="o", label="Train %MAV")
-    ax.plot(x, df["final_test_percent_mav"], marker="o", label="Validation %MAV")
+    ax.plot(
+        x, df["final_test_percent_mav"], marker="o", label="Validation %MAV"
+    )
 
     ax.set_xlabel("store_item", fontsize=16, fontweight="bold")
-    ax.set_ylabel("Mean Absolute Error as %MAV", fontsize=16, fontweight="bold")
+    ax.set_ylabel(
+        "Mean Absolute Error as %MAV", fontsize=16, fontweight="bold"
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(df["store_item"], rotation=90, fontsize=8)
     ax.grid(True, linestyle="--", alpha=0.5)
@@ -471,7 +1021,9 @@ def plot_final_percent_mav_per_sid(
     plt.close()
 
 
-def visualize_clustered_matrix(X, U, V_list, title="Clustered Matrix", fn: str = None):
+def visualize_clustered_matrix(
+    X, U, V_list, title="Clustered Matrix", fn: str = None
+):
     row_order = np.argsort(np.argmax(U, axis=1))
     col_cluster_ids = np.zeros(X.shape[1], dtype=int)
     for p, Vp in enumerate(V_list):
@@ -512,7 +1064,9 @@ def visualize_spectral_biclustering(
 
 
 def visualize_gdkm_cv_scores(results_df):
-    pivot_sil = results_df.pivot(index="P", columns="Q", values="Mean Silhouette")
+    pivot_sil = results_df.pivot(
+        index="P", columns="Q", values="Mean Silhouette"
+    )
     pivot_loss = results_df.pivot(index="P", columns="Q", values="Mean Loss")
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -521,7 +1075,9 @@ def visualize_gdkm_cv_scores(results_df):
     axes[0].set_xlabel("Q (Column Clusters)")
     axes[0].set_ylabel("P (Row Clusters)")
 
-    sns.heatmap(pivot_loss, annot=True, fmt=".2f", ax=axes[1], cmap="viridis_r")
+    sns.heatmap(
+        pivot_loss, annot=True, fmt=".2f", ax=axes[1], cmap="viridis_r"
+    )
     axes[1].set_title("Mean Loss (SSR)")
     axes[1].set_xlabel("Q (Column Clusters)")
     axes[1].set_ylabel("P (Row Clusters)")
@@ -542,7 +1098,9 @@ def plot_gdkm_elbow_curve(results_df):
 
     for q in sorted(results_df["Q"].unique()):
         subset = results_df[results_df["Q"] == q]
-        plt.plot(subset["P"], subset["Mean Loss"], marker="o", label=f"Q = {q}")
+        plt.plot(
+            subset["P"], subset["Mean Loss"], marker="o", label=f"Q = {q}"
+        )
 
     plt.title("GDKM Elbow Curve (Loss vs P for each Q)")
     plt.xlabel("Number of Row Clusters (P)")
@@ -589,7 +1147,9 @@ def plot_biclustering_elbow(
         label=metric,
     )
 
-    ax.set_xlabel("Number of Store_Item Clusters", fontsize=16, fontweight="bold")
+    ax.set_xlabel(
+        "Number of Store_Item Clusters", fontsize=16, fontweight="bold"
+    )
     ax.set_ylabel(metric, fontsize=16, fontweight="bold")
     ax.set_title(title, fontsize=title_fontsize, fontweight="bold")
 
@@ -828,7 +1388,9 @@ def plot_heatmap_with_cluster_boundaries(
     )
 
     if label_in_cell:
-        annot = np.array([[f"R{r}-C{c}" for r, c in row] for row in cluster_ids])
+        annot = np.array(
+            [[f"R{r}-C{c}" for r, c in row] for row in cluster_ids]
+        )
         fmt = ""
     else:
         annot = matrix_ordered
@@ -866,7 +1428,11 @@ def plot_heatmap_with_cluster_boundaries(
 
 
 def plot_with_cluster_boundaries_from_model(
-    data, model, title="Reordered Bicluster Matrix", max_ticks=20, fn: str = None
+    data,
+    model,
+    title="Reordered Bicluster Matrix",
+    max_ticks=20,
+    fn: str = None,
 ):
     """
     Plot a reordered data matrix with red lines indicating bicluster boundaries.
@@ -882,10 +1448,14 @@ def plot_with_cluster_boundaries_from_model(
         row_labels = model.row_labels_
         col_labels = model.column_labels_
     else:
-        raise ValueError("Model must have row_labels_ and column_labels_ attributes.")
+        raise ValueError(
+            "Model must have row_labels_ and column_labels_ attributes."
+        )
 
     # Reorder data
-    reordered_data, row_order, col_order = reorder_data(data, row_labels, col_labels)
+    reordered_data, row_order, col_order = reorder_data(
+        data, row_labels, col_labels
+    )
 
     # Boundary cuts
     row_cuts = np.where(np.diff(row_labels[row_order]) != 0)[0] + 1
@@ -992,7 +1562,9 @@ def plot_bicluster_grid(
 
     # Add single shared colorbar
     if single_cbar:
-        cbar_ax = fig.add_axes([0.92, 0.3, 0.015, 0.4])  # [left, bottom, width, height]
+        cbar_ax = fig.add_axes(
+            [0.92, 0.3, 0.015, 0.4]
+        )  # [left, bottom, width, height]
         sm = plt.cm.ScalarMappable(cmap=cmap)
         sm.set_array([vmin, vmax])
         fig.colorbar(sm, cax=cbar_ax)
@@ -1108,7 +1680,9 @@ def plot_bicluster_heatmaps_grid(
                     va="center",
                     fontsize=8,
                     fontweight="bold",
-                    bbox=dict(facecolor="black", alpha=0.4, boxstyle="round,pad=0.3"),
+                    bbox=dict(
+                        facecolor="black", alpha=0.4, boxstyle="round,pad=0.3"
+                    ),
                 )
 
         if show_tick_labels:
@@ -1176,7 +1750,9 @@ def plot_biclustering_elbows(
         If provided, the plot is saved to this filename (dpi=300).
     """
     # ───────────────────── Sorting and X-axis Labels ─────────────────────
-    df_sorted = df.copy().sort_values(by=metric, ascending=True).reset_index(drop=True)
+    df_sorted = (
+        df.copy().sort_values(by=metric, ascending=True).reset_index(drop=True)
+    )
     df_sorted["label"] = df_sorted.apply(
         lambda row: (
             f"{row['n_row']}x{int(row['n_col'])}"
@@ -1204,7 +1780,9 @@ def plot_biclustering_elbows(
     tick_step = max(1, n_points // 20)
 
     ax.set_xticks(df_sorted.index[::tick_step])
-    ax.set_xticklabels(df_sorted["label"][::tick_step], rotation=60, ha="right")
+    ax.set_xticklabels(
+        df_sorted["label"][::tick_step], rotation=60, ha="right"
+    )
 
     fig.subplots_adjust(bottom=0.25)
 
@@ -1348,7 +1926,11 @@ def plot_block_annot_heatmap(
     blk_idx = pd.DataFrame(mapped, index=blk.index, columns=blk.columns)
     mask = blk_idx.isna().to_numpy()
 
-    colors = sns.color_palette("tab20", n) if n <= 20 else sns.color_palette("husl", n)
+    colors = (
+        sns.color_palette("tab20", n)
+        if n <= 20
+        else sns.color_palette("husl", n)
+    )
     cmap = ListedColormap(colors)
     cmap.set_bad("#f0f0f0")
     norm = BoundaryNorm(np.arange(-0.5, n + 0.5, 1.0), n)
@@ -1453,7 +2035,9 @@ def plot_block_annot_heatmap(
             # Try with lower DPI as fallback
             try:
                 plt.savefig(fn_str, dpi=150, bbox_inches="tight", format="png")
-                logger.info(f"Saved with reduced DPI (150) due to encoding issues")
+                logger.info(
+                    f"Saved with reduced DPI (150) due to encoding issues"
+                )
             except Exception as e2:
                 logger.error(f"Failed to save even with reduced DPI: {e2}")
                 raise
