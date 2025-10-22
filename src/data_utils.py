@@ -661,6 +661,37 @@ def make_weekly_growth(
     return wk
 
 
+def _clean_numeric(s):
+    x = pd.to_numeric(s, errors="coerce").to_numpy(np.float64)
+    x = x[np.isfinite(x)]
+    return x
+
+
+def frac_up_fn(s, tau=0.0):
+    x = _clean_numeric(s)
+    n = x.size
+    return np.nan if n == 0 else float((x > tau).sum() / n)
+
+
+def frac_sideways_fn(s, tau=0.0):
+    x = _clean_numeric(s)
+    n = x.size
+    return np.nan if n == 0 else float((np.abs(x) <= tau).sum() / n)
+
+
+def frac_down_fn(s, tau=0.0):
+    x = _clean_numeric(s)
+    n = x.size
+    return np.nan if n == 0 else float((x < -tau).sum() / n)
+
+
+def up_to_down_ratio_fn(s, tau=0.0):
+    x = _clean_numeric(s)
+    pos = int((x > tau).sum())
+    neg = int((x < -tau).sum())
+    return np.nan if neg == 0 else float(pos / neg)
+
+
 def build_growth_features_for_clustering(
     df: pd.DataFrame,
     key: str = "store_item",
@@ -690,36 +721,41 @@ def build_growth_features_for_clustering(
         sideways=pd.to_numeric(df["growth_sideways"], errors="coerce"),
         dn=pd.to_numeric(df["growth_down"], errors="coerce"),
     )
-
-    def frac_stats(gr):  # gr: 1D growth series
-        n = np.isfinite(gr).sum()
-        return {
-            "frac_up": (gr > 0).sum() / n if n else np.nan,
-            "frac_sideways": (gr == 0).sum() / n if n else np.nan,
-            "frac_down": (gr < 0).sum() / n if n else np.nan,
-        }
-
     # --- base aggregates with safer std calculation ---
+    # feats = (
+    #     g.groupby(key, dropna=False)
+    #     .agg(
+    #         gr_median=("gr", safe_median),
+    #         gr_std=("gr", safe_std),
+    #         gr_iqr=("gr", safe_iqr),
+    #         **frac_stats("gr"),
+    #         up_to_down_ratio=(
+    #             "gr",
+    #             lambda s: (
+    #                 lambda s_clean: (
+    #                     lambda pos, neg: (
+    #                         np.nan if neg == 0 else float(pos / neg)
+    #                     )
+    #                 )(
+    #                     np.sum(s_clean > tau),
+    #                     np.sum(s_clean < -tau),
+    #                 )
+    #             )(pd.to_numeric(s, errors="coerce").dropna()),
+    #         ),
+    #     )
+    #     .reset_index()
+    # )
+
     feats = (
         g.groupby(key, dropna=False)
         .agg(
             gr_median=("gr", safe_median),
             gr_std=("gr", safe_std),
             gr_iqr=("gr", safe_iqr),
-            **frac_stats("gr"),
-            up_to_down_ratio=(
-                "gr",
-                lambda s: (
-                    lambda s_clean: (
-                        lambda pos, neg: (
-                            np.nan if neg == 0 else float(pos / neg)
-                        )
-                    )(
-                        np.sum(s_clean > tau),
-                        np.sum(s_clean < -tau),
-                    )
-                )(pd.to_numeric(s, errors="coerce").dropna()),
-            ),
+            frac_up=("gr", lambda s: frac_up_fn(s, tau)),
+            frac_sideways=("gr", lambda s: frac_sideways_fn(s, tau)),
+            frac_down=("gr", lambda s: frac_down_fn(s, tau)),
+            up_to_down_ratio=("gr", lambda s: up_to_down_ratio_fn(s, tau)),
         )
         .reset_index()
     )
