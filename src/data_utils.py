@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Any
+from typing import Optional
 from tqdm import tqdm
 from pathlib import Path
 from statsmodels.tsa.arima.model import ARIMA
-from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import MinMaxScaler
+
 import logging
 from src.utils import (
     save_csv_or_parquet,
@@ -178,6 +177,24 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         return df
     except Exception as e:
         logger.error(f"Error loading data: {e}")
+
+
+def load_xtensor_npz(path: str | Path):
+    path = Path(path)
+    with np.load(path, allow_pickle=True) as data:
+        X = data["X"]  # (I, J, D) float
+        M = data["M"].astype(bool)  # (I, J) bool
+        stores = data["stores"].astype(str)  # (I,)
+        items = data["items"].astype(str)  # (J,)
+        features = data["features"].astype(str)  # (D,)
+
+    # sanity checks
+    I, J, D = X.shape
+    assert M.shape == (I, J), f"M shape {M.shape} != {(I, J)}"
+    assert stores.shape[0] == I, f"stores len {stores.shape[0]} != {I}"
+    assert items.shape[0] == J, f"items len {items.shape[0]}  != {J}"
+    assert features.shape[0] == D, f"features len {features.shape[0]} != {D}"
+    return X, M, stores, items, features
 
 
 def compute_cluster_medians(
@@ -668,24 +685,30 @@ def build_growth_features_for_clustering(
     # ---- base series ----
     logger.info("Building base series...")
     g = df.assign(
-        gc=pd.to_numeric(df["growth_rate"], errors="coerce"),
+        gr=pd.to_numeric(df["growth_rate"], errors="coerce"),
         up=pd.to_numeric(df["growth_up"], errors="coerce"),
         sideways=pd.to_numeric(df["growth_sideways"], errors="coerce"),
         dn=pd.to_numeric(df["growth_down"], errors="coerce"),
     )
 
+    def frac_stats(gr):  # gr: 1D growth series
+        n = np.isfinite(gr).sum()
+        return {
+            "frac_up": (gr > 0).sum() / n if n else np.nan,
+            "frac_sideways": (gr == 0).sum() / n if n else np.nan,
+            "frac_down": (gr < 0).sum() / n if n else np.nan,
+        }
+
     # --- base aggregates with safer std calculation ---
     feats = (
         g.groupby(key, dropna=False)
         .agg(
-            gc_median=("gc", safe_median),
-            gc_std=("gc", safe_std),
-            gc_iqr=("gc", safe_iqr),
-            frac_up=("up", safe_nanmean),
-            frac_sideways=("sideways", safe_nanmean),
-            frac_down=("dn", safe_nanmean),
+            gr_median=("gr", safe_median),
+            gr_std=("gr", safe_std),
+            gr_iqr=("gr", safe_iqr),
+            **frac_stats("gr"),
             up_to_down_ratio=(
-                "gc",
+                "gr",
                 lambda s: (
                     lambda s_clean: (
                         lambda pos, neg: (
@@ -706,7 +729,7 @@ def build_growth_features_for_clustering(
     logger.info("Computing autocorrs, trend, seasonality...")
     for key_vals, sub in g.groupby(key, sort=False):
         sub = sub.sort_values("date", kind="mergesort")
-        gr = pd.to_numeric(sub["gc"], errors="coerce")
+        gr = pd.to_numeric(sub["gr"], errors="coerce")
         gr_sm = safe_rolling_mean(gr, smooth_window, min_periods=1)
 
         n_eff = int(gr_sm.notna().sum())
@@ -748,22 +771,6 @@ def build_growth_features_for_clustering(
             "ac_lag12": ac12,
             "trend_slope": slope,
             "seasonal_strength": seas,
-        }
-
-        rows.append(row)
-
-    feats = feats.merge(pd.DataFrame(rows), on=key, how="left")
-
-    # ---- medians ----
-    rows = []
-    logger.info("Computing robust summaries...")
-    for key_vals, sub in g.groupby(key, sort=False):
-        sub = sub.sort_values("date", kind="mergesort")
-        gr = pd.to_numeric(sub["gc"], errors="coerce")
-        gr_median = safe_median(gr)
-        row = {
-            key: key_vals,
-            "gr_median": gr_median,
         }
 
         rows.append(row)

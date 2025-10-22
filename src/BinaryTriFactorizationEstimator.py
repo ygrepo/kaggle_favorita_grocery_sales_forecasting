@@ -17,22 +17,31 @@ def chol_solve_with_jitter(
 ) -> Tuple[np.ndarray, float]:
     """Solve A X = Bmat with Cholesky; add tiny jitter if needed. Returns (X, jitter_total)."""
     total = 0.0
-    A_work = A  # operate in-place on the provided matrix
     for _ in range(3):
         try:
-            L = np.linalg.cholesky(A_work)
+            L = np.linalg.cholesky(A)
             Y = np.linalg.solve(L, B)
             Xsol = np.linalg.solve(L.T, Y)
             return Xsol, total
         except np.linalg.LinAlgError:
             logger.warning(f"Cholesky failed, adding jitter={jitter:.1e}")
             diag_incr = jitter
-            A_work.flat[:: A_work.shape[0] + 1] += diag_incr
+            A.flat[:: A.shape[0] + 1] += diag_incr
             total += diag_incr
             jitter *= 10.0
     # Final fallback (should be rare)
-    Xsol = np.linalg.solve(A_work, B)
+    Xsol = np.linalg.solve(A, B)
     return Xsol, total
+
+
+def _nan_inf_report(name: str, arr: np.ndarray) -> dict:
+    return dict(
+        name=name,
+        has_nan=bool(np.isnan(arr).any()),
+        has_inf=bool(np.isinf(arr).any()),
+        max_abs=float(np.max(np.abs(arr))) if arr.size else 0.0,
+        frob=float(np.linalg.norm(arr)) if arr.size else 0.0,
+    )
 
 
 # ----------------------------
@@ -474,32 +483,11 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         else:
             raise NotImplementedError("Poisson loss not implemented yet")
 
-    # def _objective(self, X, Xhat, U, V):
-    #     if self.loss == "gaussian":
-    #         resid = X - Xhat
-    #         penalty = self.beta * (U.sum() + V.sum())
-    #         # objective used for optimization:
-    #         return 0.5 * np.sum(resid * resid) + penalty
-    #     else:
-    #         MU = np.maximum(Xhat, 1e-9)
-    #         return float((MU - X * np.log(MU)).sum()) + self.beta * (
-    #             U.sum() + V.sum()
-    #         )
-
     def _rss(self, X, Xhat):
         return float(np.sum((X - Xhat) ** 2))
 
-    def _nan_inf_report(self, name: str, arr: np.ndarray) -> dict:
-        return dict(
-            name=name,
-            has_nan=bool(np.isnan(arr).any()),
-            has_inf=bool(np.isinf(arr).any()),
-            max_abs=float(np.max(np.abs(arr))) if arr.size else 0.0,
-            frob=float(np.linalg.norm(arr)) if arr.size else 0.0,
-        )
-
     # -------- Fit --------
-    def fit(self, X, y=None):
+    def fit(self, X: np.ndarray, y: np.ndarray = None):
         """
         Fit the binary tri-factorization model to X (Gaussian or Poisson).
         Adds PVE/RMSE logging each iteration.
@@ -534,7 +522,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             f"b_inner={self.b_inner},patience={self.patience}\n"
             f"max_iter={self.max_iter},loss={self.loss}"
         )
-        logger.debug(f"Nan/inf report:{self._nan_inf_report('X', X)}")
+        logger.debug(f"Nan/inf report:{_nan_inf_report('X', X)}")
 
         # for the optional “stable assignments” stop (no new attribute needed)
         n_iters = 0
@@ -702,7 +690,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
             if it % 10 == 0:
                 logger.debug(
-                    f"it:{it},{self._nan_inf_report('B', B)},{self._nan_inf_report('Xhat', Xhat)}"
+                    f"it:{it},{_nan_inf_report('B', B)},{_nan_inf_report('Xhat', Xhat)}"
                 )
 
             # relative-improvement early stop
@@ -2000,3 +1988,439 @@ class BTFEstimatorBuilder:
         if random_state is not None:
             kw["random_state"] = int(random_state)
         return self.estimator_class(**kw)
+
+
+class BinaryTriFactorizationMultiFeature(BinaryTriFactorizationEstimator):
+    """
+    Multi-feature extension: X has shape (I, J, D).
+    Shared U (I×R) and V (J×C); per-feature block parameters B (R×C×D).
+    Gaussian loss = sum_d 0.5 ||X[:,:,d] - U B[:,:,d] V^T||_F^2 + β (||U||_0 + ||V||_0).
+    """
+
+    def __init__(
+        self, *args, feature_weights: Optional[np.ndarray] = None, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.feature_weights = (
+            feature_weights  # optional D-length nonnegative weights
+        )
+        self.B_vec_ = None  # (R, C, D)
+        self.Xhat_vec_ = None  # (I, J, D)
+
+    # ---- utilities ----
+    def _weights(self, D: int) -> np.ndarray:
+        if self.feature_weights is None:
+            return np.ones(D, dtype=np.float64)
+        w = np.asarray(self.feature_weights, dtype=np.float64)
+        assert w.shape == (
+            D,
+        ), f"feature_weights must have shape (D,) got {w.shape}"
+        return np.maximum(w, 0.0)
+
+    # ---- B updates (Gaussian; ridge) ----
+    def _update_B_gaussian_multi(
+        self, X: np.ndarray, U: np.ndarray, V: np.ndarray
+    ) -> np.ndarray:
+        """
+        Solve (U^T U + αI) B_d (V^T V + αI) = U^T X_d V for each feature d.
+        Reuses U/V normal-equations across all D channels.
+        Returns B of shape (R, C, D).
+        """
+        I, J, D = X.shape
+        R, C = self.n_row_clusters, self.n_col_clusters
+        Xt = np.asarray(X, dtype=np.float64, order="C")
+
+        U = np.asarray(U, dtype=np.float64, order="C")
+        V = np.asarray(V, dtype=np.float64, order="C")
+        UtU = U.T @ U
+        VtV = V.T @ V
+        UtU = UtU.copy()
+        VtV = VtV.copy()
+        UtU.flat[:: R + 1] += self.alpha
+        VtV.flat[:: C + 1] += self.alpha
+
+        # Factor once; then solve for each rhs
+        # We’ll use your chol_solve_with_jitter helper twice per d.
+        B = np.zeros((R, C, D), dtype=np.float64)
+        for d in range(D):
+            M_d = U.T @ Xt[:, :, d] @ V  # RHS
+            Y, _ = chol_solve_with_jitter(UtU, M_d)  # (R,C)
+            BT, _ = chol_solve_with_jitter(VtV, Y.T)  # (C,R)
+            B[:, :, d] = BT.T
+        return B
+
+    # ---- greedy membership update (Gaussian, multi-feature) ----
+    def _greedy_update_gaussian_multi(
+        self,
+        X: np.ndarray,  # (I,J,D)
+        Xhat: np.ndarray,  # (I,J,D)
+        memberships: np.ndarray,  # U (I×R) if axis=0, or V (J×C) if axis=1
+        idx: int,
+        G: np.ndarray,  # per-feature components: if axis=0, G=(R,J,D); if axis=1, H=(I,C,D)
+        G_norm2: np.ndarray,  # per-component squared norms summed over (J,D) or (I,D)
+        k_limit: Optional[int],
+        beta: float,
+        axis: int,  # 0=row-update, 1=col-update
+        w: np.ndarray,  # (D,) feature weights
+    ):
+        # This is exactly your scalar logic, but with sums over features.
+        if axis == 0:
+            i = idx
+            base = X[i, :, :] - Xhat[i, :, :]  # (J,D)
+            if memberships[i, :].any():
+                base += G[memberships[i, :] == 1, :, :].sum(axis=0)  # (J,D)
+
+            memberships[i, :] = 0
+
+            # s[r] = ⟨base, G[r]⟩ - 0.5 ||G[r]||^2 - beta, where inner products/ norms sum across (J,D) with weights
+            # ⟨base, G[r]⟩ = sum_d w[d] * (G[r,:,d] @ base[:,d])
+            s = np.einsum("rjd,jd,d->r", G, base, w) - 0.5 * G_norm2 - beta
+
+            used = np.zeros(G.shape[0], dtype=bool)
+            if k_limit == 1:
+                r_star = int(np.argmax(s))
+                forced = not (s[r_star] > 0)
+                self._u_forced += int(forced)
+                self._u_positive += int(not forced)
+                memberships[i, r_star] = 1
+                Xhat[i, :, :] = np.einsum("rjd,r->jd", G, memberships[i, :])
+                return
+
+            T = np.einsum(
+                "rjd,sjd,d->rs", G, G, w
+            )  # Gram over components with feature weights
+            picks = 0
+            while (k_limit is None) or (picks < k_limit):
+                s[used] = -np.inf
+                r_star = int(np.argmax(s))
+                if s[r_star] <= 0:
+                    break
+                memberships[i, r_star] = 1
+                used[r_star] = True
+                picks += 1
+                s -= T[r_star, :]
+
+            if memberships[i, :].sum() == 0:
+                r_star = int(np.argmax(s))
+                memberships[i, r_star] = 1
+                self._u_forced += 1
+            else:
+                self._u_positive += 1
+
+            Xhat[i, :, :] = np.einsum("rjd,r->jd", G, memberships[i, :])
+
+        else:
+            j = idx
+            base = X[:, j, :] - Xhat[:, j, :]  # (I,D)
+            if memberships[j, :].any():
+                base += G[:, memberships[j, :] == 1, :].sum(axis=1)  # (I,D)
+
+            memberships[j, :] = 0
+
+            s = np.einsum("icd,id,d->c", G, base, w) - 0.5 * G_norm2 - beta
+            used = np.zeros(G.shape[1], dtype=bool)
+
+            if k_limit == 1:
+                c_star = int(np.argmax(s))
+                forced = not (s[c_star] > 0)
+                self._v_forced += int(forced)
+                self._v_positive += int(not forced)
+                memberships[j, c_star] = 1
+                Xhat[:, j, :] = np.einsum("icd,c->id", G, memberships[j, :])
+                return
+
+            T = np.einsum("icd,ied,d->ce", G, G, w)
+            picks = 0
+            while (k_limit is None) or (picks < k_limit):
+                s[used] = -np.inf
+                c_star = int(np.argmax(s))
+                if s[c_star] <= 0:
+                    break
+                memberships[j, c_star] = 1
+                used[c_star] = True
+                picks += 1
+                s -= T[c_star, :]
+
+            if memberships[j, :].sum() == 0:
+                c_star = int(np.argmax(s))
+                memberships[j, c_star] = 1
+                self._v_forced += 1
+            else:
+                self._v_positive += 1
+
+            Xhat[:, j, :] = np.einsum("icd,c->id", G, memberships[j, :])
+
+    # ---- objective / rss over features ----
+    def _objective(self, X, Xhat, U, V):
+        # sum over features + β sparsity + empty cluster penalty (same semantics)
+        resid = X - Xhat
+        loss = 0.5 * float(np.sum(resid * resid))
+        loss += self.beta * (U.sum() + V.sum())
+        if self.empty_cluster_penalty > 0:
+            loss += self.empty_cluster_penalty * (
+                int((U.sum(axis=0) == 0).sum())
+                + int((V.sum(axis=0) == 0).sum())
+            )
+        return loss
+
+    # ---- fit (Gaussian) ----
+    def fit(self, X: np.ndarray, y: np.ndarray = None):
+        """
+        Multi-feature Gaussian fit with full rollback + diagnostics logging,
+        matching the single-feature version semantics.
+
+        - X3d: (I, J, D)
+        """
+
+        X = np.asarray(X, dtype=np.float64)
+        if X.ndim != 3:
+            raise ValueError(f"Expected X with shape (I,J,D), got {X.shape}")
+        I, J, D = X.shape
+        w = self._weights(D)
+        rng = self._rng()
+
+        # --- init memberships ---
+        U = self._init_binary((I, self.n_row_clusters), self.k_row, rng)
+        V = self._init_binary((J, self.n_col_clusters), self.k_col, rng)
+
+        # --- init B & first recon ---
+        B = self._update_B_gaussian_multi(X, U, V)  # (R,C,D)
+        G = np.einsum("rcd,jc->rjd", B, V)  # (R,J,D)
+        Xhat = np.einsum("ir,rjd->ijd", U, G)  # (I,J,D)
+
+        # history
+        if self.history_flag:
+            self.loss_history_ = []
+
+        # baseline loss
+        loss_prev = self._objective(X, Xhat, U, V)
+        prev = loss_prev
+
+        # ensure counters exist
+        self._u_forced = 0
+        self._u_positive = 0
+        self._v_forced = 0
+        self._v_positive = 0
+
+        # optional stability-based stop
+        n_stable = 0
+
+        R = self.n_row_clusters
+        C = self.n_col_clusters
+
+        for it in range(self.max_iter):
+            t0 = time.perf_counter()
+
+            # reset per-iter counters (match base estimator)
+            self._u_forced = self._u_positive = 0
+            self._v_forced = self._v_positive = 0
+
+            # snapshot for rollback
+            U_prev, V_prev, B_prev = U.copy(), V.copy(), B.copy()
+            Xhat_prev = Xhat.copy()
+            loss_baseline = loss_prev
+
+            # --- B-step ---
+            tB0 = time.perf_counter()
+            B = self._update_B_gaussian_multi(X, U, V)
+            tB1 = time.perf_counter()
+
+            # --- precompute for U-step ---
+            G = np.einsum("rcd,jc->rjd", B, V)  # (R,J,D)
+            # weighted ||G[r]||^2 over (J,D)
+            G_norm2 = np.einsum("rjd,rjd,d->r", G, G, w)
+
+            # --- U-step (greedy) ---
+            tU0 = time.perf_counter()
+            for i in rng.permutation(I):
+                self._greedy_update_gaussian_multi(
+                    X,
+                    Xhat,
+                    U,
+                    i,
+                    G,
+                    G_norm2,
+                    self.k_row,
+                    self.beta,
+                    axis=0,
+                    w=w,
+                )
+            tU1 = time.perf_counter()
+
+            # refresh recon & precompute for V-step
+            Xhat = np.einsum("ir,rjd->ijd", U, G)
+            H = np.einsum("ir,rcd->icd", U, B)  # (I,C,D)
+            H_norm2 = np.einsum("icd,icd,d->c", H, H, w)
+
+            # --- V-step (greedy) ---
+            tV0 = time.perf_counter()
+            for j in rng.permutation(J):
+                self._greedy_update_gaussian_multi(
+                    X,
+                    Xhat,
+                    V,
+                    j,
+                    H,
+                    H_norm2,
+                    self.k_col,
+                    self.beta,
+                    axis=1,
+                    w=w,
+                )
+            tV1 = time.perf_counter()
+
+            # membership dynamics
+            dU = int((U != U_prev).sum())
+            dV = int((V != V_prev).sum())
+            row_on = float(U.sum(1).mean())
+            col_on = float(V.sum(1).mean())
+
+            # (optional) stability-based stop rule
+            n_stable = n_stable + 1 if (dU == 0 and dV == 0) else 0
+            if n_stable >= self.patience:
+                logger.info(
+                    f"it:{it:02d},R:{R},C:{C} Early stopping (stable assignments for {n_stable} iters)"
+                )
+                break
+
+            # finalize iteration: rebuild Xhat and compute new loss
+            G = np.einsum("rcd,jc->rjd", B, V)
+            Xhat = np.einsum("ir,rjd->ijd", U, G)
+            loss_new = self._objective(X, Xhat, U, V)
+
+            # --- monotonic guard / rollback ---
+            rolled_back = False
+            if loss_new > loss_baseline + 1e-8:
+                rolled_back = True
+                U, V, B = U_prev, V_prev, B_prev
+                Xhat = Xhat_prev
+                loss = loss_baseline
+            else:
+                loss = loss_new
+
+            if rolled_back:
+                logger.warning(
+                    f"it:{it:02d},{R},{C} Rollback (new loss    ={loss_new:.6e} > baseline={loss_baseline:.6e})"
+                )
+
+            # --- diagnostics (Gaussian regs shown; l1 optional) ---
+            # RSS over ALL entries (I*J*D)
+            rss = float(np.sum((X - Xhat) ** 2))
+
+            # Ridge on B across all features
+            regB = 0.5 * self.alpha * float(np.sum(B * B))
+            # L1 on B (if you enable block_l1>0 for multi-feature later)
+            l1B = float(np.sum(np.abs(B))) if self.block_l1 > 0 else 0.0
+
+            # RMSE over all entries
+            rmse = float(np.sqrt(rss / (I * J * D)))
+
+            # PVE with global MEAN baseline (matches your scalar code style)
+            eps = 1e-12
+            mu = float(np.mean(X))
+            L_model = float(np.sum((X - Xhat) ** 2))
+            L_base = float(np.sum((X - mu) ** 2))
+            pve = 1.0 - (L_model / max(L_base, eps))
+
+            # relative contributions
+            tot_loss = (
+                rss
+                + regB
+                + (self.block_l1 * l1B if self.block_l1 > 0 else 0.0)
+            )
+            frac_rss = rss / tot_loss if tot_loss > 0 else 0.0
+            frac_reg = regB / tot_loss if tot_loss > 0 else 0.0
+            frac_l1 = (
+                ((self.block_l1 * l1B) / tot_loss)
+                if (self.block_l1 > 0 and tot_loss > 0)
+                else 0.0
+            )
+
+            if self.history_flag:
+                self.loss_history_.append(loss)
+
+            logger.info(
+                f"it:{it:02d},R:{R},C:{C},loss={loss:.6e},rss={rss:.6e},PVE={pve:.2%},RMSE={rmse:.3f}\n"
+                f"RegB={regB:.3e},L1B={l1B:.3e},Frac_rss={frac_rss:.2%}, Frac_reg={frac_reg:.2%}, Frac_l1={frac_l1:.2%}\n"
+                f"dU={dU},dV={dV}\n"
+                f"Averag_row_clusters={row_on:.2f},averag_col_clusters={col_on:.2f}\n"
+                f"U_forced={self._u_forced},U_pos={self._u_positive}\n"
+                f"V_forced={self._v_forced},V_pos={self._v_positive}"
+            )
+            logger.debug(
+                f"iter_total={time.perf_counter()-t0:.3f}s,time B={tB1-tB0:.3f}s,U={tU1-tU0:.3f}s,V={tV1-tV0:.3f}s"
+            )
+
+            if it % 10 == 0:
+                logger.debug(
+                    f"it:{it},{_nan_inf_report('B', B)},{_nan_inf_report('Xhat', Xhat)}"
+                )
+
+            # relative-improvement early stop (same semantics)
+            if np.isfinite(prev):
+                rel = (prev - loss) / max(1.0, abs(prev))
+                if (prev >= loss) and (rel < self.tol):
+                    logger.info(
+                        f"it:{it},R:{R},C:{C} Early stopping (rel_impr={rel:.6f} < tol={self.tol})"
+                    )
+                    break
+            prev = loss
+            loss_prev = loss
+
+        # utilization log
+        self._log_cluster_utilization(U, V)
+
+        # save learned params (and 2D summaries for compatibility)
+        self.U_, self.V_, self.B_vec_, self.Xhat_vec_ = (
+            U.astype(np.int8),
+            V.astype(np.int8),
+            B,
+            Xhat,
+        )
+        # keep 2D averages to preserve your existing API
+        self.B_ = B.mean(axis=2)  # (R,C)
+        self.Xhat_ = Xhat.mean(axis=2)  # (I,J)
+
+        # prune empties if requested (updates n_row_clusters / n_col_clusters; recomputes Xhat_)
+        n_removed_rows, n_removed_cols = self._prune_empty_clusters()
+
+        # updated cluster counts
+        R_final, C_final = self.n_row_clusters, self.n_col_clusters
+
+        # final diagnostics
+        rows_forced_pct = 100.0 * (self._u_forced / max(1, I))
+        rows_pos_pct = 100.0 * (self._u_positive / max(1, I))
+        cols_forced_pct = 100.0 * (self._v_forced / max(1, J))
+        cols_pos_pct = 100.0 * (self._v_positive / max(1, J))
+
+        logger.info(
+            f"Final summary: Started with R={R},C={C}, ended with R={R_final},C={C_final}\n"
+            f"Removed {n_removed_rows} row clusters, {n_removed_cols} col clusters\n"
+            f"Final pick summary,R={R_final},C={C_final},k_row={self.k_row},k_col={self.k_col},I={I},J={J}\n"
+            f"rows: forced={self._u_forced}/{I},({rows_forced_pct:.2f}%)\n"
+            f"positive={self._u_positive}/{I},({rows_pos_pct:.2f}%)\n"
+            f"cols: forced={self._v_forced}/{J},({cols_forced_pct:.2f}%)\n"
+            f"positive={self._v_positive}/{J},({cols_pos_pct:.2f}%)"
+        )
+
+        # membership histograms
+        try:
+            self._log_membership_histogram(U, name="stores", top_bins=10)
+            self._log_membership_histogram(V, name="items", top_bins=10)
+        except Exception as e:
+            logger.debug(f"membership histogram logging skipped: {e!r}")
+
+        return self
+
+    # ---- outputs ----
+    def reconstruct(self) -> np.ndarray:
+        """Return full 3D reconstruction Xhat (I,J,D)."""
+        if self.Xhat_vec_ is None:
+            raise ValueError("Model has not been fitted yet.")
+        return self.Xhat_vec_
+
+    def factors(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return U, B (R×C×D), V."""
+        if self.B_vec_ is None:
+            raise ValueError("Model has not been fitted yet.")
+        return self.U_, self.B_vec_, self.V_

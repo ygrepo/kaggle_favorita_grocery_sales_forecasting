@@ -215,15 +215,14 @@ def plot_graded_overlapping_patches_df(
     )
     ax.tick_params(axis="x", rotation=45, labelsize=tick_fontsize)
     ax.tick_params(axis="y", rotation=0, labelsize=tick_fontsize)
-    ax.set_ylabel("store", fontsize=label_fontsize, fontweight="bold")
-    ax.set_xlabel("item", fontsize=label_fontsize, fontweight="bold")
+    ax.set_ylabel("Store", fontsize=label_fontsize, fontweight="bold")
+    ax.set_xlabel("SKU", fontsize=label_fontsize, fontweight="bold")
     ax.set_title(
-        "Graded overlapping patches (membership-ordered)",
+        "Combined Clustering",
         fontsize=title_fontsize,
         fontweight="bold",
         pad=20,
     )
-
     plt.tight_layout()
     if fn:
         logger.info(f"Saving plot to {fn}")
