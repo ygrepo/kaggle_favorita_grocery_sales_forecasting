@@ -91,6 +91,7 @@ def main():
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Data fn: {args.data_fn}")
         logger.info(f"  Ranks: {args.ranks}")
+        logger.info(f"  Features: {args.features}")
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Log level: {args.log_level}")
@@ -98,6 +99,7 @@ def main():
         data_fn = Path(args.data_fn).resolve()
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
+        logger.info(f"Data loaded: {df.head()}")
         fit_and_decompose(
             df, args.features, args.ranks, args.max_iter, args.tol
         )
