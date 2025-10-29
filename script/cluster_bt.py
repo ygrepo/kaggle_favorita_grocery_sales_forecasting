@@ -259,35 +259,32 @@ def main():
         else:
             features = None
 
-        pve, rmse = compute_ntf_pve(df, features, rank=200)
-        logger.info(f"NTF PVE: {pve:.2f}%, RMSE: {rmse:.3f}")
-
-        # cluster_data_and_explain_blocks(
-        #     df,
-        #     row_range=args.row_range,
-        #     col_range=args.col_range,
-        #     alpha=args.alpha,
-        #     beta=args.beta,
-        #     block_l1=args.block_l1,
-        #     b_inner=args.b_inner,
-        #     max_iter=args.max_iter,
-        #     k_row=args.k_row,
-        #     k_col=args.k_col,
-        #     patience=args.patience,
-        #     tol=args.tol,
-        #     max_pve_drop=args.max_pve_drop,
-        #     top_k=args.top_k,
-        #     top_rank_fn=top_rank_fn,
-        #     summary_fn=summary_fn,
-        #     model_fn=model_fn,
-        #     n_jobs=args.n_jobs,
-        #     batch_size=args.batch_size,
-        #     empty_cluster_penalty=args.empty_cluster_penalty,
-        #     min_cluster_size=args.min_cluster_size,
-        #     multifeature=args.multifeature,
-        #     features=features,
-        #     feature_weights=feature_weights,
-        # )
+        cluster_data_and_explain_blocks(
+            df,
+            row_range=args.row_range,
+            col_range=args.col_range,
+            alpha=args.alpha,
+            beta=args.beta,
+            block_l1=args.block_l1,
+            b_inner=args.b_inner,
+            max_iter=args.max_iter,
+            k_row=args.k_row,
+            k_col=args.k_col,
+            patience=args.patience,
+            tol=args.tol,
+            max_pve_drop=args.max_pve_drop,
+            top_k=args.top_k,
+            top_rank_fn=top_rank_fn,
+            summary_fn=summary_fn,
+            model_fn=model_fn,
+            n_jobs=args.n_jobs,
+            batch_size=args.batch_size,
+            empty_cluster_penalty=args.empty_cluster_penalty,
+            min_cluster_size=args.min_cluster_size,
+            multifeature=args.multifeature,
+            features=features,
+            feature_weights=feature_weights,
+        )
         logger.info("Data clustering completed successfully")
     except Exception as e:
         logger.error(f"Error clustering data: {e}")

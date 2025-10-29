@@ -120,7 +120,7 @@ def get_n_jobs(n_jobs: int) -> int:
     return n_jobs
 
 
-def parse_range(arg: str):
+def parse_range(arg: str) -> range | list[float | int]:
     """
     Parse a CLI argument that can be either:
       - a colon-separated range 'START:END' (inclusive of START, exclusive of END),
@@ -341,7 +341,7 @@ def build_multifeature_X_matrix(
     for d in range(D):
         vals = X[..., d][M]
         # Use mean for centering, matching the standard deviation for scaling
-        mu = np.nanmean(vals)  
+        mu = np.nanmean(vals)
         s = np.nanstd(vals) if np.nanstd(vals) > 1e-12 else 1.0
         X[..., d] = (X[..., d] - mu) / s
     row_names = stores.tolist()
