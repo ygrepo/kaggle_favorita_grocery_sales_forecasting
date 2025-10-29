@@ -15,14 +15,14 @@ logger = get_logger(__name__)
 def fit_and_decompose(
     df: pd.DataFrame,
     features: list[str],
-    rank: int | list[int] | None = None,
+    ranks: int | list[int] | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
 ):
     logger.info("Multifeature mode: reshaping data to (I, J, D)")
     X_mat, _, row_names, col_names = build_multifeature_X_matrix(df, features)
     logger.info(f"X_mat shape:{X_mat.shape}")
-    tucker_decomposition(X_mat, rank, n_iter, tol)
+    tucker_decomposition(X_mat, ranks, n_iter, tol)
 
 
 def center_scale_signed(
@@ -58,13 +58,13 @@ def pve(X: np.ndarray, Xhat: np.ndarray):
 def tucker_decomposition(
     X: np.ndarray,
     M: np.ndarray,
-    rank: int | list[int] | None = None,
+    ranks: int | list[int] | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     X, mus, sds = center_scale_signed(X, M)
     core, factors = tucker(
-        tl.tensor(X), rank=rank, init="svd", tol=tol, n_iter_max=n_iter
+        tl.tensor(X), rank=ranks, init="svd", tol=tol, n_iter_max=n_iter
     )
     Xhat = tl.tucker_to_tensor((core, factors))
     logger.info(f"PVE:{pve(X, Xhat):.2f}")

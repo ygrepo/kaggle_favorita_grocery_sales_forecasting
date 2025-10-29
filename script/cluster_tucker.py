@@ -42,7 +42,7 @@ def parse_args():
         "--rank",
         type=parse_range,
         default=range(2, 5),
-        help="Rank",
+        help="Ranks",
     )
     parser.add_argument(
         "--max_iter",
@@ -90,8 +90,8 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Data fn: {args.data_fn}")
-        ranks = args.rank.split(",")
-        logger.info(f"  Rank: {ranks}")
+        ranks = args.ranks.split(",")
+        logger.info(f"  Ranks: {ranks}")
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Log level: {args.log_level}")
@@ -100,7 +100,7 @@ def main():
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
         fit_and_decompose(
-            df, args.features, args.rank, args.max_iter, args.tol
+            df, args.features, args.ranks, args.max_iter, args.tol
         )
 
         logger.info("Data clustering completed successfully")
