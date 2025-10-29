@@ -13,53 +13,43 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 #DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_input_clustered.parquet"
-DATA_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.parquet"
+#DATA_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.parquet"
+DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
 
-TOP_RANK_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_top_rank.csv"
-SUMMARY_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_summary.csv"
+#TOP_RANK_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_top_rank.csv"
+#SUMMARY_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_summary.csv"
 #BLOCK_ID_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_block_id.npy"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.csv"
-MODEL_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_model.pickle"
+#OUTPUT_FN="${OUTPUT_DATA_DIR}/top_gc_median_df.csv"
+#MODEL_FN="${OUTPUT_DATA_DIR}/top_gc_median_df_model.pickle"
 
 
 
-# TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
-# SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
-# BLOCK_ID_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_block_id.npy"
-# OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
-# MODEL_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_model.pickle"
-
+TOP_RANK_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_top_rank.csv"
+SUMMARY_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_summary.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
+MODEL_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_model.pickle"
 
 ROW_RANGE=10
-COL_RANGE=10
+COL_RANGE=80
 
-# ROW_RANGE=5,8,10
-# COL_RANGE=5,8,10
+ALPHA=1e-2 
+BETA=1E-4  # Aggressively reduce sparsity
+BLOCK_L1=0
+MAX_ITER=500  
+TOL=1E-6    # Keep relaxed tolerance
+PATIENCE=20
+FEATURE_WEIGHTS="1.0,0.1,0.1,1.0,1.0,1.0,1.0,1,1"
+#FEATURE_WEIGHTS="1.0,0,0,0,0,0,0,0,0"
 
-# ROW_RANGE=10
-# COL_RANGE=20
-# ROW_RANGE=90,120,140
-# COL_RANGE=230,240,250
-
-ALPHA=1e-2 #0.5
-BETA=0.1 #0.001
-BLOCK_L1=0.01 #0
-# ALPHA=1e-3      # Back to original
-# BETA=0.005      # Much smaller than 0.1
-# BLOCK_L1=0.0    # Start with 0, add gradually if needed
-K_ROW=2         # Explicitly allow some overlap
-K_COL=2         # Explicitly allow some overlap
-
+K_ROW=0
+K_COL=0
 B_INNER=35
-MAX_ITER=200  
-TOL=1E-6
 MAX_PVE_DROP=0.01 
 TOP_K=100
-# K_ROW=0
-# K_COL=0
-PATIENCE=10
 EMPTY_CLUSTER_PENALTY=1.0
 MIN_CLUSTER_SIZE=2
+MULTIFEATURE=True
+FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -93,9 +83,13 @@ while [[ $# -gt 0 ]]; do
     --summary_fn) SUMMARY_FN="$2"; shift 2 ;;
     --model_fn) MODEL_FN="$2"; shift 2 ;;
     --output_data_dir) OUTPUT_DATA_DIR="$2"; shift 2 ;;
-    --log_fn) LOG_FILE="$2"; shift 2 ;;
     --Empty_cluster_penalty) EMPTY_CLUSTER_PENALTY="$2"; shift 2 ;;
     --min_cluster_size) MIN_CLUSTER_SIZE="$2"; shift 2 ;;
+    --patience) PATIENCE="$2"; shift 2 ;;
+    --multifeature) MULTIFEATURE="$2"; shift 2 ;;
+    --features) FEATURES="$2"; shift 2 ;;
+    --feature_weights) FEATURE_WEIGHTS="$2"; shift 2 ;;
+    --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
@@ -108,7 +102,6 @@ mkdir -p "$LOG_DIR"
 # Set up log file with timestamp
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
-echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Row range: $ROW_RANGE" | tee -a "$LOG_FILE"
 echo "Col range: $COL_RANGE" | tee -a "$LOG_FILE"
 echo "Alpha: $ALPHA" | tee -a "$LOG_FILE"
@@ -128,6 +121,10 @@ echo "N jobs: $N_JOBS" | tee -a "$LOG_FILE"
 echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Summary fn: $SUMMARY_FN" | tee -a "$LOG_FILE"
 echo "Model fn: $MODEL_FN" | tee -a "$LOG_FILE"
+echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
+echo "Multifeature: $MULTIFEATURE" | tee -a "$LOG_FILE"
+echo "Features: $FEATURES" | tee -a "$LOG_FILE"
+echo "Feature weights: $FEATURE_WEIGHTS" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
@@ -153,6 +150,10 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --batch_size "$BATCH_SIZE" \
   --summary_fn "$SUMMARY_FN" \
   --model_fn "$MODEL_FN" \
+  --patience "$PATIENCE" \
+  --multifeature "$MULTIFEATURE" \
+  --features "$FEATURES" \
+  --feature_weights "$FEATURE_WEIGHTS" \
   --log_fn "$LOG_FILE" \
   --empty_cluster_penalty "$EMPTY_CLUSTER_PENALTY" \
   --min_cluster_size "$MIN_CLUSTER_SIZE" \

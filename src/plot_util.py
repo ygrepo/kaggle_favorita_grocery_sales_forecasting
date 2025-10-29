@@ -16,6 +16,7 @@ from pathlib import Path
 
 from typing import Optional, Tuple, Callable
 from scipy.cluster.hierarchy import linkage, leaves_list
+from sklearn.decomposition import PCA
 
 Number = Union[int, float]
 
@@ -2042,3 +2043,117 @@ def plot_block_annot_heatmap(
                 raise
     if show_plot:
         plt.show()
+
+
+def plot_pca_explained_variance(
+    X_3d: np.ndarray,
+    n_components: int = None,
+    label_fontsize: int = 14,
+    title_fontsize: int = 20,
+    figsize: Tuple[int, int] = (10, 6),
+    fn: Optional[Path] = None,
+):
+    """
+    Performs PCA on the mean-aggregated 2D data and plots the
+    cumulative explained variance ratio.
+
+    Args:
+        X_3d (I, J, D): Input data tensor (Stores x Items x Features).
+        n_components: Number of components for PCA. If None, uses min(I, J).
+    """
+
+    # 1. Prepare 2D Data (Average across features)
+    if X_3d.ndim == 3:
+        X_2d = np.mean(X_3d, axis=2)  # Shape (I, J) - Stores x Items
+    else:
+        # Assuming input might already be 2D
+        X_2d = X_3d
+
+    I, J = X_2d.shape
+
+    # Ensure no NaNs (PCA requires finite values)
+    # Use mean imputation as a simple strategy
+    if np.isnan(X_2d).any():
+        col_means = np.nanmean(X_2d, axis=0)
+        inds = np.where(np.isnan(X_2d))
+        X_2d[inds] = np.take(col_means, inds[1])
+        # Handle cases where a whole column might be NaN
+        if np.isnan(X_2d).any():
+            X_2d = np.nan_to_num(
+                X_2d
+            )  # Fallback: replace remaining NaNs with 0
+
+    # 2. Perform PCA
+    # Decide on the number of components
+    if n_components is None:
+        # Default to the smaller dimension
+        n_components = min(I, J)
+
+    # Apply PCA - typically center data first (implicitly done by sklearn's PCA)
+    # We are analyzing variance across items (columns), so PCA fits on rows (stores)
+    pca = PCA(n_components=n_components, random_state=42)
+    pca.fit(X_2d)  # Fit PCA on Stores x Items matrix
+
+    # 3. Calculate Cumulative Explained Variance
+    explained_variance_ratio = pca.explained_variance_ratio_
+    cumulative_explained_variance = np.cumsum(explained_variance_ratio)
+
+    # 4. Plotting
+    plt.figure(figsize=figsize)
+    plt.plot(
+        range(1, len(cumulative_explained_variance) + 1),
+        cumulative_explained_variance,
+        marker="o",
+        linestyle="--",
+    )
+
+    # Find points for 90%, 95% variance
+    try:
+        n_90 = np.argmax(cumulative_explained_variance >= 0.90) + 1
+        plt.axhline(
+            0.90,
+            color="r",
+            linestyle=":",
+            label=f"90% Variance ({n_90} components)",
+        )
+        plt.axvline(n_90, color="r", linestyle=":")
+    except ValueError:
+        pass  # Handle case where 90% is never reached
+
+    try:
+        n_95 = np.argmax(cumulative_explained_variance >= 0.95) + 1
+        plt.axhline(
+            0.95,
+            color="g",
+            linestyle=":",
+            label=f"95% Variance ({n_95} components)",
+        )
+        plt.axvline(n_95, color="g", linestyle=":")
+    except ValueError:
+        pass  # Handle case where 95% is never reached
+
+    plt.title(
+        "Cumulative Explained Variance by PCA Components",
+        fontsize=title_fontsize,
+        fontweight="bold",
+    )
+    plt.xlabel(
+        "Number of Principal Components",
+        fontsize=label_fontsize,
+        fontweight="bold",
+    )
+    plt.ylabel(
+        "Cumulative Explained Variance Ratio",
+        fontsize=label_fontsize,
+        fontweight="bold",
+    )
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.ylim(0, 1.05)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    # Save the plot
+    if fn:
+        logger.info(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300)
+    plt.show()
+    plt.close()

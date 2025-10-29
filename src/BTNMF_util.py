@@ -9,9 +9,16 @@ from src.BinaryTriFactorizationEstimator import (
 )
 from src.data_utils import normalize_data
 from dataclasses import dataclass
-from src.utils import get_logger
+from src.utils import get_logger, build_multifeature_X_matrix
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
+
+from src.BinaryTriFactorizationEstimator import (
+    BinaryTriFactorizationMultiFeature,
+)
+from sklearn.decomposition import NMF
+from src.ntf_model import fit_ntf_and_get_factors
+
 import pickle
 
 import warnings
@@ -864,19 +871,8 @@ def _process_single_rc_pair(
 
         # --- PVE ---
         Xhat = est.reconstruct()
-
-        # Defensive check for min_keep
-        # if min_keep is None:
-        #     logger.warning(f"min_keep is None for R={R}, C={C}, using 0")
-        #     min_keep = 0
-
-        # if min_keep > 0:
-        #     logger.info(f"Computing cell mask for R={R}, C={C}")
-        #     mask = make_gap_cellmask(min_keep=min_keep)(est)
-        # else:
-        #     mask = None
-        # mask = np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
         pve = compute_pve(X, Xhat, loss_name=loss_name, mask=None)
+        logger.info(f"PVE: {pve}")
 
         N_all = X.size
         N_obs = _obs_count(mask=None, X=X)
@@ -887,28 +883,6 @@ def _process_single_rc_pair(
             N_obs = 0
 
         mask_coverage = N_obs / N_all if N_all > 0 else np.nan
-
-        # --- Assignments (for WCV/BCV and coverage) ---
-        # assign = est.assign_unique_blocks(
-        #     X=X,
-        #     method=(
-        #         "gaussian_delta" if est.loss == "gaussian" else "poisson_delta"
-        #     ),
-        #     allowed_mask=mask,
-        #     # allowed_mask=(
-        #     #     np.abs(est.B_) >= np.percentile(np.abs(est.B_), 20)
-        #     # ),  # drop weakest 20% blocks
-        # )
-
-        # --- Silhouette-like (WCV/BCV) ---
-        # wcvdf = compute_block_wcv_bcv_silhouette(
-        #     X, assign, *est.B_.shape, mask=mask
-        # )
-        # col = wcvdf["silhouette_like"]
-        # if not wcvdf.empty and col.notna().any():
-        #     sil_mean = float(np.nanmean(col))
-        # else:
-        #     sil_mean = np.nan
 
         # --- Ablations ---
         # Compute ΔLoss for every block (r,c) in the factorization
@@ -941,8 +915,6 @@ def _process_single_rc_pair(
             else np.nan
         )
 
-        # N = _obs_count(mask, X)
-        # delta_per_cell = (total_block_contribution / N_obs) if N_obs > 0 else np.nan
         per_cell_block_contribution = total_block_contribution / max(N_obs, 1)
 
         base = _baseline_array(X, mask=None)
@@ -964,7 +936,6 @@ def _process_single_rc_pair(
 
         # --- Extras ---
         b_sparsity = sparsity_of_B(est, tol=1e-4)
-        # coverage = coverage_from_assign(assign)
 
         # --- AIC/BIC-like penalized scores ---
         Xhat = est.reconstruct()
@@ -1180,13 +1151,6 @@ def pick_best_btf_setting(
     # min_sil: float = -0.05,
 ) -> Tuple[pd.DataFrame, pd.Series]:
     d = df.copy()
-
-    # --- Filter by silhouette (with single back-off) ---
-    # if "Mean Silhouette" in d.columns:
-    #     d1 = d[d["Mean Silhouette"] >= min_sil]
-    #     if not d1.empty:
-    #         d = d1  # keep filtered; else keep original d (back off)
-
     # --- Filter by PVE window around best ---
     if "PVE" in d.columns:
         pve_series = pd.to_numeric(d["PVE"], errors="coerce")
@@ -1203,7 +1167,6 @@ def pick_best_btf_setting(
     # --- Sorting: prefer high PVE/structure, then smaller models, then deterministic tie ---
     sort_cols = [
         "PVE",  # maximize
-        # "Mean Silhouette",  # maximize
         "BlockContribution_RelBaseline",  # maximize
         "BlockContribution_Gini",  # maximize
         "BlockContribution_FracWeak20",  # minimize
@@ -1294,86 +1257,6 @@ def normalize_data_and_fit_estimator(
     return est, assign
 
 
-# def _normalize_matrix(
-#     df: pd.DataFrame,
-#     id_cols: list[str] | None,
-#     normalize: bool,
-#     *,                 # force keyword-only for safety
-#     allow_shift_negatives: bool = True,   # auto-shift if negatives exist
-# ) -> tuple[np.ndarray, np.ndarray | list[str], list[str]]:
-#     """
-#     Returns:
-#       - X_mat: (I, J) float32, nonnegative (min-max to [0,1] if normalize=True)
-#       - row_names: (I,) array of str (store▮item if present)
-#       - col_names: list[str] of numeric columns used
-#     """
-#     X = df.copy()
-
-#     # ---- infer id cols (before selecting features) ----
-#     if id_cols is None:
-#         if {"store", "item"}.issubset(X.columns):
-#             id_cols = ["store", "item"]
-#         elif "store_item" in X.columns:
-#             id_cols = ["store_item"]
-#         else:
-#             id_cols = []
-
-#     # ---- pick numeric feature columns only ----
-#     col_names = X.select_dtypes(include=[np.number]).columns.tolist()
-#     col_names = [c for c in col_names if c not in id_cols]
-#     if not col_names:
-#         raise ValueError("No numeric feature columns found to cluster on.")
-
-#     # ---- row names ----
-#     if id_cols == ["store", "item"]:
-#         row_names = (X["store"].astype(str) + "▮" + X["item"].astype(str)).to_numpy()
-#     elif id_cols == ["store_item"]:
-#         row_names = X["store_item"].astype(str).to_numpy()
-#     else:
-#         row_names = X.index.astype(str).to_numpy()
-
-#     # ---- numeric matrix ----
-#     M = X.loc[:, col_names].to_numpy(dtype=np.float32)
-
-#     # replace non-finite BEFORE stats
-#     M = np.where(np.isfinite(M), M, np.nan)
-
-#     # handle negatives (on numeric only)
-#     col_min = np.nanmin(M, axis=0)
-#     has_neg = np.any(col_min < 0)
-#     if has_neg:
-#         if allow_shift_negatives:
-#             # shift each column so its min becomes 0
-#             shift = np.minimum(col_min, 0.0)
-#             M = M - shift[None, :]
-#         else:
-#             neg_list = [col_names[i] for i, v in enumerate(col_min) if v < 0]
-#             raise ValueError(f"Negative values detected in columns: {neg_list}")
-
-#     # fill remaining NaNs with column medians (robust) before scaling
-#     col_med = np.nanmedian(M, axis=0)
-#     # if a column is all-NaN, fall back to 0
-#     col_med = np.where(np.isfinite(col_med), col_med, 0.0)
-#     inds = np.isnan(M)
-#     if np.any(inds):
-#         M[inds] = np.take(col_med, np.where(inds)[1])
-
-#     if not normalize:
-#         # already nonnegative & comparable scale
-#         M = np.clip(M, 0.0, None).astype(np.float32)
-#         return M, row_names, col_names
-
-#     # ---- per-column MinMax to [0,1] ----
-#     col_min = np.nanmin(M, axis=0)
-#     M0 = M - col_min
-#     col_max = np.nanmax(M0, axis=0)
-#     col_max[col_max <= 0] = 1.0  # constant/all-NaN -> zeros after scaling
-#     M = (M0 / col_max).astype(np.float32)
-#     M = np.clip(M, 0.0, 1.0)
-
-#     return M, row_names, col_names
-
-
 def _normalize_matrix(
     df: pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray | list[str], list[str]]:
@@ -1416,6 +1299,52 @@ def _normalize_matrix(
     return M, row_names, col_names
 
 
+def compute_ntf_pve(
+    df: pd.DataFrame,
+    features: list[str],
+    rank: int = 20,
+) -> Tuple[float, float]:
+    """
+    Computes NTF PVE by fitting a non-negative tensor factorization model (CP/PARAFAC).
+    """
+    logger.info("Multifeature mode: reshaping data to (I, J, D)")
+    X_mat, _, row_names, col_names = build_multifeature_X_matrix(df, features)
+    I, J, D = X_mat.shape
+    logger.info(f"X_mat shape: {X_mat.shape}")
+
+    # Assuming fit_ntf_and_get_factors returns (weights, U, V, D)
+    weights, U_factor, V_factor, D_factor = fit_ntf_and_get_factors(
+        X_mat, rank=rank
+    )
+
+    # Ensure factors are in the correct shape for einsum:
+    # U: (I x K), V: (J x K), D: (D x K)
+
+    # --- CORRECTED RECONSTRUCTION using EINSUM ---
+    # The reconstruction should be a full (I x J x D) tensor
+    # einsum sum over the shared rank index 'k'
+    X_ntf = np.einsum(
+        "ik, jk, dk, k -> ijd",
+        U_factor,  # U_ik (Store x Rank)
+        V_factor,  # V_jk (Item x Rank)
+        D_factor,  # D_dk (Feature x Rank)
+        weights,  # w_k (Rank)
+    )
+    # ---------------------------------------------
+
+    # RSS must be calculated over the 3D tensor
+    rss = np.sum((X_mat - X_ntf) ** 2)
+
+    # TSS must also be calculated over the 3D tensor
+    grand_mean = np.mean(X_mat)
+    tss = np.sum((X_mat - grand_mean) ** 2)
+
+    pve = 1.0 - (rss / tss) if tss > 1e-12 else np.nan
+    rmse = np.sqrt(rss / X_mat.size)
+
+    return float(pve * 100), float(rmse)
+
+
 def cluster_data_and_explain_blocks(
     df: pd.DataFrame,
     row_range: range,
@@ -1439,20 +1368,79 @@ def cluster_data_and_explain_blocks(
     model_fn: Optional[Path] = None,
     n_jobs: int = 1,
     batch_size: int = 4,
+    multifeature: bool = False,
+    features: Optional[list[str]] = None,
+    feature_weights: Optional[np.ndarray] = None,
 ) -> dict:
     """
     Works with BOTH:
       • raw feature tables  -> set normalize=True (min-max per column to [0,1])
       • prebuilt M_btnmf    -> set normalize=False (already nonnegative [0,1])
-    df must contain ids: ["store","item"] or ["store_item"] plus numeric feature columns.
+    df must contain ids: ["store","item"] or ["store_item"] plus numeric
+    feature columns.
+
+    Parameters
+    ----------
+    multifeature : bool, default=False
+        If True, use BinaryTriFactorizationMultiFeature (X shape: I×J×D).
+        If False, use BinaryTriFactorizationEstimator (X shape: I×J).
+    feature_weights : np.ndarray, optional
+        Per-feature weights of shape (D,) for multifeature mode.
+        Only used if multifeature=True.
     """
     # overlap budgets: <=0 means data-driven stopping
     if k_row <= 0 or k_col <= 0:
         k_row = None
         k_col = None
 
-    # Build factory (same as before)
-    make_btf = BinaryTriFactorizationEstimator.factory(
+    # ----- INPUT PREP -----
+
+    # For multifeature: reshape (I, J) -> (I, J, D) where D=1
+    if multifeature:
+        logger.info("Multifeature mode: reshaping data to (I, J, D)")
+        X_mat, _, row_names, col_names = build_multifeature_X_matrix(
+            df, features
+        )
+        logger.info(f"X_mat shape: {X_mat.shape}")
+    else:
+        logger.info("Single-feature mode: no reshaping needed")
+        X_mat, row_names, col_names = _normalize_matrix(df)
+        logger.info(f"X_mat shape: {X_mat.shape}")
+
+    # small stats
+    num_total = X_mat.size
+    num_nans = int(np.isnan(X_mat).sum())
+    num_finite = int(np.isfinite(X_mat).sum())
+    logger.info(
+        "Finite: %d, NaNs: %d (%.1f%%)",
+        num_finite,
+        num_nans,
+        100.0 * num_nans / max(1, num_total),
+    )
+
+    try:
+        # Use a rank k=10 for comparison (matches R=10 tested)
+        nmf_pve, nmf_rmse = compute_nmf_pve(X_mat, rank=10)
+        logger.info(
+            f"NMF BASELINE (k=10) PVE: {nmf_pve:.2f}%, RMSE: {nmf_rmse:.3f}"
+        )
+    except Exception as e:
+        logger.error(f"NMF Baseline failed: {e}")
+        nmf_pve, nmf_rmse = np.nan, np.nan
+
+    # ----- grid sweep over (R,C) -----
+    R_list = list(row_range)
+    C_list = list(col_range)
+    # Select estimator class based on multifeature flag
+    if multifeature:
+        EstimatorClass = BinaryTriFactorizationMultiFeature
+        factory_kwargs = dict(feature_weights=feature_weights)
+    else:
+        EstimatorClass = BinaryTriFactorizationEstimator
+        factory_kwargs = {}
+
+    # Build factory with appropriate estimator class
+    make_btf = EstimatorClass.factory(
         k_row=k_row,
         k_col=k_col,
         loss="gaussian",
@@ -1466,25 +1454,8 @@ def cluster_data_and_explain_blocks(
         prune_empty_clusters=True,
         empty_cluster_penalty=empty_cluster_penalty,
         min_cluster_size=min_cluster_size,
+        **factory_kwargs,
     )
-
-    # ----- INPUT PREP -----
-    X_mat, row_names, col_names = _normalize_matrix(df)
-
-    # small stats
-    num_total = X_mat.size
-    num_nans = int(np.isnan(X_mat).sum())
-    num_finite = int(np.isfinite(X_mat).sum())
-    logger.info(
-        "Finite: %d, NaNs: %d (%.1f%%)",
-        num_finite,
-        num_nans,
-        100.0 * num_nans / max(1, num_total),
-    )
-
-    # ----- grid sweep over (R,C) -----
-    R_list = list(row_range)
-    C_list = list(col_range)
     grid_df = sweep_btf_grid(
         make_btf,
         X_mat,
@@ -1509,50 +1480,53 @@ def cluster_data_and_explain_blocks(
 
     # ----- fit final model -----
     est.fit(X_mat)
-    # suggested_min_keep_elbow = suggest_min_keep_elbow(est)
-    # logger.info(f"Suggested min_keep: {suggested_min_keep_elbow}")
-    # logger.info(f"keep_strategy: {keep_strategy}")
-    # if keep_strategy == "TopK":
-    #     min_keep = min(min_keep, suggested_min_keep_elbow)
-    # else:
-
-    # min_keep = suggested_min_keep_elbow
-
-    # assign = est.filter_blocks(
-    #     X=X_mat,
-    #     min_keep=min_keep,
-    #     keep_strategy=keep_strategy,
-    #     return_frame=False,
-    # )
-
     col_names = np.array(col_names)
+
     # optional summary
     if summary_fn is not None:
+        # For multifeature, aggregate B across features for explain_blocks
+        if multifeature and hasattr(est, "B_vec_"):
+            # Create a temporary estimator with aggregated B for explain_blocks
+            # B_vec_ has shape (R, C, D); aggregate to (R, C)
+            B_agg = np.mean(est.B_vec_, axis=2)  # Average across features
+            logger.info(
+                f"Aggregated B from {est.B_vec_.shape} to {B_agg.shape}"
+            )
+            # Temporarily set B_ for explain_blocks
+            est.B_ = B_agg
+            X_for_explain = X_mat
+        else:
+            X_for_explain = X_mat
+
         summary = est.explain_blocks(
-            X=X_mat,
+            X=X_for_explain,
             assign=None,
-            row_names=row_names,
-            col_names=col_names,
+            row_names=np.asarray(row_names),
+            col_names=np.asarray(col_names),
             top_k=5,
         )
         summary.to_csv(summary_fn, index=False)
 
     # diagnostics
     U, B, V = est.factors()
-
-    # block_ids = assign["block_id"]
-    # out = _build_assign_df(row_names, block_ids, df, id_cols=("store_item",))
-
-    # if block_id_fn is not None:
-    #     np.save(block_id_fn, np.asarray(out["block_id"]))
-
-    # unique_assignments = np.unique(out["block_id"])
-    # logger.info(
-    #     f"unique block assignments (first 20): {unique_assignments[:20]}  "
-    #     f"count: {unique_assignments.size}"
-    # )
     logger.info(f"row-cluster counts: {U.sum(axis=0).astype(int)}")
     logger.info(f"col-cluster counts: {V.sum(axis=0).astype(int)}")
+
+    # For multifeature, B has shape (R, C, D); compute energy per feature
+    if multifeature:
+        logger.info(f"Multifeature B shape: {B.shape}")
+        # Compute energy for each feature and aggregate
+        D = B.shape[2]
+        E_list = []
+        for d in range(D):
+            E_d = (B[:, :, d] ** 2) * (
+                U.sum(axis=0)[:, None] * V.sum(axis=0)[None, :]
+            )
+            E_list.append(E_d)
+        E = np.stack(E_list, axis=2)  # (R, C, D)
+        logger.info(f"Energy matrix shape: {E.shape}")
+    else:
+        E = (B**2) * (U.sum(axis=0)[:, None] * V.sum(axis=0)[None, :])
 
     results = {
         # factorization results
@@ -1560,10 +1534,12 @@ def cluster_data_and_explain_blocks(
         "V": V,
         "B": B,
         # block energy matrix
-        "E": (B**2) * (U.sum(axis=0)[:, None] * V.sum(axis=0)[None, :]),
+        "E": E,
         # labels (hard assignments)
         "row_names": row_names,
         "col_labels": col_names,
+        # metadata
+        "multifeature": multifeature,
     }
 
     if model_fn is not None:
@@ -1571,8 +1547,5 @@ def cluster_data_and_explain_blocks(
         with open(model_fn, "wb") as f:
             pickle.dump(results, f)
         logger.info(f"Saved model to {model_fn}")
-
-    # if output_fn is not None:
-    #     save_csv_or_parquet(out, output_fn)
 
     return results

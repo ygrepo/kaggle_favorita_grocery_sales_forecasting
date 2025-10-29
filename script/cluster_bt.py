@@ -15,7 +15,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.BTNMF_util import cluster_data_and_explain_blocks
+from src.BTNMF_util import cluster_data_and_explain_blocks, compute_ntf_pve
 from src.utils import (
     setup_logging,
     read_csv_or_parquet,
@@ -153,12 +153,6 @@ def parse_args():
         help="Batch size for multiprocessing",
     )
     parser.add_argument(
-        "--log_fn",
-        type=str,
-        default="",
-        help="Path to save script outputs (relative to project root)",
-    )
-    parser.add_argument(
         "--empty_cluster_penalty",
         type=float,
         default=0.0,
@@ -169,6 +163,30 @@ def parse_args():
         type=int,
         default=2,
         help="Minimum cluster size",
+    )
+    parser.add_argument(
+        "--features",
+        type=str,
+        default="",
+        help="Comma-separated list of feature names",
+    )
+    parser.add_argument(
+        "--multifeature",
+        type=str2bool,
+        default=False,
+        help="Use BinaryTriFactorizationMultiFeature (3D data)",
+    )
+    parser.add_argument(
+        "--feature_weights",
+        type=str,
+        default="",
+        help="Comma-separated feature weights (e.g., '1.0,0.5,0.25')",
+    )
+    parser.add_argument(
+        "--log_fn",
+        type=str,
+        default="",
+        help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
         "--log_level",
@@ -194,7 +212,6 @@ def main():
         logger.info(f"  Data fn: {args.data_fn}")
         logger.info(f"  Row range: {args.row_range}")
         logger.info(f"  Col range: {args.col_range}")
-        logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Alpha: {args.alpha}")
         logger.info(f"  Beta: {args.beta}")
         logger.info(f"  Block l1: {args.block_l1}")
@@ -213,6 +230,9 @@ def main():
         logger.info(f"  Batch size: {args.batch_size}")
         logger.info(f"  Summary fn: {args.summary_fn}")
         logger.info(f"  Model fn: {args.model_fn}")
+        logger.info(f"  Multifeature: {args.multifeature}")
+        logger.info(f"  Features: {args.features}")
+        logger.info(f"  Feature weights: {args.feature_weights}")
         logger.info(f"  Log level: {args.log_level}")
 
         data_fn = Path(args.data_fn).resolve()
@@ -223,29 +243,51 @@ def main():
         summary_fn = Path(args.summary_fn).resolve()
         model_fn = Path(args.model_fn).resolve()
 
-        cluster_data_and_explain_blocks(
-            df,
-            row_range=args.row_range,
-            col_range=args.col_range,
-            alpha=args.alpha,
-            beta=args.beta,
-            block_l1=args.block_l1,
-            b_inner=args.b_inner,
-            max_iter=args.max_iter,
-            k_row=args.k_row,
-            k_col=args.k_col,
-            patience=args.patience,
-            tol=args.tol,
-            max_pve_drop=args.max_pve_drop,
-            top_k=args.top_k,
-            top_rank_fn=top_rank_fn,
-            summary_fn=summary_fn,
-            model_fn=model_fn,
-            n_jobs=args.n_jobs,
-            batch_size=args.batch_size,
-            empty_cluster_penalty=args.empty_cluster_penalty,
-            min_cluster_size=args.min_cluster_size,
-        )
+        # Parse feature weights if provided
+        feature_weights = None
+        if args.feature_weights:
+            import numpy as np
+
+            feature_weights = np.array(
+                [float(w) for w in args.feature_weights.split(",")]
+            )
+            logger.info(f"Parsed feature weights: {feature_weights}")
+        else:
+            logger.info("No feature weights provided")
+        if args.features:
+            features = args.features.split(",")
+        else:
+            features = None
+
+        pve, rmse = compute_ntf_pve(df, features, rank=200)
+        logger.info(f"NTF PVE: {pve:.2f}%, RMSE: {rmse:.3f}")
+
+        # cluster_data_and_explain_blocks(
+        #     df,
+        #     row_range=args.row_range,
+        #     col_range=args.col_range,
+        #     alpha=args.alpha,
+        #     beta=args.beta,
+        #     block_l1=args.block_l1,
+        #     b_inner=args.b_inner,
+        #     max_iter=args.max_iter,
+        #     k_row=args.k_row,
+        #     k_col=args.k_col,
+        #     patience=args.patience,
+        #     tol=args.tol,
+        #     max_pve_drop=args.max_pve_drop,
+        #     top_k=args.top_k,
+        #     top_rank_fn=top_rank_fn,
+        #     summary_fn=summary_fn,
+        #     model_fn=model_fn,
+        #     n_jobs=args.n_jobs,
+        #     batch_size=args.batch_size,
+        #     empty_cluster_penalty=args.empty_cluster_penalty,
+        #     min_cluster_size=args.min_cluster_size,
+        #     multifeature=args.multifeature,
+        #     features=features,
+        #     feature_weights=feature_weights,
+        # )
         logger.info("Data clustering completed successfully")
     except Exception as e:
         logger.error(f"Error clustering data: {e}")

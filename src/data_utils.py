@@ -721,30 +721,6 @@ def build_growth_features_for_clustering(
         sideways=pd.to_numeric(df["growth_sideways"], errors="coerce"),
         dn=pd.to_numeric(df["growth_down"], errors="coerce"),
     )
-    # --- base aggregates with safer std calculation ---
-    # feats = (
-    #     g.groupby(key, dropna=False)
-    #     .agg(
-    #         gr_median=("gr", safe_median),
-    #         gr_std=("gr", safe_std),
-    #         gr_iqr=("gr", safe_iqr),
-    #         **frac_stats("gr"),
-    #         up_to_down_ratio=(
-    #             "gr",
-    #             lambda s: (
-    #                 lambda s_clean: (
-    #                     lambda pos, neg: (
-    #                         np.nan if neg == 0 else float(pos / neg)
-    #                     )
-    #                 )(
-    #                     np.sum(s_clean > tau),
-    #                     np.sum(s_clean < -tau),
-    #                 )
-    #             )(pd.to_numeric(s, errors="coerce").dropna()),
-    #         ),
-    #     )
-    #     .reset_index()
-    # )
 
     feats = (
         g.groupby(key, dropna=False)

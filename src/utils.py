@@ -1,7 +1,6 @@
 import os
 import sys
 import argparse
-from datetime import datetime
 from pathlib import Path
 import torch
 import random
@@ -316,3 +315,35 @@ def safe_rolling_mean(
     if len(series) == 0 or series.isna().all():
         return pd.Series(index=series.index, dtype=float)
     return series.rolling(window, min_periods=min_periods).mean()
+
+
+def build_multifeature_X_matrix(
+    df: pd.DataFrame, features: list[str]
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
+    """Build a 3D matrix of shape (I, J, D) from a DataFrame with D features"""
+    df[["store", "item"]] = df["store_item"].str.split("_", n=1, expand=True)
+    stores = np.sort(df["store"].unique())
+    items = np.sort(df["item"].unique())
+    I, J, D = len(stores), len(items), len(features)
+    rpos = {s: i for i, s in enumerate(stores)}
+    cpos = {t: j for j, t in enumerate(items)}
+
+    X = np.full((I, J, D), np.nan, dtype=np.float64)
+    M = np.zeros((I, J), dtype=bool)
+
+    for _, row in df.iterrows():
+        i = rpos[row["store"]]
+        j = cpos[row["item"]]
+        X[i, j, :] = row[features].to_numpy(dtype=np.float64)
+        M[i, j] = True
+
+    # z-score each channel using only observed cells; keep NaNs for now
+    for d in range(D):
+        vals = X[..., d][M]
+        # Use mean for centering, matching the standard deviation for scaling
+        mu = np.nanmean(vals)  
+        s = np.nanstd(vals) if np.nanstd(vals) > 1e-12 else 1.0
+        X[..., d] = (X[..., d] - mu) / s
+    row_names = stores.tolist()
+    col_names = items.tolist()
+    return X, M, row_names, col_names

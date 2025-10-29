@@ -1679,6 +1679,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         R = U.shape[1]
         C = V.shape[1]
         # B = est.B_
+
+        # Handle multifeature case: B has shape (R, C, D)
+        # Aggregate across features for ablation analysis
+        if B.ndim == 3:
+            # Multifeature: aggregate B across features
+            B = np.mean(B, axis=2)  # (R, C, D) -> (R, C)
+
         if B.shape != (R, C):
             B = B[:R, :C]
 
@@ -1703,6 +1710,8 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         where removing block (r,c) is a rank-1 update:
         Xhat_without = Xhat - B_rc * (U[:,r] ⊗ V[:,c])
         Positive Δ means the block is helpful.
+
+        For multifeature (X is 3D), aggregates loss across features.
         """
         U, _, V = self.factors()
         Xhat = self.reconstruct()
@@ -1715,13 +1724,29 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         L_full = model_loss(X, Xhat, loss_name, mask)
         # rank-1 contribution with current U/V
         outer = np.outer(U[:, r].astype(float), V[:, c].astype(float))
-        Xhat_wo = Xhat - b_rc * outer
+
+        # Handle multifeature case: X and Xhat are 3D
+        if X.ndim == 3:
+            # For multifeature, subtract the outer product from each feature
+            Xhat_wo = Xhat - b_rc * outer[:, :, None]
+        else:
+            # Single-feature case
+            Xhat_wo = Xhat - b_rc * outer
+
         L_wo = model_loss(X, Xhat_wo, loss_name, mask)
         return L_wo - L_full
 
     def collect_block_stats(self, X, mask=None):
         U, B, V = self.factors()
         R, C = U.shape[1], V.shape[1]
+
+        # Handle multifeature case: B has shape (R, C, D)
+        # Aggregate across features for stats collection
+        if B.ndim == 3:
+            # Multifeature: aggregate B across features
+            B_2d = np.mean(B, axis=2)  # (R, C, D) -> (R, C)
+        else:
+            B_2d = B
 
         # counts
         n_rows = U.sum(axis=0).astype(int)  # (R,)
@@ -1732,10 +1757,12 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             for c in range(C):
                 nr, nc = int(n_rows[r]), int(n_cols[c])
                 n_cells = nr * nc
-                b = float(B[r, c])
+                b = float(B_2d[r, c])
 
                 # ΔLoss (positive means helpful)
-                dloss = self.ablate_block_delta_loss(X, r, c, B=B, mask=mask)
+                dloss = self.ablate_block_delta_loss(
+                    X, r, c, B=B_2d, mask=mask
+                )
 
                 rows.append(
                     {
@@ -1831,13 +1858,59 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
         b_thresh: float = 0.0,  # ignore blocks with |B_rc| <= b_thresh when assign is None
     ) -> pd.DataFrame:
         """
-        Summarize blocks using overlapping U/V memberships.
-        Reports both overlap-counted and 'exclusive' (overlap-adjusted) statistics.
+        Generates a summary DataFrame of the active block clusters (r, c).
 
-        exclusive weighting: each cell contributes 1/K where
-        K = (# row clusters containing i) * (# col clusters containing j).
+        Reports statistics for each block by counting cell memberships using two methods:
+        1. Overlap-Counted: Considers all cells (i, j) where both U[i, r]=1 and V[j, c]=1.
+        2. Exclusive (Overlap-Adjusted): Weights each cell (i, j) by 1/K, where
+           K = (# row clusters containing i) * (# col clusters containing j),
+           to account for overlap and assign influence fairly.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            The original data matrix of shape (I, J). In multifeature models,
+            this should typically be the aggregated (e.g., mean) 2D data (I, J).
+        assign : dict or None
+            A dictionary of assignments (e.g., from assign_unique_blocks). If
+            provided, only the blocks present in 'block_id' are reported.
+        row_names : np.ndarray
+            Names for the rows (I) corresponding to the first dimension of X.
+        col_names : np.ndarray
+            Names for the columns (J) corresponding to the second dimension of X.
+        top_k : int, default=5
+            Number of top-contributing rows and columns to list per block.
+        b_thresh : float, default=0.0
+            Absolute magnitude threshold for B_rc. Blocks with |B_rc| <= b_thresh
+            are ignored if `assign` is None.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame where each row is a block (r, c), sorted by block magnitude
+            |B_rc| descending. Columns include:
+            - block_id, r, c: Cluster indices.
+            - B_rc: The block interaction magnitude (or its feature mean).
+            - n_cells: Total number of cells (i,j) in the block overlap.
+            - weighted_coverage_%: The exclusive (overlap-adjusted) coverage % of the total dataset.
+            - weighted_mean: The exclusive (overlap-adjusted) mean value of the block.
+            - n_stores_in_r, n_items_in_c: Number of members in the row/col cluster.
+            - stores_in_r_topk, items_in_c_topk: Top K row/column names contributing to the block mean.
         """
         U, B, V = self.U_, self.B_, self.V_
+
+        # --- Aggregate B (Block Interaction) ---
+        # B_rc represents the mean magnitude across all features for the block.
+        if B.ndim == 3:
+            # Multifeature: aggregate B across features
+            B = np.mean(B, axis=2)  # (R, C, D) -> (R, C)
+
+        # --- Aggregate X (Data) for Block Stats ---
+        # If X is 3D (I, J, D), average it over features (D) so that block stats
+        # (mean, top-K sorting) reflect all features equally.
+        if X.ndim == 3:
+            X = np.mean(X, axis=2)  # (I, J, D) -> (I, J)
+
         R, C = B.shape
 
         row_names = np.asarray(row_names)
@@ -1880,15 +1953,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             if not u_mask.any() or not v_mask.any():
                 continue
 
-            # submatrix for this block
+            # submatrix for this block (now a 2D slice of the mean data)
             X_block = X[np.ix_(u_mask, v_mask)]
             n_cells = X_block.size
             if n_cells == 0:
                 continue
 
             # overlap-counted stats
-            mean_overlap = float(X_block.mean())
-            # median_overlap = float(np.median(X_block))
+            # mean_overlap = float(X_block.mean())
 
             # exclusive stats: weight each (i,j) by 1 / (row_mult[i] * col_mult[j])
             rm = row_mult[u_mask].astype(float)[:, None]  # (Ir, 1)
@@ -1901,16 +1973,14 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
             mean_exclusive = (
                 float((W * X_block).sum() / sum_w)
                 if sum_w > 0
-                else mean_overlap
+                else float(X_block.mean())
             )
             # no canonical "exclusive median"; we keep overlap-based median
 
-            # coverage
-            # coverage_overlap = 100.0 * (n_cells / total_cells)
             # exclusive coverage (each covered cell counts 1/K)
             exclusive_coverage = float(W.sum()) / total_cells * 100.0
 
-            # top-k names by average within the block (more meaningful than arbitrary slices)
+            # top-k names by average within the block (now based on all features)
             row_means = X_block.mean(axis=1)
             col_means = X_block.mean(axis=0)
             top_row_idx = np.argsort(-row_means)[:top_k]
@@ -1925,10 +1995,7 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
                     "c": int(c),
                     "B_rc": float(B[r, c]),
                     "n_cells": int(n_cells),
-                    # "coverage_%_overlap": coverage_overlap,
                     "weighted_coverage_%": exclusive_coverage,
-                    # "mean_overlap": mean_overlap,
-                    # "median_overlap": median_overlap,
                     "weighted_mean": mean_exclusive,
                     "n_stores_in_r": int(u_mask.sum()),
                     "n_items_in_c": int(v_mask.sum()),
@@ -1939,11 +2006,13 @@ class BinaryTriFactorizationEstimator(BaseEstimator, ClusterMixin):
 
         df = pd.DataFrame(rows_out)
         if not df.empty:
-            # Sort by magnitude of the block weight or by exclusive mean—your choice
+            # Sort by absolute magnitude of the block weight
             df = df.reindex(
                 df["B_rc"].abs().sort_values(ascending=False).index
             )
-            # alternative: df = df.sort_values("mean_exclusive", ascending=False)
+            # --- IMPROVEMENT 3: Clearer column name for B ---
+            df.rename(columns={"B_rc": "Block_Magnitude_B"}, inplace=True)
+
         return df
 
     @classmethod
@@ -2424,3 +2493,46 @@ class BinaryTriFactorizationMultiFeature(BinaryTriFactorizationEstimator):
         if self.B_vec_ is None:
             raise ValueError("Model has not been fitted yet.")
         return self.U_, self.B_vec_, self.V_
+
+    @classmethod
+    def factory(
+        cls, **frozen_kwargs
+    ) -> Callable[..., "BinaryTriFactorizationMultiFeature"]:
+        """
+        Create a builder with frozen default parameters.
+
+        Returns a callable builder that creates estimator instances with the
+        specified frozen defaults. Per-call parameters can override frozen defaults.
+
+        Parameters
+        ----------
+        **frozen_kwargs : dict
+            Default parameters to freeze for all instances built by this builder.
+            Common options: alpha, beta, max_iter, tol, loss, k_row, k_col,
+            block_l1, b_inner, patience, feature_weights, etc.
+
+        Returns
+        -------
+        BTFMultiFeatureBuilder
+            A callable builder that creates estimator instances
+
+        Example
+        -------
+        >>> from src.BinaryTriFactorizationEstimator import BinaryTriFactorizationMultiFeature
+        >>> builder = BinaryTriFactorizationMultiFeature.factory(
+        ...     alpha=1e-2,
+        ...     beta=0.01,
+        ...     max_iter=50,
+        ...     feature_weights=np.array([1.0, 0.5, 0.5])
+        ... )
+        >>> estimator = builder(
+        ...     n_row_clusters=5,
+        ...     n_col_clusters=3,
+        ...     random_state=42
+        ... )
+        """
+        from src.BinaryTriFactorizationMultiFeatureFactory import (
+            BTFMultiFeatureBuilder,
+        )
+
+        return BTFMultiFeatureBuilder(cls, frozen_kwargs)
