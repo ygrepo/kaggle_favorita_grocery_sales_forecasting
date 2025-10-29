@@ -39,7 +39,7 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
-        "--rank",
+        "--ranks",
         type=parse_range,
         default=range(2, 5),
         help="Ranks",
@@ -90,8 +90,7 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Data fn: {args.data_fn}")
-        ranks = args.ranks.split(",")
-        logger.info(f"  Ranks: {ranks}")
+        logger.info(f"  Ranks: {args.ranks}")
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  Tolerance: {args.tol}")
         logger.info(f"  Log level: {args.log_level}")
