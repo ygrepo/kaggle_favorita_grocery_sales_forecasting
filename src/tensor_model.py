@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 def fit_and_decompose(
     df: pd.DataFrame,
     features: str | list[str],
-    ranks: int | list[int] | None = None,
+    ranks: int | list[int] | range | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
 ):
@@ -25,6 +25,11 @@ def fit_and_decompose(
     if isinstance(features, str):
         features = [f.strip() for f in features.split(",") if f.strip()]
         logger.info(f"Parsed features: {features}")
+
+    # Convert range to list for tensorly compatibility
+    if isinstance(ranks, range):
+        ranks = list(ranks)
+        logger.info(f"Converted ranks range to list: {ranks}")
 
     X_mat, M, row_names, col_names = build_multifeature_X_matrix(df, features)
     logger.info(f"X_mat shape:{X_mat.shape}")
