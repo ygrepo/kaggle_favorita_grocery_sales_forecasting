@@ -20,11 +20,33 @@ from src.utils import (
     setup_logging,
     read_csv_or_parquet,
     get_logger,
-    str2bool,
-    parse_range,
 )
 
 logger = get_logger(__name__)
+
+
+def parse_ranks(ranks_str: str):
+    """
+    Parse ranks from comma-separated string.
+    Expected format: "rI,rJ,rK" e.g., "12,12,40"
+    Returns tuple of 3 integers or None if empty.
+    """
+    if not ranks_str or ranks_str.strip() == "":
+        return None
+
+    try:
+        parts = [int(x.strip()) for x in ranks_str.split(",")]
+        if len(parts) != 3:
+            raise ValueError(
+                f"Expected 3 ranks (rI, rJ, rK), got {len(parts)}"
+            )
+        return tuple(parts)  # type: ignore
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"Invalid ranks format: {ranks_str}. "
+            f"Expected 'rI,rJ,rK' with integers (e.g., '12,12,40'). "
+            f"Error: {e}"
+        )
 
 
 def parse_args():
@@ -40,9 +62,9 @@ def parse_args():
     )
     parser.add_argument(
         "--ranks",
-        type=parse_range,
-        default=range(2, 5),
-        help="Ranks",
+        type=parse_ranks,
+        default=None,
+        help="Ranks as comma-separated integers (rI,rJ,rK), e.g., '12,12,40'",
     )
     parser.add_argument(
         "--max_iter",

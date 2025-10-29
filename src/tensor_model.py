@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 def fit_and_decompose(
     df: pd.DataFrame,
     features: str | list[str],
-    ranks: int | list[int] | tuple[int, ...] | range | None = None,
+    ranks: tuple[int, int, int] | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
 ):
@@ -26,33 +26,17 @@ def fit_and_decompose(
         features = [f.strip() for f in features.split(",") if f.strip()]
         logger.info(f"Parsed features: {features}")
 
-    # Convert range to list for tensorly compatibility
-    if isinstance(ranks, range):
-        ranks = list(ranks)
-        logger.info(f"Converted ranks range to list: {ranks}")
-
     X_mat, M, row_names, col_names = build_multifeature_X_matrix(df, features)
     logger.info(f"X_mat shape:{X_mat.shape}")
     I, J, D = X_mat.shape
 
-    # Convert ranks to tuple of (rI, rJ, rK) for Tucker decomposition
-    # Tucker expects a tuple of ranks per mode
-    if isinstance(ranks, list):
-        if len(ranks) == 3:
-            # Already has 3 ranks for each mode
-            rank_tuple = tuple(ranks)
-        elif len(ranks) == 1:
-            # Single rank: use same for all modes
-            rank_tuple = (ranks[0], ranks[0], ranks[0])
-        else:
-            # Multiple ranks: use them cyclically or take first
-            rank_tuple = (ranks[0], ranks[0], ranks[0])
-    elif isinstance(ranks, int):
-        # Single integer: use same for all modes
-        rank_tuple = (ranks, ranks, ranks)
-    else:
+    # Use provided ranks or compute defaults
+    if ranks is None:
         # Default: use 1/4 of each dimension
         rank_tuple = (max(2, I // 4), max(2, J // 4), max(2, D // 4))
+        logger.info(f"No ranks provided, using defaults: {rank_tuple}")
+    else:
+        rank_tuple = ranks
 
     logger.info(f"Performing Tucker decomposition with rank={rank_tuple}")
     tucker_decomposition(X_mat, M, rank_tuple, n_iter, tol)
@@ -91,7 +75,7 @@ def pve(X: np.ndarray, Xhat: np.ndarray):
 def tucker_decomposition(
     X: np.ndarray,
     M: np.ndarray,
-    ranks: int | list[int] | tuple[int, ...] | None = None,
+    ranks: tuple[int, int, int] | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
