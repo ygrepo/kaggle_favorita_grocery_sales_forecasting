@@ -220,9 +220,7 @@ def fit_and_decompose(
     elif method == "ntf":
         logger.info(f"Performing NTF decomposition with rank={rank_tuple}")
         # Pass the device tensors to the function
-        weights, factors = nonneg_parafac(
-            build_multifeature_X_matrix, rank_tuple
-        )
+        weights, factors = nonneg_parafac(X, rank_tuple)
     elif method == "parafac":
         logger.info(f"Performing PARAFAC decomposition with rank={rank_tuple}")
         # Pass the device tensors to the function
@@ -303,7 +301,7 @@ def center_scale_signed(
         sds[d] = sd
 
     # Replace ALL NaNs (from original data or from scaling) with 0.0
-    X = torch.nan_to_num(X, nan=0.0)
+    X = torch.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
     return X, mus, sds
 
 
