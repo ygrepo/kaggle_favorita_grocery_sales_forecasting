@@ -217,7 +217,7 @@ def nonneg_parafac(
     """
 
     # 2. Prepare data for NTF (on device)
-    X_imputed = tl.nan_to_num(X, nan=0.0)
+    X_imputed = torch.nan_to_num(X, nan=0.0)
     X_imputed[X_imputed < 0] = 0.0  # In-place op on device tensor
 
     # 3. Fit the Non-negative PARAFAC (CP) model (on device)
