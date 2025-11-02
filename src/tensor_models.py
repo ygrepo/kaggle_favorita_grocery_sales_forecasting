@@ -1,9 +1,18 @@
+import os
+import itertools
+from typing import List, Union
 import pandas as pd
 import numpy as np
 import tensorly as tl
-from tensorly.decomposition import non_negative_parafac, tucker, parafac
+from tensorly.decomposition import (
+    non_negative_parafac,
+    tucker,
+    parafac,
+    cp_to_tensor,
+)
 import torch  # Import torch to check for CUDA
 from typing import Tuple
+
 
 # --- MODIFICATION: Set backend and device ---
 # 1. Set backend to PyTorch
@@ -18,6 +27,154 @@ from src.utils import get_logger, build_multifeature_X_matrix
 
 logger = get_logger(__name__)
 logger.info(f"Tensorly backend set to 'pytorch'. Using device: {device}")
+
+
+def tune_ranks(
+    method: str,
+    df: pd.DataFrame,
+    features: Union[str, List[str]],
+    output_csv_path: Path,
+    rank_list: List[int] = None,
+    store_ranks: List[int] = None,
+    item_ranks: List[int] = None,
+    feature_ranks: List[int] = None,
+    n_iter: int = 500,
+    tol: float = 1e-8,
+) -> pd.DataFrame:
+    """
+    Calls fit_and_decompose for every combination of ranks and saves
+    PVE/RMSE results to a CSV.
+
+    Args:
+        method: 'tucker', 'parafac', or 'ntf'
+        df: Input DataFrame
+        features: List of feature names to use
+        output_csv_path: Path to save the resulting CSV
+        rank_list: (For 'parafac'/'ntf') A list of ranks to test (e.g., [5, 10, 15])
+        store_ranks: (For 'tucker') List of ranks for mode 0
+        item_ranks: (For 'tucker') List of ranks for mode 1
+        feature_ranks: (For 'tucker') List of ranks for mode 2
+        n_iter: Max iterations
+        tol: Tolerance
+    """
+    results = []
+
+    if method == "tucker":
+        # Check for correct inputs
+        if not (store_ranks and item_ranks and feature_ranks):
+            logger.error(
+                "For 'tucker' method, you must provide store_ranks, item_ranks, and feature_ranks."
+            )
+            return pd.DataFrame()
+
+        # Generate all combinations
+        rank_combinations = list(
+            itertools.product(store_ranks, item_ranks, feature_ranks)
+        )
+        total_runs = len(rank_combinations)
+        logger.info(
+            f"--- Starting Tucker rank tuning. Testing {total_runs} combinations. ---"
+        )
+
+        for i, rank_tuple in enumerate(rank_combinations):
+            logger.info(
+                f"*** Testing Tucker combo {i+1}/{total_runs}: {rank_tuple} ***"
+            )
+            try:
+                pve, rmse = fit_and_decompose(
+                    method=method,
+                    df=df,
+                    features=features,
+                    ranks=rank_tuple,
+                    n_iter=n_iter,
+                    tol=tol,
+                )
+                results.append(
+                    {
+                        "rank_store": rank_tuple[0],
+                        "rank_item": rank_tuple[1],
+                        "rank_feature": rank_tuple[2],
+                        "pve": pve,
+                        "rmse": rmse,
+                    }
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed on rank {rank_tuple}: {e}", exc_info=True
+                )
+                results.append(
+                    {
+                        "rank_store": rank_tuple[0],
+                        "rank_item": rank_tuple[1],
+                        "rank_feature": rank_tuple[2],
+                        "pve": np.nan,
+                        "rmse": np.nan,
+                    }
+                )
+
+    elif method in ["parafac", "ntf"]:
+        # Check for correct inputs
+        if not rank_list:
+            logger.error(f"For '{method}' method, you must provide rank_list.")
+            return pd.DataFrame()
+
+        total_runs = len(rank_list)
+        logger.info(
+            f"--- Starting {method} rank tuning. Testing {total_runs} ranks. ---"
+        )
+
+        for i, rank in enumerate(rank_list):
+            logger.info(
+                f"*** Testing {method} rank {i+1}/{total_runs}: {rank} ***"
+            )
+            try:
+                pve, rmse = fit_and_decompose(
+                    method=method,
+                    df=df,
+                    features=features,
+                    ranks=rank,
+                    n_iter=n_iter,
+                    tol=tol,
+                )
+                results.append({"rank": rank, "pve": pve, "rmse": rmse})
+            except Exception as e:
+                logger.error(f"Failed on rank {rank}: {e}", exc_info=True)
+                results.append({"rank": rank, "pve": np.nan, "rmse": np.nan})
+
+    else:
+        logger.error(
+            f"Invalid method provided: {method}. Must be 'tucker', 'parafac', or 'ntf'."
+        )
+        return pd.DataFrame()
+
+    # --- Save results ---
+    if not results:
+        logger.warning("No results were generated.")
+        return pd.DataFrame()
+
+    results_df = pd.DataFrame(results)
+
+    # Check if all results are NaN (all failed)
+    if results_df[["pve", "rmse"]].isna().all().all():
+        logger.error("All rank tuning runs failed. Returning empty DataFrame.")
+        return pd.DataFrame()
+
+    # Ensure output directory exists
+    output_dir = output_csv_path.parent
+    if output_dir:  # Check if it's not an empty string
+        os.makedirs(output_dir, exist_ok=True)
+
+    logger.info(f"Tuning complete. Saving results to {output_csv_path}")
+    results_df.to_csv(output_csv_path, index=False)
+
+    # Log the best results
+    best_pve = results_df.sort_values(by="pve", ascending=False)
+    logger.info(f"Best results by PVE:\n{best_pve.head()}")
+
+    best_rmse = results_df.sort_values(by="rmse", ascending=True)
+    logger.info(f"Best results by RMSE:\n{best_rmse.head()}")
+
+    return results_df
 
 
 def fit_and_decompose(

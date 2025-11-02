@@ -14,12 +14,15 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
 
-RANKS=45
+RANK_LIST="10,20,30,40,50,60,70,80,90,100"
+STORE_RANKS="10,20,30,40,50,60,70,80,90,100"
+SKU_RANKS="10,20,30,40,50,60,70,80,90,100"
+FEATURE_RANKS="10,20,30,40,50,60,70,80,90,100"
 #FEATURES="gr_median"
 FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 MAX_ITER=500
 TOL=1e-5
-METHOD="parafac"
+METHOD="tucker"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -31,7 +34,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --method) METHOD="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
-    --ranks) RANKS="$2"; shift 2 ;;
+    --rank_list) RANK_LIST="$2"; shift 2 ;;
+    --store_ranks) STORE_RANKS="$2"; shift 2 ;;
+    --sku_ranks) SKU_RANKS="$2"; shift 2 ;;
+    --feature_ranks) FEATURE_RANKS="$2"; shift 2 ;;
     --max_iter) MAX_ITER="$2"; shift 2 ;;
     --tol) TOL="$2"; shift 2 ;;
     --features) FEATURES="$2"; shift 2 ;;
@@ -48,7 +54,10 @@ mkdir -p "$LOG_DIR"
 # Set up log file with timestamp
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
-echo "Ranks: $RANKS" | tee -a "$LOG_FILE"
+echo "Rank list: $RANK_LIST" | tee -a "$LOG_FILE"
+echo "Store ranks: $STORE_RANKS" | tee -a "$LOG_FILE"
+echo "Item ranks: $SKU_RANKS" | tee -a "$LOG_FILE"
+echo "Feature ranks: $FEATURE_RANKS" | tee -a "$LOG_FILE"
 echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
 echo "Features: $FEATURES" | tee -a "$LOG_FILE"
@@ -61,7 +70,10 @@ set +e
 python "${SCRIPT_DIR}/cluster_tensors.py" \
   --method "$METHOD" \
   --data_fn "$DATA_FN" \
-  --ranks "$RANKS" \
+  --rank_list "$RANK_LIST" \
+  --store_ranks "$STORE_RANKS" \
+  --sku_ranks "$SKU_RANKS" \
+  --feature_ranks "$FEATURE_RANKS" \
   --max_iter "$MAX_ITER" \
   --tol "$TOL" \
   --features "$FEATURES" \

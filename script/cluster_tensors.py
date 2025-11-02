@@ -15,7 +15,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.tensor_models import fit_and_decompose
+from src.tensor_models import tune_ranks
 from src.utils import (
     setup_logging,
     read_csv_or_parquet,
@@ -59,18 +59,41 @@ def parse_args():
         choices=["tucker", "ntf", "parafac"],
         help="Decomposition method",
     )
-
+    parser.add_argument(
+        "--store_ranks",
+        type=str,
+        default="",
+        help="Comma-separated list of store ranks to test (for Tucker only)",
+    )
+    parser.add_argument(
+        "--sku_ranks",
+        type=str,
+        default="",
+        help="Comma-separated list of item ranks to test (for Tucker only)",
+    )
+    parser.add_argument(
+        "--feature_ranks",
+        type=str,
+        default="",
+        help="Comma-separated list of feature ranks to test (for Tucker only)",
+    )
+    parser.add_argument(
+        "--rank_list",
+        type=str,
+        default="",
+        help="Comma-separated list of ranks to test (for PARAFAC/NTF only)",
+    )
+    parser.add_argument(
+        "--output_csv_path",
+        type=Path,
+        default=None,
+        help="Path to save results CSV (relative to project root)",
+    )
     parser.add_argument(
         "--data_fn",
         type=str,
         default="",
         help="Path to training data file (relative to project root)",
-    )
-    parser.add_argument(
-        "--ranks",
-        type=parse_ranks,
-        default=None,
-        help="Ranks as comma-separated integers (rI,rJ,rK), e.g., '12,12,40'",
     )
     parser.add_argument(
         "--max_iter",
@@ -118,8 +141,12 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Method: {args.method}")
+        logger.info(f"  Output CSV path: {args.output_csv_path}")
+        logger.info(f"  Store ranks: {args.store_ranks}")
+        logger.info(f"  Item ranks: {args.item_ranks}")
+        logger.info(f"  Feature ranks: {args.feature_ranks}")
+        logger.info(f"  Rank list: {args.rank_list}")
         logger.info(f"  Data fn: {args.data_fn}")
-        logger.info(f"  Ranks: {args.ranks}")
         logger.info(f"  Features: {args.features}")
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  Tolerance: {args.tol}")
@@ -129,13 +156,20 @@ def main():
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
         logger.info(f"Data loaded: {df.head()}")
-
-        pve_percent, rmse = fit_and_decompose(
-            args.method, df, args.features, args.ranks, args.max_iter, args.tol
+        output_csv_path = Path(args.output_csv_path).resolve()
+        results_df = tune_ranks(
+            args.method,
+            df,
+            args.features,
+            output_csv_path,
+            rank_list=args.rank_list,
+            store_ranks=args.store_ranks,
+            item_ranks=args.item_ranks,
+            feature_ranks=args.feature_ranks,
+            n_iter=args.max_iter,
+            tol=args.tol,
         )
-        logger.info(f"PVE: {pve_percent:.2f}%")
-        logger.info(f"RMSE: {rmse:.2f}")
-
+        logger.info(f"Results:\n{results_df.head()}")
         logger.info("Data clustering completed successfully")
     except Exception as e:
         logger.error(f"Error clustering data: {e}")
