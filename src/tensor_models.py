@@ -41,7 +41,7 @@ def fit_and_decompose(
     # Move data to the selected device (GPU or CPU)
     # Assuming X_mat is float and M is boolean
     X_mat = tl.tensor(X, device=device, dtype=tl.float32)
-    M = tl.tensor(M, device=device, dtype=tl.bool)
+    M = tl.tensor(M, device=device, dtype=torch.bool)
 
     # X is already a tensor, center_scale_signed now accepts tensors
     X, mus, sds = center_scale_signed(X_mat, M)
