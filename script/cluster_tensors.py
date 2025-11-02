@@ -157,15 +157,33 @@ def main():
         df = read_csv_or_parquet(data_fn)
         logger.info(f"Data loaded: {df.head()}")
         output_path = args.output_path.resolve()
+        try:
+            # Parse the strings into lists of integers
+            store_ranks_list = [int(r) for r in args.store_ranks.split(",")]
+            sku_ranks_list = [
+                int(r) for r in args.sku_ranks.split(",")
+            ]  # Your log calls it 'SKU ranks'
+            feature_ranks_list = [
+                int(r) for r in args.feature_ranks.split(",")
+            ]
+            rank_list_list = [int(r) for r in args.rank_list.split(",")]
+
+        except ValueError as e:
+            logger.error(
+                f"Invalid rank argument. Ranks must be comma-separated integers. Error: {e}"
+            )
+            # You should probably exit here
+            return
+
         results_df = tune_ranks(
             args.method,
             df,
             args.features,
             output_path,
-            rank_list=args.rank_list,
-            store_ranks=args.store_ranks,
-            sku_ranks=args.sku_ranks,
-            feature_ranks=args.feature_ranks,
+            rank_list=rank_list_list,
+            store_ranks=store_ranks_list,
+            sku_ranks=sku_ranks_list,
+            feature_ranks=feature_ranks_list,
             n_iter=args.max_iter,
             tol=args.tol,
         )
