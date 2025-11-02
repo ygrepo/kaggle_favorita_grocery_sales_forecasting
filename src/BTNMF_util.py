@@ -2,7 +2,7 @@ import numpy as np
 from typing import Dict, Any, Iterable, Optional, Callable, Tuple
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.utils.extmath import squared_norm,
+from sklearn.utils.extmath import squared_norm
 
 from src.BinaryTriFactorizationEstimator import (
     BinaryTriFactorizationEstimator,
@@ -26,6 +26,7 @@ import pickle
 import warnings
 
 logger = get_logger(__name__)
+
 
 def compute_nmf_pve(X_mat, rank):
     """
