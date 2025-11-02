@@ -230,7 +230,7 @@ def fit_and_decompose(
     else:
         raise ValueError(f"Invalid method: {method}")
 
-    pve_percent, rmse = errors(X_mat, weights, factors)
+    pve_percent, rmse = errors(X, weights, factors)
     return pve_percent, rmse
 
 
@@ -302,8 +302,8 @@ def center_scale_signed(
         mus[d] = mu
         sds[d] = sd
 
-    # Neutral imputation (this indexing works on tensors)
-    X[~M, :] = 0.0
+    # Replace ALL NaNs (from original data or from scaling) with 0.0
+    X = torch.nan_to_num(X, nan=0.0)
     return X, mus, sds
 
 
