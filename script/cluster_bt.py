@@ -183,6 +183,12 @@ def parse_args():
         help="Comma-separated feature weights (e.g., '1.0,0.5,0.25')",
     )
     parser.add_argument(
+        "--nmf_rank",
+        type=int,
+        default=10,
+        help="NMF rank for comparison",
+    )
+    parser.add_argument(
         "--log_fn",
         type=str,
         default="",
@@ -233,6 +239,7 @@ def main():
         logger.info(f"  Multifeature: {args.multifeature}")
         logger.info(f"  Features: {args.features}")
         logger.info(f"  Feature weights: {args.feature_weights}")
+        logger.info(f"  NMF rank: {args.nmf_rank}")
         logger.info(f"  Log level: {args.log_level}")
 
         data_fn = Path(args.data_fn).resolve()
@@ -282,6 +289,7 @@ def main():
             empty_cluster_penalty=args.empty_cluster_penalty,
             min_cluster_size=args.min_cluster_size,
             multifeature=args.multifeature,
+            nmf_rank=args.nmf_rank,
             features=features,
             feature_weights=feature_weights,
         )

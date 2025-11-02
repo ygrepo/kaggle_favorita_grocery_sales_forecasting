@@ -49,6 +49,7 @@ TOP_K=100
 EMPTY_CLUSTER_PENALTY=1.0
 MIN_CLUSTER_SIZE=2
 MULTIFEATURE=True
+NMF_RANK=100
 FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -87,6 +88,7 @@ while [[ $# -gt 0 ]]; do
     --min_cluster_size) MIN_CLUSTER_SIZE="$2"; shift 2 ;;
     --patience) PATIENCE="$2"; shift 2 ;;
     --multifeature) MULTIFEATURE="$2"; shift 2 ;;
+    --nmf_rank) NMF_RANK="$2"; shift 2 ;;
     --features) FEATURES="$2"; shift 2 ;;
     --feature_weights) FEATURE_WEIGHTS="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
@@ -125,6 +127,7 @@ echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
 echo "Multifeature: $MULTIFEATURE" | tee -a "$LOG_FILE"
 echo "Features: $FEATURES" | tee -a "$LOG_FILE"
 echo "Feature weights: $FEATURE_WEIGHTS" | tee -a "$LOG_FILE"
+echo "NMF rank: $NMF_RANK" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
@@ -154,6 +157,7 @@ python "${SCRIPT_DIR}/cluster_bt.py" \
   --multifeature "$MULTIFEATURE" \
   --features "$FEATURES" \
   --feature_weights "$FEATURE_WEIGHTS" \
+  --nmf_rank "$NMF_RANK" \
   --log_fn "$LOG_FILE" \
   --empty_cluster_penalty "$EMPTY_CLUSTER_PENALTY" \
   --min_cluster_size "$MIN_CLUSTER_SIZE" \
