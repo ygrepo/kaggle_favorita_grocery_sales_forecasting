@@ -8,19 +8,15 @@ from tensorly.decomposition import (
     non_negative_parafac,
     tucker,
     parafac,
-    cp_to_tensor,
 )
+from tensorly import cp_to_tensor
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
 
-# --- MODIFICATION: Set backend and device ---
-# 1. Set backend to PyTorch
 tl.set_backend("pytorch")
 
-# 2. Check for CUDA and set the global device
 device = "cuda" if torch.cuda.is_available() else "cpu"
-# --- End MODIFICATION ---
 
 
 from src.utils import get_logger, build_multifeature_X_matrix
@@ -242,7 +238,6 @@ def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
     # Calculate the squared differences from the mean
     squared_diffs = torch.pow(tensor - tensor_mean, 2)
 
-    # --- Corrected Variance Calculation ---
     # Sum the squared differences
     sum_sq_diff = torch.nansum(squared_diffs, dim=dim, keepdim=keepdim)
 
@@ -258,7 +253,6 @@ def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
 
     # Handle division by zero if n=0 (e.g., all NaNs or N <= ddof)
     nan_variance = torch.where(n > 0, nan_variance, float("nan"))
-    # --- End Correction ---
 
     # Take the square root to get the standard deviation
     output = torch.sqrt(nan_variance)
@@ -267,7 +261,6 @@ def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
 
 
 def center_scale_signed(
-    # --- MODIFICATION: Accept tensors ---
     X: tl.tensor,
     M: tl.tensor,
     eps: float = 1e-8,
@@ -278,16 +271,13 @@ def center_scale_signed(
     which is the feature mean after centering.
     """
     I, J, D = X.shape
-    # --- MODIFICATION: Log device ---
     logger.info(f"Centering and scaling {I*J*D} values on device={X.device}")
 
     # Create new tensors on the same device and with the same dtype as X
     mus = tl.zeros(D, device=X.device, dtype=X.dtype)
     sds = tl.ones(D, device=X.device, dtype=X.dtype)
-    # --- End MODIFICATION ---
 
     for d in range(D):
-        # --- MODIFICATION: Use tensorly (PyTorch) functions ---
         vals = X[..., d][M]  # Boolean mask works on tensors
 
         # Handle case where a feature has no observed values
@@ -304,7 +294,6 @@ def center_scale_signed(
         X[..., d] = (X[..., d] - mu) / sd
         mus[d] = mu
         sds[d] = sd
-        # --- End MODIFICATION ---
 
     # Neutral imputation (this indexing works on tensors)
     X[~M, :] = 0.0
@@ -377,11 +366,11 @@ def nonneg_parafac(
     ...
     """
 
-    # 2. Prepare data for NTF (on device)
+    # Prepare data for NTF (on device)
     X_imputed = torch.nan_to_num(X, nan=0.0)
     X_imputed[X_imputed < 0] = 0.0  # In-place op on device tensor
 
-    # 3. Fit the Non-negative PARAFAC (CP) model (on device)
+    # Fit the Non-negative PARAFAC (CP) model (on device)
     try:
         weights, factors = non_negative_parafac(
             X_imputed,  # This is a device tensor
@@ -411,13 +400,9 @@ def parafac_decomposition(  # Renamed function for clarity
         (weights, factors)
     """
 
-    # 1. Prepare data (Impute NaNs, but DO NOT clip negative values)
+    # Prepare data (Impute NaNs, but DO NOT clip negative values)
     X_imputed = torch.nan_to_num(X, nan=0.0)
-
-    # REMOVED THIS LINE:
-    # X_imputed[X_imputed < 0] = 0.0  # <-- No longer needed for signed data
-
-    # 2. Fit the standard PARAFAC (CP) model (on device)
+    # Fit the standard PARAFAC (CP) model (on device)
     try:
         # USE 'parafac' instead of 'non_negative_parafac'
         weights, factors = parafac(
