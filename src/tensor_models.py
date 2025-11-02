@@ -99,8 +99,8 @@ def center_scale_signed(
             mu = 0.0
             sd = 1.0
         else:
-            mu = tl.nanmean(vals)
-            sd = tl.nanstd(vals, ddof=1)  # ddof=1 for sample std dev
+            mu = torch.nanmean(vals)
+            sd = torch.nanstd(vals, ddof=1)  # ddof=1 for sample std dev
 
         sd = sd if sd > eps else 1.0
         X[..., d] = (X[..., d] - mu) / sd
