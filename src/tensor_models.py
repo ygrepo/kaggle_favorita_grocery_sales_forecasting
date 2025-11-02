@@ -216,15 +216,17 @@ def fit_and_decompose(
     if method == "tucker":
         logger.info(f"Performing Tucker decomposition with rank={rank_tuple}")
         # Pass the device tensors to the function
-        weights, factors = tucker_decomposition(X_mat, rank_tuple, n_iter, tol)
+        weights, factors = tucker_decomposition(X, rank_tuple, n_iter, tol)
     elif method == "ntf":
         logger.info(f"Performing NTF decomposition with rank={rank_tuple}")
         # Pass the device tensors to the function
-        weights, factors = nonneg_parafac(X_mat, rank_tuple)
+        weights, factors = nonneg_parafac(
+            build_multifeature_X_matrix, rank_tuple
+        )
     elif method == "parafac":
         logger.info(f"Performing PARAFAC decomposition with rank={rank_tuple}")
         # Pass the device tensors to the function
-        weights, factors = parafac_decomposition(X_mat, rank_tuple)
+        weights, factors = parafac_decomposition(X, rank_tuple)
     else:
         raise ValueError(f"Invalid method: {method}")
 
