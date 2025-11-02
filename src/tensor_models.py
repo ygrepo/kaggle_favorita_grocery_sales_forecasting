@@ -4,6 +4,7 @@ from typing import List, Union
 import pandas as pd
 import numpy as np
 import tensorly as tl
+from pathlib import Path
 from tensorly.decomposition import (
     non_negative_parafac,
     tucker,
