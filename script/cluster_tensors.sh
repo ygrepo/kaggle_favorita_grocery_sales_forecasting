@@ -14,11 +14,12 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
 
-RANKS=12,12,40
+RANKS=100
 FEATURES="gr_median"
 #FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 MAX_ITER=500
 TOL=1e-5
+METHOD="ntf"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -28,6 +29,7 @@ LOG_LEVEL="INFO"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --method) METHOD="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --ranks) RANKS="$2"; shift 2 ;;
     --max_iter) MAX_ITER="$2"; shift 2 ;;
@@ -56,7 +58,8 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 # Run the script
 set +e
-python "${SCRIPT_DIR}/cluster_tucker.py" \
+python "${SCRIPT_DIR}/cluster_tensors.py" \
+  --method "$METHOD" \
   --data_fn "$DATA_FN" \
   --ranks "$RANKS" \
   --max_iter "$MAX_ITER" \
