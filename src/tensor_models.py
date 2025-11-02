@@ -70,6 +70,23 @@ def fit_and_decompose(
     return pve_percent, rmse
 
 
+def _nanstd(tensor, dim=None, keepdim=False):
+    # Calculate the mean, keeping the dimensions to enable broadcasting
+    tensor_mean = torch.nanmean(tensor, dim=dim, keepdim=True)
+
+    # Calculate the squared differences from the mean, ignoring NaNs in the mean calculation
+    squared_diffs = torch.pow(tensor - tensor_mean, 2)
+
+    # Calculate the mean of the squared differences, ignoring NaNs (this gives the variance)
+    # Note: torch.nanmean naturally ignores NaNs
+    nan_variance = torch.nanmean(squared_diffs, dim=dim, keepdim=keepdim)
+
+    # Take the square root to get the standard deviation
+    output = torch.sqrt(nan_variance)
+
+    return output
+
+
 def center_scale_signed(
     # --- MODIFICATION: Accept tensors ---
     X: tl.tensor,
@@ -100,7 +117,7 @@ def center_scale_signed(
             sd = 1.0
         else:
             mu = torch.nanmean(vals)
-            sd = torch.nans(vals, ddof=1)  # ddof=1 for sample std dev
+            sd = _nanstd(vals, dim=1)  # ddof=1 for sample std dev
 
         sd = sd if sd > eps else 1.0
         X[..., d] = (X[..., d] - mu) / sd
