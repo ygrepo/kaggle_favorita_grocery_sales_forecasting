@@ -66,7 +66,7 @@ def fit_and_decompose(
         weights, factors = nonneg_parafac(X_mat, rank_tuple)
     else:
         raise ValueError(f"Invalid method: {method}")
-    
+
     pve_percent, rmse = errors(X_mat, weights, factors)
     return pve_percent, rmse
 
@@ -198,4 +198,3 @@ def nonneg_parafac(
         logger.error(f"Error during NTF fit: {e}")
         return None, None
     return weights, factors
-=
