@@ -156,7 +156,7 @@ def main():
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
         logger.info(f"Data loaded: {df.head()}")
-        output_csv_path = Path(args.output_csv_path).resolve()
+        output_csv_path = args.output_csv_path.resolve()
         results_df = tune_ranks(
             args.method,
             df,
