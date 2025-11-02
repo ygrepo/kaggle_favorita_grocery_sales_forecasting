@@ -91,14 +91,6 @@ def select_device(pref: str) -> torch.device:
     return torch.device("cpu")
 
 
-def _device_or_default(
-    device: Optional[Union[str, torch.device]],
-) -> torch.device:
-    if device is None:
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device)
-
-
 def is_gpu_available():
     return torch.cuda.is_available()
 

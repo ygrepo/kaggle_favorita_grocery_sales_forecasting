@@ -2,6 +2,8 @@ import numpy as np
 from typing import Dict, Any, Iterable, Optional, Callable, Tuple
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.utils.extmath import squared_norm,
+
 from src.BinaryTriFactorizationEstimator import (
     BinaryTriFactorizationEstimator,
     model_loss,
@@ -24,6 +26,93 @@ import pickle
 import warnings
 
 logger = get_logger(__name__)
+
+def compute_nmf_pve(X_mat, rank):
+    """
+    Computes NMF and calculates Percent Variance Explained (PVE) and RMSE.
+
+    This function is designed to handle input matrices with missing (NaN) values.
+    It imputes NaNs with 0.0 for the NMF algorithm (which cannot handle NaNs)
+    and enforces non-negativity.
+
+    The PVE and RMSE metrics are then calculated *only* on the original,
+    non-missing entries to provide an accurate measure of model fit.
+
+    Args:
+        X_mat (np.ndarray): The input data matrix (2D). May contain NaNs.
+        rank (int): The rank (n_components) for the NMF.
+
+    Returns:
+        tuple: (pve_percent, rmse)
+            - pve_percent (float): Percent Variance Explained (%).
+            - rmse (float): Root Mean Squared Error.
+            - Returns (np.nan, np.nan) on failure or if data is all-NaN.
+    """
+
+    # 1. Identify valid data points for metric calculation
+    # We must do this *before* imputation.
+    finite_mask = np.isfinite(X_mat)
+    if not np.any(finite_mask):
+        # Handle matrix with no finite values
+        logger.warning("No finite values in X_mat, returning (nan, nan)")
+        return np.nan, np.nan
+
+    # Get the original finite values for calculating metrics later
+    X_finite_orig = X_mat[finite_mask]
+    num_finite = X_finite_orig.size
+
+    # 2. Prepare data for NMF (imputation and non-negativity)
+    # sklearn.NMF cannot handle NaNs and requires non-negative data.
+    X_imputed = X_mat.copy()
+    X_imputed[~finite_mask] = 0.0  # Impute NaNs with 0
+    X_imputed[X_imputed < 0] = 0.0  # Enforce non-negativity
+
+    # 3. Fit the NMF model
+    model = NMF(
+        n_components=rank,
+        init="nndsvda",  # A good default for sparse-ish data
+        max_iter=500,  # Default (200) can be too low
+        random_state=42,  # For reproducible results
+        tol=1e-4,
+    )
+
+    try:
+        W = model.fit_transform(X_imputed)
+        H = model.components_
+    except ValueError as e:
+        # Catches errors (e.g., rank > n_features, or all-zero matrix)
+        print(f"Error during NMF fit: {e}")
+        return np.nan, np.nan
+
+    # 4. Reconstruct the full matrix
+    X_hat = W @ H
+
+    # 5. Calculate SSE and RMSE on *original finite values only*
+
+    # Get the reconstructed values at the original finite locations
+    X_finite_hat = X_hat[finite_mask]
+
+    # Sum of Squared Errors (SSE)
+    sse = squared_norm(X_finite_orig - X_finite_hat)
+
+    # Root Mean Squared Error (RMSE)
+    rmse = np.sqrt(sse / num_finite)
+
+    # 6. Calculate PVE on *original finite values only*
+
+    # Total Sum of Squares (TSS), relative to the mean of finite values
+    mu = X_finite_orig.mean()
+    tss = squared_norm(X_finite_orig - mu)
+
+    if tss == 0:
+        # Data is constant. PVE is 100% if error is 0, else undefined (nan).
+        pve_percent = 100.0 if sse == 0 else np.nan
+    else:
+        # Standard PVE calculation (R-squared)
+        pve = 1.0 - (sse / tss)
+        pve_percent = pve * 100.0
+
+    return pve_percent, rmse
 
 
 def get_normalized_assignments(
@@ -1369,6 +1458,7 @@ def cluster_data_and_explain_blocks(
     n_jobs: int = 1,
     batch_size: int = 4,
     multifeature: bool = False,
+    nmf_rank: int = 10,
     features: Optional[list[str]] = None,
     feature_weights: Optional[np.ndarray] = None,
 ) -> dict:
@@ -1419,10 +1509,10 @@ def cluster_data_and_explain_blocks(
     )
 
     try:
-        # Use a rank k=10 for comparison (matches R=10 tested)
-        nmf_pve, nmf_rmse = compute_nmf_pve(X_mat, rank=10)
+        # Use a rank k=nmf_rank for comparison
+        nmf_pve, nmf_rmse = compute_nmf_pve(X_mat, rank=nmf_rank)
         logger.info(
-            f"NMF BASELINE (k=10) PVE: {nmf_pve:.2f}%, RMSE: {nmf_rmse:.3f}"
+            f"NMF BASELINE (Rank={nmf_rank}) PVE: {nmf_pve:.2f}%, RMSE: {nmf_rmse:.3f}"
         )
     except Exception as e:
         logger.error(f"NMF Baseline failed: {e}")
