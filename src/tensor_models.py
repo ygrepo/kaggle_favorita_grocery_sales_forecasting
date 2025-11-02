@@ -70,16 +70,34 @@ def fit_and_decompose(
     return pve_percent, rmse
 
 
-def _nanstd(tensor, dim=None, keepdim=False):
+def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
+    """
+    Calculates nan-safe standard deviation, implementing ddof.
+    torch.nanstd wasn't available in older torch versions.
+    """
     # Calculate the mean, keeping the dimensions to enable broadcasting
     tensor_mean = torch.nanmean(tensor, dim=dim, keepdim=True)
 
-    # Calculate the squared differences from the mean, ignoring NaNs in the mean calculation
+    # Calculate the squared differences from the mean
     squared_diffs = torch.pow(tensor - tensor_mean, 2)
 
-    # Calculate the mean of the squared differences, ignoring NaNs (this gives the variance)
-    # Note: torch.nanmean naturally ignores NaNs
-    nan_variance = torch.nanmean(squared_diffs, dim=dim, keepdim=keepdim)
+    # --- Corrected Variance Calculation ---
+    # Sum the squared differences
+    sum_sq_diff = torch.nansum(squared_diffs, dim=dim, keepdim=keepdim)
+
+    # Count non-NaN elements
+    count = torch.sum(~torch.isnan(tensor), dim=dim, keepdim=keepdim)
+
+    # Apply ddof (delta degrees of freedom)
+    n = count - ddof
+    n = torch.clamp(n, min=0)  # n cannot be negative
+
+    # Calculate variance: sum( (x-mu)^2 ) / (N - ddof)
+    nan_variance = sum_sq_diff / n
+
+    # Handle division by zero if n=0 (e.g., all NaNs or N <= ddof)
+    nan_variance = torch.where(n > 0, nan_variance, float("nan"))
+    # --- End Correction ---
 
     # Take the square root to get the standard deviation
     output = torch.sqrt(nan_variance)
@@ -117,7 +135,9 @@ def center_scale_signed(
             sd = 1.0
         else:
             mu = torch.nanmean(vals)
-            sd = _nanstd(vals, dim=1)  # ddof=1 for sample std dev
+            sd = _nanstd(
+                vals, dim=0, keepdim=False, ddof=1
+            )  # ddof=1 for sample std dev
 
         sd = sd if sd > eps else 1.0
         X[..., d] = (X[..., d] - mu) / sd
