@@ -71,6 +71,7 @@ def tune_ranks(
         rank_combinations = list(
             itertools.product(store_ranks, sku_ranks, feature_ranks)
         )
+        logger.info(f"Rank combinations: {rank_combinations}")
         total_runs = len(rank_combinations)
         logger.info(
             f"--- Starting Tucker rank tuning. Testing {total_runs} combinations. ---"
