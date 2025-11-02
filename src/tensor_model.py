@@ -82,7 +82,12 @@ def tucker_decomposition(
     X, mus, sds = center_scale_signed(X, M)
     logger.info(f"Performing Tucker decomposition with rank={ranks}")
     core, factors = tucker(
-        tl.tensor(X), rank=ranks, init="svd", tol=tol, n_iter_max=n_iter
+        tl.tensor(X),
+        rank=ranks,
+        init="svd",
+        tol=tol,
+        n_iter_max=n_iter,
+        verbose=True,
     )
     Xhat = tl.tucker_to_tensor((core, factors))
     logger.info(f"PVE:{pve(X, Xhat):.2f}")
