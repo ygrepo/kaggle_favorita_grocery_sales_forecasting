@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import tensorly as tl
 from tensorly.decomposition import non_negative_parafac, tucker
-from tensorly.tenalg import vdot
+from tensorly.tenalg.core_tenalg import vdot
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
