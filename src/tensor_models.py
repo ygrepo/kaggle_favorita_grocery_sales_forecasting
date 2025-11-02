@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import tensorly as tl
 from tensorly.decomposition import non_negative_parafac, tucker
-from tensorly.tenalg.core_tenalg import vdot
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
@@ -128,14 +127,14 @@ def errors(
 
     X_finite_hat = X_hat[finite_mask]
     sse_vec = X_finite_orig - X_finite_hat
-    sse = vdot(sse_vec, sse_vec)  # vdot uses the backend
+    sse = tl.vdot(sse_vec, sse_vec)  # vdot uses the backend
     num_finite = X_finite_orig.shape[0]
     rmse = tl.sqrt(sse / num_finite)  # tl.sqrt uses the backend
 
     # Calculate PVE (on device)
     mu = tl.mean(X_finite_orig)  # tl.mean uses the backend
     tss_vec = X_finite_orig - mu
-    tss = vdot(tss_vec, tss_vec)
+    tss = tl.vdot(tss_vec, tss_vec)
 
     if tss == 0:
         pve_percent = 100.0 if sse == 0 else np.nan
