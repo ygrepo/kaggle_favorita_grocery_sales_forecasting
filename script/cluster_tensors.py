@@ -56,7 +56,7 @@ def parse_args():
         "--method",
         type=str,
         default="tucker",
-        choices=["tucker", "ntf"],
+        choices=["tucker", "ntf", "parafac"],
         help="Decomposition method",
     )
 
