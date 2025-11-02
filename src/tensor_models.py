@@ -10,7 +10,6 @@ from tensorly.decomposition import (
     tucker,
     parafac,
 )
-from tensorly import cp_to_tensor
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
@@ -20,7 +19,11 @@ tl.set_backend("pytorch")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-from src.utils import get_logger, build_multifeature_X_matrix
+from src.utils import (
+    get_logger,
+    build_multifeature_X_matrix,
+    save_csv_or_parquet,
+)
 
 logger = get_logger(__name__)
 logger.info(f"Tensorly backend set to 'pytorch'. Using device: {device}")
@@ -30,7 +33,7 @@ def tune_ranks(
     method: str,
     df: pd.DataFrame,
     features: Union[str, List[str]],
-    output_csv_path: Path,
+    output_path: Path,
     rank_list: List[int] = None,
     store_ranks: List[int] = None,
     item_ranks: List[int] = None,
@@ -40,13 +43,13 @@ def tune_ranks(
 ) -> pd.DataFrame:
     """
     Calls fit_and_decompose for every combination of ranks and saves
-    PVE/RMSE results to a CSV.
+    PVE/RMSE results to a file.
 
     Args:
         method: 'tucker', 'parafac', or 'ntf'
         df: Input DataFrame
         features: List of feature names to use
-        output_csv_path: Path to save the resulting CSV
+        output_path: Path to save the resulting file
         rank_list: (For 'parafac'/'ntf') A list of ranks to test (e.g., [5, 10, 15])
         store_ranks: (For 'tucker') List of ranks for mode 0
         item_ranks: (For 'tucker') List of ranks for mode 1
@@ -157,12 +160,12 @@ def tune_ranks(
         return pd.DataFrame()
 
     # Ensure output directory exists
-    output_dir = output_csv_path.parent
+    output_dir = output_path.parent
     if output_dir:  # Check if it's not an empty string
         os.makedirs(output_dir, exist_ok=True)
 
-    logger.info(f"Tuning complete. Saving results to {output_csv_path}")
-    results_df.to_csv(output_csv_path, index=False)
+    logger.info(f"Tuning complete. Saving results to {output_path}")
+    save_csv_or_parquet(results_df, output_path)
 
     # Log the best results
     best_pve = results_df.sort_values(by="pve", ascending=False)

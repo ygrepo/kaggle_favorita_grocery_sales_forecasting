@@ -13,6 +13,7 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
+OUTPUT_PATH="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.csv"
 
 RANK_LIST="10,20,30,40,50,60,70,80,90,100"
 STORE_RANKS="10,20,30,40,50,60,70,80,90,100"
@@ -33,6 +34,7 @@ LOG_LEVEL="INFO"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --method) METHOD="$2"; shift 2 ;;
+    --output_path) OUTPUT_PATH="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --rank_list) RANK_LIST="$2"; shift 2 ;;
     --store_ranks) STORE_RANKS="$2"; shift 2 ;;
@@ -61,6 +63,7 @@ echo "Feature ranks: $FEATURE_RANKS" | tee -a "$LOG_FILE"
 echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
 echo "Features: $FEATURES" | tee -a "$LOG_FILE"
+echo "Output path: $OUTPUT_PATH" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
@@ -69,6 +72,7 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 set +e
 python "${SCRIPT_DIR}/cluster_tensors.py" \
   --method "$METHOD" \
+  --output_path "$OUTPUT_PATH" \
   --data_fn "$DATA_FN" \
   --rank_list "$RANK_LIST" \
   --store_ranks "$STORE_RANKS" \

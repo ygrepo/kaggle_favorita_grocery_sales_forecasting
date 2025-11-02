@@ -84,10 +84,10 @@ def parse_args():
         help="Comma-separated list of ranks to test (for PARAFAC/NTF only)",
     )
     parser.add_argument(
-        "--output_csv_path",
+        "--output_path",
         type=Path,
         default=None,
-        help="Path to save results CSV (relative to project root)",
+        help="Path to save results (relative to project root)",
     )
     parser.add_argument(
         "--data_fn",
@@ -141,7 +141,7 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Method: {args.method}")
-        logger.info(f"  Output CSV path: {args.output_csv_path}")
+        logger.info(f"  Output path: {args.output_path}")
         logger.info(f"  Store ranks: {args.store_ranks}")
         logger.info(f"  SKU ranks: {args.sku_ranks}")
         logger.info(f"  Feature ranks: {args.feature_ranks}")
@@ -156,12 +156,12 @@ def main():
         # Load and preprocess data
         df = read_csv_or_parquet(data_fn)
         logger.info(f"Data loaded: {df.head()}")
-        output_csv_path = args.output_csv_path.resolve()
+        output_path = args.output_path.resolve()
         results_df = tune_ranks(
             args.method,
             df,
             args.features,
-            output_csv_path,
+            output_path,
             rank_list=args.rank_list,
             store_ranks=args.store_ranks,
             item_ranks=args.item_ranks,
