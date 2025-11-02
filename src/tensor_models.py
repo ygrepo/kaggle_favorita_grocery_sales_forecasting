@@ -157,7 +157,7 @@ def errors(
     X_hat = tl.cp_to_tensor((weights, factors))
 
     # 5. Calculate SSE and RMSE (on device)
-    finite_mask = tl.isfinite(X)
+    finite_mask = torch.isfinite(X)
     X_finite_orig = X[finite_mask]
     if not tl.any(finite_mask):
         return np.nan, np.nan
