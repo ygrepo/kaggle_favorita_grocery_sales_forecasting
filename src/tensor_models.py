@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import tensorly as tl
-from tensorly.decomposition import non_negative_parafac, tucker
+from tensorly.decomposition import non_negative_parafac, tucker, parafac
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
@@ -63,6 +63,10 @@ def fit_and_decompose(
         logger.info(f"Performing NTF decomposition with rank={rank_tuple}")
         # Pass the device tensors to the function
         weights, factors = nonneg_parafac(X_mat, rank_tuple)
+    elif method == "parafac":
+        logger.info(f"Performing PARAFAC decomposition with rank={rank_tuple}")
+        # Pass the device tensors to the function
+        weights, factors = parafac_decomposition(X_mat, rank_tuple)
     else:
         raise ValueError(f"Invalid method: {method}")
 
@@ -233,4 +237,42 @@ def nonneg_parafac(
     except ValueError as e:
         logger.error(f"Error during NTF fit: {e}")
         return None, None
+    return weights, factors
+
+
+def parafac_decomposition(  # Renamed function for clarity
+    X: tl.tensor, rank: int = 10
+) -> Tuple[tl.tensor, list[tl.tensor]]:
+    """
+    Performs PARAFAC (CP) decomposition on a 3D tensor, suitable for signed data.
+
+    Args:
+        X (tl.tensor): Input data tensor (3D). May contain NaNs.
+        rank: The factorization rank (R).
+
+    Returns:
+        (weights, factors)
+    """
+
+    # 1. Prepare data (Impute NaNs, but DO NOT clip negative values)
+    X_imputed = torch.nan_to_num(X, nan=0.0)
+
+    # REMOVED THIS LINE:
+    # X_imputed[X_imputed < 0] = 0.0  # <-- No longer needed for signed data
+
+    # 2. Fit the standard PARAFAC (CP) model (on device)
+    try:
+        # USE 'parafac' instead of 'non_negative_parafac'
+        weights, factors = parafac(
+            X_imputed,  # This is a device tensor
+            rank=rank,
+            init="random",  # 'svd' is also a good init for 'parafac'
+            random_state=42,
+            n_iter_max=500,
+            tol=1e-6,
+        )
+    except ValueError as e:
+        logger.error(f"Error during PARAFAC fit: {e}")
+        return None, None
+
     return weights, factors
