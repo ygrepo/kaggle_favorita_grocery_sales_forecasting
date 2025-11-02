@@ -36,7 +36,7 @@ def tune_ranks(
     output_path: Path,
     rank_list: List[int] = None,
     store_ranks: List[int] = None,
-    item_ranks: List[int] = None,
+    sku_ranks: List[int] = None,
     feature_ranks: List[int] = None,
     n_iter: int = 500,
     tol: float = 1e-8,
@@ -52,7 +52,7 @@ def tune_ranks(
         output_path: Path to save the resulting file
         rank_list: (For 'parafac'/'ntf') A list of ranks to test (e.g., [5, 10, 15])
         store_ranks: (For 'tucker') List of ranks for mode 0
-        item_ranks: (For 'tucker') List of ranks for mode 1
+        sku_ranks: (For 'tucker') List of ranks for mode 1
         feature_ranks: (For 'tucker') List of ranks for mode 2
         n_iter: Max iterations
         tol: Tolerance
@@ -61,15 +61,15 @@ def tune_ranks(
 
     if method == "tucker":
         # Check for correct inputs
-        if not (store_ranks and item_ranks and feature_ranks):
+        if not (store_ranks and sku_ranks and feature_ranks):
             logger.error(
-                "For 'tucker' method, you must provide store_ranks, item_ranks, and feature_ranks."
+                "For 'tucker' method, you must provide store_ranks, sku_ranks, and feature_ranks."
             )
             return pd.DataFrame()
 
         # Generate all combinations
         rank_combinations = list(
-            itertools.product(store_ranks, item_ranks, feature_ranks)
+            itertools.product(store_ranks, sku_ranks, feature_ranks)
         )
         total_runs = len(rank_combinations)
         logger.info(

@@ -164,7 +164,7 @@ def main():
             output_path,
             rank_list=args.rank_list,
             store_ranks=args.store_ranks,
-            item_ranks=args.item_ranks,
+            sku_ranks=args.sku_ranks,
             feature_ranks=args.feature_ranks,
             n_iter=args.max_iter,
             tol=args.tol,
