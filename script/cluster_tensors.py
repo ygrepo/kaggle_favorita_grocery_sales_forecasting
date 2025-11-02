@@ -143,7 +143,7 @@ def main():
         logger.info(f"  Method: {args.method}")
         logger.info(f"  Output CSV path: {args.output_csv_path}")
         logger.info(f"  Store ranks: {args.store_ranks}")
-        logger.info(f"  Item ranks: {args.item_ranks}")
+        logger.info(f"  SKU ranks: {args.sku_ranks}")
         logger.info(f"  Feature ranks: {args.feature_ranks}")
         logger.info(f"  Rank list: {args.rank_list}")
         logger.info(f"  Data fn: {args.data_fn}")
