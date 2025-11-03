@@ -30,6 +30,92 @@ logger = get_logger(__name__)
 logger.info(f"Tensorly backend set to 'pytorch'. Using device: {device}")
 
 
+import logging  # <-- Add this import at the top of your file
+import torch
+import tensorly as tl
+
+# ... (your other imports)
+
+# Get your logger (as you already do)
+logger = get_logger(__name__)
+
+
+def log_factor_utilization(
+    factors: list[tl.tensor], method: str, factor_names: list[str] = None
+):
+    """
+    Logs the utilization and statistics of factors/clusters.
+    Checks for "empty" components (L2 norm ~0) and calculates
+    descriptive statistics for component strengths.
+
+    This works for both signed (Tucker, PARAFAC) and non-negative (NTF)
+    decompositions.
+
+    Args:
+        factors: List of factor matrices [factor_0, factor_1, ...]
+        method: Name of the method ('tucker', 'parafac', 'ntf')
+        factor_names: Optional list of names for each factor (e.g., "Store", "SKU")
+    """
+    if not factors:
+        logger.warning("No factors provided to log_factor_utilization.")
+        return
+
+    if factor_names is None:
+        # Create default names
+        factor_names = [f"Mode {i}" for i in range(len(factors))]
+
+    logger.info(f"--- Factor Utilization Check ({method}) ---")
+
+    for i, F in enumerate(factors):
+        if F is None:
+            logger.warning(
+                f"Factor {i} ({factor_names[i]}) is None, skipping."
+            )
+            continue
+
+        # F has shape (n_items_in_mode, n_components_in_mode)
+        # n_components_in_mode is the rank for that mode.
+
+        try:
+            # Calculate the L2 norm (strength) of each component vector (column)
+            component_strengths = torch.norm(F, p=2, dim=0)
+
+            # A component is "empty" if its norm is effectively zero
+            empty_components = torch.sum(component_strengths < 1e-8).item()
+            total_components = F.shape[1]
+
+            # --- New Statistics Calculations ---
+            if total_components > 0:
+                mean_strength = torch.mean(component_strengths).item()
+                # Use torch.quantile.
+                q25 = torch.quantile(component_strengths, 0.25).item()
+                q75 = torch.quantile(component_strengths, 0.75).item()
+
+                logger.info(
+                    f"Factor '{factor_names[i]}': {empty_components}/{total_components} empty components. "
+                    f"Strength (Mean={mean_strength:.4f}, Q1(25%)={q25:.4f}, Q3(75%)={q75:.4f})"
+                )
+            else:
+                logger.warning(
+                    f"Factor '{factor_names[i]}' has 0 components, skipping stats."
+                )
+                continue  # Skip to the next factor
+
+            if empty_components > 0 or logger.level == logging.DEBUG:
+                # Log the raw strengths if any are empty or if in debug mode
+                logger.info(
+                    f"All component strengths for '{factor_names[i]}': {component_strengths.cpu().numpy()}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error logging utilization for factor '{factor_names[i]}': {e}",
+                exc_info=True,
+            )
+
+    logger.info("--------------------------------------")
+
+
 def tune_ranks(
     method: str,
     df: pd.DataFrame,
@@ -94,9 +180,9 @@ def tune_ranks(
                 logger.info(f"PVE: {pve:.2f}%, RMSE: {rmse:.3f}")
                 results.append(
                     {
-                        "rank_store": rank_tuple[0],
-                        "rank_item": rank_tuple[1],
-                        "rank_feature": rank_tuple[2],
+                        "store_rank": rank_tuple[0],
+                        "sku_rank": rank_tuple[1],
+                        "feature_rank": rank_tuple[2],
                         "pve": pve,
                         "rmse": rmse,
                     }
@@ -107,9 +193,9 @@ def tune_ranks(
                 )
                 results.append(
                     {
-                        "rank_store": rank_tuple[0],
-                        "rank_item": rank_tuple[1],
-                        "rank_feature": rank_tuple[2],
+                        "store_rank": rank_tuple[0],
+                        "sku_rank": rank_tuple[1],
+                        "feature_rank": rank_tuple[2],
                         "pve": np.nan,
                         "rmse": np.nan,
                     }
@@ -164,7 +250,7 @@ def tune_ranks(
 
     # Ensure output directory exists
     output_dir = output_path.parent
-    if output_dir:  # Check if it's not an empty string
+    if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
     # Log the best results
@@ -239,6 +325,17 @@ def fit_and_decompose(
         weights, factors = parafac_decomposition(X, rank_tuple)
     else:
         raise ValueError(f"Invalid method: {method}")
+
+    # Log factor utilization right after decomposition
+    if factors:
+        # Define the names for your modes
+        mode_names = ["Store", "SKU", "Feature"]
+        log_factor_utilization(factors, method, factor_names=mode_names)
+    else:
+        logger.error(
+            f"Decomposition failed for method {method}, skipping errors."
+        )
+        return np.nan, np.nan
 
     pve_percent, rmse = errors(X, weights, factors, method)
     return pve_percent, rmse
