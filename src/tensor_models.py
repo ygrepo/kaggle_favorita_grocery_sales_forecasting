@@ -30,88 +30,114 @@ logger = get_logger(__name__)
 logger.info(f"Tensorly backend set to 'pytorch'. Using device: {device}")
 
 
-import logging  # <-- Add this import at the top of your file
-import torch
-import tensorly as tl
-
-# ... (your other imports)
-
-# Get your logger (as you already do)
-logger = get_logger(__name__)
-
-
-def log_factor_utilization(
-    factors: list[tl.tensor], method: str, factor_names: list[str] = None
-):
+def compute_factor_stats(
+    factors: list[tl.tensor], factor_names: list[str] = None
+) -> dict:
     """
-    Logs the utilization and statistics of factors/clusters.
-    Checks for "empty" components (L2 norm ~0) and calculates
-    descriptive statistics for component strengths.
-
-    This works for both signed (Tucker, PARAFAC) and non-negative (NTF)
-    decompositions.
+    Computes utilization statistics for each factor matrix and returns
+    them as a flat dictionary.
 
     Args:
         factors: List of factor matrices [factor_0, factor_1, ...]
-        method: Name of the method ('tucker', 'parafac', 'ntf')
-        factor_names: Optional list of names for each factor (e.g., "Store", "SKU")
+        factor_names: List of names for each factor (e.g., "Store", "SKU")
+
+    Returns:
+        A flat dictionary with prefixed keys (e.g., "Store_empty_components").
+    """
+    stats_dict = {}
+    if not factors:
+        return stats_dict
+
+    if factor_names is None:
+        factor_names = [f"Mode {i}" for i in range(len(factors))]
+
+    for i, F in enumerate(factors):
+        name = factor_names[i]
+
+        # Define keys for this factor
+        key_total = f"{name}_total_components"
+        key_empty = f"{name}_empty_components"
+        key_mean = f"{name}_mean_strength"
+        key_q25 = f"{name}_q25_strength"
+        key_q75 = f"{name}_q75_strength"
+
+        if F is None:
+            stats_dict[key_total] = 0
+            stats_dict[key_empty] = 0
+            stats_dict[key_mean] = np.nan
+            stats_dict[key_q25] = np.nan
+            stats_dict[key_q75] = np.nan
+            continue
+
+        total_components = F.shape[1]
+        stats_dict[key_total] = total_components
+
+        if total_components == 0:
+            stats_dict[key_empty] = 0
+            stats_dict[key_mean] = np.nan
+            stats_dict[key_q25] = np.nan
+            stats_dict[key_q75] = np.nan
+            continue
+
+        try:
+            # Calculate the L2 norm (strength) of each component vector (column)
+            component_strengths = torch.norm(F, p=2, dim=0)
+
+            stats_dict[key_empty] = torch.sum(
+                component_strengths < 1e-8
+            ).item()
+            stats_dict[key_mean] = torch.mean(component_strengths).item()
+            stats_dict[key_q25] = torch.quantile(
+                component_strengths, 0.25
+            ).item()
+            stats_dict[key_q75] = torch.quantile(
+                component_strengths, 0.75
+            ).item()
+
+        except Exception as e:
+            logger.error(
+                f"Error computing stats for factor '{name}': {e}",
+                exc_info=True,
+            )
+            stats_dict[key_empty] = np.nan
+            stats_dict[key_mean] = np.nan
+            stats_dict[key_q25] = np.nan
+            stats_dict[key_q75] = np.nan
+
+    return stats_dict
+
+
+def log_factor_utilization(
+    factors: list[tl.tensor],
+    stats_dict: dict,
+    method: str,
+    factor_names: list[str] = None,
+):
+    """
+    Computes and logs the utilization and statistics of factors/clusters.
+    This is a logging wrapper around compute_factor_stats.
     """
     if not factors:
         logger.warning("No factors provided to log_factor_utilization.")
         return
 
     if factor_names is None:
-        # Create default names
         factor_names = [f"Mode {i}" for i in range(len(factors))]
 
     logger.info(f"--- Factor Utilization Check ({method}) ---")
 
-    for i, F in enumerate(factors):
-        if F is None:
-            logger.warning(
-                f"Factor {i} ({factor_names[i]}) is None, skipping."
-            )
-            continue
+    for name in factor_names:
+        # Use .get() for safety, defaulting to np.nan
+        total = stats_dict.get(f"{name}_total_components", 0)
+        empty = stats_dict.get(f"{name}_empty_components", np.nan)
+        mean_s = stats_dict.get(f"{name}_mean_strength", np.nan)
+        q25_s = stats_dict.get(f"{name}_q25_strength", np.nan)
+        q75_s = stats_dict.get(f"{name}_q75_strength", np.nan)
 
-        # F has shape (n_items_in_mode, n_components_in_mode)
-        # n_components_in_mode is the rank for that mode.
-
-        try:
-            # Calculate the L2 norm (strength) of each component vector (column)
-            component_strengths = torch.norm(F, p=2, dim=0)
-
-            # A component is "empty" if its norm is effectively zero
-            empty_components = torch.sum(component_strengths < 1e-8).item()
-            total_components = F.shape[1]
-
-            # --- New Statistics Calculations ---
-            if total_components > 0:
-                mean_strength = torch.mean(component_strengths).item()
-                # Use torch.quantile.
-                q25 = torch.quantile(component_strengths, 0.25).item()
-                q75 = torch.quantile(component_strengths, 0.75).item()
-
-                logger.info(
-                    f"Factor '{factor_names[i]}': {empty_components}/{total_components} empty components. "
-                    f"Strength (Mean={mean_strength:.4f}, Q1(25%)={q25:.4f}, Q3(75%)={q75:.4f})"
-                )
-            else:
-                logger.warning(
-                    f"Factor '{factor_names[i]}' has 0 components, skipping stats."
-                )
-                continue  # Skip to the next factor
-
-            if empty_components > 0 or logger.level == logging.DEBUG:
-                # Log the raw strengths if any are empty or if in debug mode
-                logger.info(
-                    f"All component strengths for '{factor_names[i]}': {component_strengths.cpu().numpy()}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"Error logging utilization for factor '{factor_names[i]}': {e}",
-                exc_info=True,
-            )
+        logger.info(
+            f"Factor '{name}': {empty}/{total} empty components. "
+            f"Strength (Mean={mean_s:.4f}, Q1(25%)={q25_s:.4f}, Q3(75%)={q75_s:.4f})"
+        )
 
     logger.info("--------------------------------------")
 
@@ -169,7 +195,7 @@ def tune_ranks(
                 f"*** Testing Tucker combo {i+1}/{total_runs}: {rank_tuple} ***"
             )
             try:
-                pve, rmse = fit_and_decompose(
+                pve, rmse, stats_dict = fit_and_decompose(
                     method=method,
                     df=df,
                     features=features,
@@ -185,6 +211,7 @@ def tune_ranks(
                         "feature_rank": rank_tuple[2],
                         "pve": pve,
                         "rmse": rmse,
+                        **stats_dict,
                     }
                 )
             except Exception as e:
@@ -217,7 +244,7 @@ def tune_ranks(
                 f"*** Testing {method} rank {i+1}/{total_runs}: {rank} ***"
             )
             try:
-                pve, rmse = fit_and_decompose(
+                pve, rmse, stats_dict = fit_and_decompose(
                     method=method,
                     df=df,
                     features=features,
@@ -225,7 +252,14 @@ def tune_ranks(
                     n_iter=n_iter,
                     tol=tol,
                 )
-                results.append({"rank": rank, "pve": pve, "rmse": rmse})
+                results.append(
+                    {
+                        "rank": rank,
+                        "pve": pve,
+                        "rmse": rmse,
+                        **stats_dict,
+                    }
+                )
             except Exception as e:
                 logger.error(f"Failed on rank {rank}: {e}", exc_info=True)
                 results.append({"rank": rank, "pve": np.nan, "rmse": np.nan})
@@ -273,7 +307,7 @@ def fit_and_decompose(
     ranks: tuple[int, int, int] | int | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
-):
+) -> Tuple[float, float, dict]:
     logger.info("Multifeature mode: reshaping data to (I, J, D)")
 
     # Parse features (no change needed)
@@ -291,16 +325,6 @@ def fit_and_decompose(
 
     # X is already a tensor, center_scale_signed now accepts tensors
     X, mus, sds = center_scale_signed(X_mat, M)
-    # --- START DEBUGGING BLOCK ---
-    if torch.any(torch.isnan(X)):
-        logger.error(
-            "!!! Tensor X contains NaN values right before decomposition !!!"
-        )
-    if torch.any(torch.isinf(X)):
-        logger.error(
-            "!!! Tensor X contains Inf values right before decomposition !!!"
-        )
-    # --- END DEBUGGING BLOCK ---
 
     I, J, D = X_mat.shape
 
@@ -327,18 +351,31 @@ def fit_and_decompose(
         raise ValueError(f"Invalid method: {method}")
 
     # Log factor utilization right after decomposition
+    # --- START MODIFIED BLOCK ---
+    factor_stats = {}  # Initialize an empty dict
+
     if factors:
         # Define the names for your modes
         mode_names = ["Store", "SKU", "Feature"]
-        log_factor_utilization(factors, method, factor_names=mode_names)
+
+        # 1. Compute stats and get the dict
+        factor_stats = compute_factor_stats(factors, factor_names=mode_names)
+
+        # 2. Log them (optional, but good to keep)
+        log_factor_utilization(
+            factors, factor_stats, method, factor_names=mode_names
+        )
     else:
         logger.error(
             f"Decomposition failed for method {method}, skipping errors."
         )
-        return np.nan, np.nan
+        # Return NaNs and an EMPTY dict
+        return np.nan, np.nan, factor_stats
 
-    pve_percent, rmse = errors(X, weights, factors, method)
-    return pve_percent, rmse
+    pve_percent, rmse = errors(X, weights, factors, method=method)
+
+    # Return all three items
+    return pve_percent, rmse, factor_stats
 
 
 def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
