@@ -295,7 +295,9 @@ def center_scale_signed(
                 vals, dim=0, keepdim=False, ddof=1
             )  # ddof=1 for sample std dev
 
-        sd = sd if sd > eps else 1.0
+        # Check for NaN (from _nanstd) or a value too small
+        if torch.isnan(sd) or sd <= eps or sd == 0:
+            sd = 1.0
         X[..., d] = (X[..., d] - mu) / sd
         mus[d] = mu
         sds[d] = sd
