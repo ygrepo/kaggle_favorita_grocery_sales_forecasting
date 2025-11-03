@@ -318,10 +318,15 @@ def center_scale_signed(
 
 
 def errors(
-    X: tl.tensor, weights: tl.tensor, factors: list[tl.tensor]
+    X: tl.tensor, weights: tl.tensor, factors: list[tl.tensor], method: str
 ) -> Tuple[float, float]:
     """Calculates PVE using tensorly (backend-agnostic) functions."""
-    X_hat = tl.cp_to_tensor((weights, factors))
+    if method == "tucker":
+        # 'weights' is actually the core tensor in this case
+        X_hat = tl.tucker_to_tensor((weights, factors))
+    else:
+        # 'parafac' and 'ntf' use this
+        X_hat = tl.cp_to_tensor((weights, factors))
 
     # 5. Calculate SSE and RMSE (on device)
     finite_mask = torch.isfinite(X)
