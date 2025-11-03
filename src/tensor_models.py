@@ -90,6 +90,7 @@ def tune_ranks(
                     n_iter=n_iter,
                     tol=tol,
                 )
+                logger.info(f"PVE: {pve:.2f}%, RMSE: {rmse:.3f}")
                 results.append(
                     {
                         "rank_store": rank_tuple[0],
