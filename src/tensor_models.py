@@ -107,6 +107,61 @@ def compute_factor_stats(
     return stats_dict
 
 
+def compute_tucker_core_stats(core: tl.tensor) -> dict:
+    """
+    Computes magnitude statistics on the core tensor of a Tucker decomposition.
+
+    Args:
+        core: The core tensor.
+
+    Returns:
+        A flat dictionary of statistics.
+    """
+    stats_dict = {}
+    if core is None:
+        return stats_dict
+
+    try:
+        # Get the magnitude of all interaction values in the core
+        core_magnitudes = torch.abs(core.flatten())
+
+        stats_dict["core_mean_strength"] = torch.mean(core_magnitudes).item()
+        stats_dict["core_q25_strength"] = torch.quantile(
+            core_magnitudes, 0.25
+        ).item()
+        stats_dict["core_q75_strength"] = torch.quantile(
+            core_magnitudes, 0.75
+        ).item()
+        stats_dict["core_max_strength"] = torch.max(core_magnitudes).item()
+
+    except Exception as e:
+        logger.error(f"Error computing core stats: {e}", exc_info=True)
+        stats_dict["core_mean_strength"] = np.nan
+        stats_dict["core_q25_strength"] = np.nan
+        stats_dict["core_q75_strength"] = np.nan
+        stats_dict["core_max_strength"] = np.nan
+
+    return stats_dict
+
+
+def log_tucker_core_stats(stats_dict: dict):
+    """
+    Logs the statistics computed from the core tensor.
+    """
+    logger.info("--- Tucker Core Utilization Check ---")
+
+    mean_s = stats_dict.get("core_mean_strength", np.nan)
+    q25_s = stats_dict.get("core_q25_strength", np.nan)
+    q75_s = stats_dict.get("core_q75_strength", np.nan)
+    max_s = stats_dict.get("core_max_strength", np.nan)
+
+    logger.info(
+        f"Core Strengths (Mean={mean_s:.4f}, Q1(25%)={q25_s:.4f}, "
+        f"Q3(75%)={q75_s:.4f}, Max={max_s:.4f})"
+    )
+    logger.info("-------------------------------------")
+
+
 def log_factor_utilization(
     factors: list[tl.tensor],
     stats_dict: dict,
@@ -357,14 +412,22 @@ def fit_and_decompose(
     if factors:
         # Define the names for your modes
         mode_names = ["Store", "SKU", "Feature"]
+        if method == "tucker":
+            # 1. Compute stats from the CORE (which is 'weights')
+            factor_stats = compute_tucker_core_stats(weights)
+            # 2. Log them
+            log_tucker_core_stats(factor_stats)
+        else:
+            # For 'parafac' and 'ntf', the old logic is correct
+            # 1. Compute stats from the FACTORS
+            factor_stats = compute_factor_stats(
+                factors, factor_names=mode_names
+            )
+            # 2. Log them
+            log_factor_utilization(
+                factors, factor_stats, method, factor_names=mode_names
+            )
 
-        # 1. Compute stats and get the dict
-        factor_stats = compute_factor_stats(factors, factor_names=mode_names)
-
-        # 2. Log them (optional, but good to keep)
-        log_factor_utilization(
-            factors, factor_stats, method, factor_names=mode_names
-        )
     else:
         logger.error(
             f"Decomposition failed for method {method}, skipping errors."
