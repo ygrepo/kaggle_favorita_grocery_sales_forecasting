@@ -203,6 +203,16 @@ def fit_and_decompose(
 
     # X is already a tensor, center_scale_signed now accepts tensors
     X, mus, sds = center_scale_signed(X_mat, M)
+    # --- START DEBUGGING BLOCK ---
+    if torch.any(torch.isnan(X)):
+        logger.error(
+            "!!! Tensor X contains NaN values right before decomposition !!!"
+        )
+    if torch.any(torch.isinf(X)):
+        logger.error(
+            "!!! Tensor X contains Inf values right before decomposition !!!"
+        )
+    # --- END DEBUGGING BLOCK ---
 
     I, J, D = X_mat.shape
 
