@@ -166,15 +166,14 @@ def tune_ranks(
     if output_dir:  # Check if it's not an empty string
         os.makedirs(output_dir, exist_ok=True)
 
-    logger.info(f"Tuning complete. Saving results to {output_path}")
-    save_csv_or_parquet(results_df, output_path)
-
     # Log the best results
     best_pve = results_df.sort_values(by="pve", ascending=False)
     logger.info(f"Best results by PVE:\n{best_pve.head()}")
 
     best_rmse = results_df.sort_values(by="rmse", ascending=True)
     logger.info(f"Best results by RMSE:\n{best_rmse.head()}")
+    logger.info(f"Tuning complete. Saving results to {output_path}")
+    save_csv_or_parquet(best_rmse, output_path)
 
     return results_df
 
@@ -367,7 +366,7 @@ def tucker_decomposition(
 
     # `tucker` will run on the device of X (GPU or CPU)
     core, factors = tucker(
-        X,  # No longer need tl.tensor(X)
+        X,
         rank=ranks,
         init="svd",
         tol=tol,
