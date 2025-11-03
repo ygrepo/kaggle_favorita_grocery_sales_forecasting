@@ -10,6 +10,7 @@ from tensorly.decomposition import (
     tucker,
     parafac,
 )
+from datetime import datetime
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
@@ -172,7 +173,8 @@ def tune_ranks(
 
     best_rmse = results_df.sort_values(by="rmse", ascending=True)
     logger.info(f"Best results by RMSE:\n{best_rmse.head()}")
-    logger.info(f"Tuning complete. Saving results to {output_path}")
+    date = datetime.now().strftime("%Y%m%d_%H%M")
+    output_path = Path(date) / output_path
     save_csv_or_parquet(best_rmse, output_path)
 
     return results_df
