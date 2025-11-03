@@ -144,6 +144,82 @@ def compute_tucker_core_stats(core: tl.tensor) -> dict:
     return stats_dict
 
 
+def compute_item_membership_stats(
+    factors: list[tl.tensor], factor_names: list[str] = None
+) -> dict:
+    """
+    Computes summary statistics for the per-item membership strengths.
+
+    For each factor matrix (e.g., Stores), it first calculates the
+    mean absolute loading for EACH item (e.g., each store).
+    It then returns the mean, Q1, and Q3 of those per-item values.
+    This measures the "softness" or "sparsity" of item memberships.
+
+    Args:
+        factors: List of factor matrices [factor_0, factor_1, ...]
+        factor_names: List of names for each factor (e.g., "Store", "SKU")
+
+    Returns:
+        A flat dictionary with prefixed keys (e.g., "Store_item_mean_loading_avg").
+    """
+    stats_dict = {}
+    if not factors:
+        return stats_dict
+
+    if factor_names is None:
+        factor_names = [f"Mode {i}" for i in range(len(factors))]
+
+    for i, F in enumerate(factors):
+        name = factor_names[i]
+
+        # Define keys for this factor's summary
+        key_avg = (
+            f"{name}_item_mean_loading_avg"  # The mean of the per-item means
+        )
+        key_q25 = (
+            f"{name}_item_mean_loading_q25"  # The Q1 of the per-item means
+        )
+        key_q75 = (
+            f"{name}_item_mean_loading_q75"  # The Q3 of the per-item means
+        )
+
+        if F is None or F.shape[0] == 0:
+            stats_dict[key_avg] = np.nan
+            stats_dict[key_q25] = np.nan
+            stats_dict[key_q75] = np.nan
+            continue
+
+        try:
+            # 1. Get absolute loadings
+            abs_loadings = torch.abs(F)
+
+            # 2. Calculate the mean loading for EACH item (across its components)
+            # F shape is [n_items, n_components]. We average across dim=1.
+            per_item_mean_loading = torch.mean(
+                abs_loadings, dim=1
+            )  # Shape [n_items]
+
+            # 3. Compute the summary stats of that per-item vector
+            stats_dict[key_avg] = torch.mean(per_item_mean_loading).item()
+            stats_dict[key_q25] = torch.quantile(
+                per_item_mean_loading, 0.25
+            ).item()
+            stats_dict[key_q75] = torch.quantile(
+                per_item_mean_loading, 0.75
+            ).item()
+
+        except Exception as e:
+            logger.error(
+                f"Error computing item membership stats for '{name}': {e}",
+                exc_info=True,
+            )
+            stats_dict[key_avg] = np.nan
+            stats_dict[key_q25] = np.nan
+            stats_dict[key_q75] = np.nan
+
+    return stats_dict
+
+
 def log_tucker_core_stats(stats_dict: dict):
     """
     Logs the statistics computed from the core tensor.
@@ -195,6 +271,24 @@ def log_factor_utilization(
         )
 
     logger.info("--------------------------------------")
+
+
+def log_item_membership_stats(stats_dict: dict, factor_names: list[str]):
+    """
+    Logs the summary statistics for per-item mean loadings.
+    """
+    logger.info("--- Item Membership 'Softness' Check ---")
+
+    for name in factor_names:
+        avg = stats_dict.get(f"{name}_item_mean_loading_avg", np.nan)
+        q25 = stats_dict.get(f"{name}_item_mean_loading_q25", np.nan)
+        q75 = stats_dict.get(f"{name}_item_mean_loading_q75", np.nan)
+
+        logger.info(
+            f"Factor '{name}' Item Mean Loading: "
+            f"Avg={avg:.4f}, Q1(25%)={q25:.4f}, Q3(75%)={q75:.4f}"
+        )
+    logger.info("----------------------------------------")
 
 
 def tune_ranks(
@@ -406,39 +500,44 @@ def fit_and_decompose(
         raise ValueError(f"Invalid method: {method}")
 
     # Log factor utilization right after decomposition
-    # --- START MODIFIED BLOCK ---
-    factor_stats = {}  # Initialize an empty dict
+    stats_dict = {}  # Initialize an empty dict
 
     if factors:
-        # Define the names for your modes
         mode_names = ["Store", "SKU", "Feature"]
+
         if method == "tucker":
             # 1. Compute stats from the CORE (which is 'weights')
-            factor_stats = compute_tucker_core_stats(weights)
-            # 2. Log them
-            log_tucker_core_stats(factor_stats)
+            core_stats = compute_tucker_core_stats(weights)
+            log_tucker_core_stats(core_stats)
+            stats_dict.update(core_stats)  # Add core stats to dict
         else:
-            # For 'parafac' and 'ntf', the old logic is correct
-            # 1. Compute stats from the FACTORS
-            factor_stats = compute_factor_stats(
-                factors, factor_names=mode_names
-            )
-            # 2. Log them
+            # For 'parafac' and 'ntf', compute component strength
+            comp_stats = compute_factor_stats(factors, factor_names=mode_names)
             log_factor_utilization(
-                factors, factor_stats, method, factor_names=mode_names
+                factors, stats_dict, method, factor_names=mode_names
             )
+            stats_dict.update(comp_stats)  # Add component stats to dict
+
+        # 2. Compute ITEM MEMBERSHIP stats (for ALL methods)
+        # This measures the "softness" of membership for items.
+        item_stats = compute_item_membership_stats(
+            factors, factor_names=mode_names
+        )
+        # Log them (optional, but helpful)
+        log_item_membership_stats(item_stats, factor_names=mode_names)
+        # Add them to the main stats dictionary
+        stats_dict.update(item_stats)
 
     else:
         logger.error(
             f"Decomposition failed for method {method}, skipping errors."
         )
-        # Return NaNs and an EMPTY dict
-        return np.nan, np.nan, factor_stats
+        return np.nan, np.nan, stats_dict
 
     pve_percent, rmse = errors(X, weights, factors, method=method)
 
     # Return all three items
-    return pve_percent, rmse, factor_stats
+    return pve_percent, rmse, stats_dict
 
 
 def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
