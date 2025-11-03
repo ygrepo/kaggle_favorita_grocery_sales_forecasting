@@ -16,8 +16,8 @@ DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_impu
 OUTPUT_PATH="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.csv"
 
 RANK_LIST="10,20,30,40,50,60,70,80,90,100"
-STORE_RANKS="30,40,50"
-SKU_RANKS="30,40,50"
+STORE_RANKS="30,40"
+SKU_RANKS="100,200,300"
 FEATURE_RANKS="2,7,8"
 #FEATURES="gr_median"
 FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
