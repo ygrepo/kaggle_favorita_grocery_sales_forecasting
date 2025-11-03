@@ -238,7 +238,7 @@ def fit_and_decompose(
     else:
         raise ValueError(f"Invalid method: {method}")
 
-    pve_percent, rmse = errors(X, weights, factors)
+    pve_percent, rmse = errors(X, weights, factors, method)
     return pve_percent, rmse
 
 
