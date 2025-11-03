@@ -338,11 +338,11 @@ def errors(
 
     X_finite_hat = X_hat[finite_mask]
     sse_vec = X_finite_orig - X_finite_hat
-    sse = tl.dot(sse_vec, sse_vec)  # vdot uses the backend
+    sse = tl.dot(sse_vec, sse_vec)  # dot uses the backend
     num_finite = X_finite_orig.shape[0]
     rmse = tl.sqrt(sse / num_finite)  # tl.sqrt uses the backend
 
-    # Calculate PVE (on device)
+    # Calculate PVE
     mu = tl.mean(X_finite_orig)  # tl.mean uses the backend
     tss_vec = X_finite_orig - mu
     tss = tl.dot(tss_vec, tss_vec)
