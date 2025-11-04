@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
-Clustering script for the Favorita Grocery Sales Forecasting model.
-
-This script handles the complete clustering pipeline including:
-- Data loading and preprocessing
-- Logging
+Grid search for tensor decomposition models.
 """
 
 import sys
@@ -50,7 +46,7 @@ def parse_ranks(ranks_str: str) -> tuple[int, int, int] | int | None:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Clustering for Retail Sales Forecasting model"
+        description="Grid search for tensor decomposition models"
     )
     parser.add_argument(
         "--method",
@@ -139,7 +135,7 @@ def main():
     setup_logging(log_fn, args.log_level)
     try:
         # Log configuration
-        logger.info("Starting data clustering with configuration:")
+        logger.info("Starting grid search with configuration:")
         logger.info(f"  Method: {args.method}")
         logger.info(f"  Output path: {args.output_path}")
         logger.info(f"  Store ranks: {args.store_ranks}")
@@ -188,9 +184,9 @@ def main():
             tol=args.tol,
         )
         logger.info(f"Results:\n{results_df.head()}")
-        logger.info("Data clustering completed successfully")
+        logger.info("Grid search completed successfully")
     except Exception as e:
-        logger.error(f"Error clustering data: {e}")
+        logger.error(f"Error running grid search: {e}")
         raise
 
 

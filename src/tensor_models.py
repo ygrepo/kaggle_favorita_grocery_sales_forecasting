@@ -14,7 +14,6 @@ from datetime import datetime
 import torch  # Import torch to check for CUDA
 from typing import Tuple
 
-
 tl.set_backend("pytorch")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -538,6 +537,238 @@ def fit_and_decompose(
 
     # Return all three items
     return pve_percent, rmse, stats_dict
+
+
+def fit(
+    method: str,
+    df: pd.DataFrame,
+    features: str | list[str],
+    ranks: tuple[int, int, int] | int | None = None,
+    n_iter: int = 500,
+    tol: float = 1e-8,
+) -> Tuple[tl.tensor, list[tl.tensor], list, list, list]:
+    logger.info("Multifeature mode: reshaping data to (I, J, D)")
+
+    if isinstance(features, str):
+        features = [f.strip() for f in features.split(",") if f.strip()]
+        logger.info(f"Parsed features: {features}")
+
+    X, M, row_names, col_names = build_multifeature_X_matrix(df, features)
+    logger.info(f"X shape:{X.shape}")
+    logger.info(
+        f"Got {len(row_names)} row names (Stores) and {len(col_names)} col names (SKUs)"
+    )
+
+    X_mat = tl.tensor(X, device=device, dtype=tl.float32)
+    M = tl.tensor(M, device=device, dtype=torch.bool)
+    X, mus, sds = center_scale_signed(X_mat, M)
+
+    I, J, D = X_mat.shape
+
+    if ranks is None:
+        rank_tuple = (max(2, I // 4), max(2, J // 4), max(2, D // 4))
+        logger.info(f"No ranks provided, using defaults: {rank_tuple}")
+    else:
+        rank_tuple = ranks
+
+    if method == "tucker":
+        logger.info(f"Performing Tucker decomposition with rank={rank_tuple}")
+        weights, factors = tucker_decomposition(X, rank_tuple, n_iter, tol)
+    elif method == "ntf":
+        logger.info(f"Performing NTF decomposition with rank={rank_tuple}")
+        weights, factors = nonneg_parafac(X, rank_tuple)
+    elif method == "parafac":
+        logger.info(f"Performing PARAFAC decomposition with rank={rank_tuple}")
+        weights, factors = parafac_decomposition(X, rank_tuple)
+    else:
+        raise ValueError(f"Invalid method: {method}")
+
+    pve_percent, rmse = errors(X, weights, factors, method=method)
+    logger.info(f"PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
+
+    return weights, factors, row_names, col_names, features
+
+
+def get_top_k_assignments(
+    factors: list[tl.tensor], factor_names: list[str] = None, k: int = 3
+) -> dict:
+    """
+    Implements the "Fixed-K" approach.
+    Converts soft factor loadings into "Top-K" cluster assignments
+    based on the magnitude of the loadings.
+    """
+    assignments = {}
+    if not factors:
+        return assignments
+
+    if factor_names is None:
+        factor_names = [f"Mode {i}" for i in range(len(factors))]
+
+    logger.info(f"--- Generating Top-K (k={k}) Assignments ---")
+
+    for i, F in enumerate(factors):
+        name = factor_names[i]
+        factor_assignments = []
+
+        # Check if k is larger than the number of components
+        num_components = F.shape[1]
+        if k > num_components:
+            k_actual = num_components
+            logger.warning(
+                f"k={k} is larger than num_components={num_components} for '{name}'. Using k={k_actual}."
+            )
+        else:
+            k_actual = k
+
+        # Iterate over each item (row) in the factor matrix
+        for item_loadings in F:
+            abs_loadings = torch.abs(item_loadings)
+            top_k = torch.topk(abs_loadings, k=k_actual)
+            top_k_indices = top_k.indices.cpu().numpy().tolist()
+            factor_assignments.append(top_k_indices)
+
+        assignments[name] = factor_assignments
+
+    logger.info("------------------------------------------")
+    return assignments
+
+
+def get_threshold_k_assignments(
+    factors: list[tl.tensor],
+    factor_names: list[str] = None,
+    threshold: float = 0.9,
+) -> dict:
+    """
+    Implements the "Data-Driven" approach.
+    Assigns a variable number of clusters to each item based on a
+    cumulative strength threshold (e.g., 0.9 = 90% of identity).
+    """
+    assignments = {}
+    if not factors:
+        return assignments
+
+    if factor_names is None:
+        factor_names = [f"Mode {i}" for i in range(len(factors))]
+
+    logger.info(
+        f"--- Generating Threshold-K (threshold={threshold*100}%) Assignments ---"
+    )
+
+    for i, F in enumerate(factors):
+        name = factor_names[i]
+        factor_assignments = []
+
+        # Iterate over each item (row)
+        for item_loadings in F:
+            abs_loadings = torch.abs(item_loadings)
+            total_identity = torch.sum(abs_loadings)
+
+            # Handle case where all loadings are zero
+            if total_identity <= 1e-8:
+                factor_assignments.append([])
+                continue
+
+            # Sort loadings and indices to find the strongest ones
+            sorted_loadings, sorted_indices = torch.sort(
+                abs_loadings, descending=True
+            )
+
+            # Get cumulative sum
+            cum_sum = torch.cumsum(sorted_loadings, dim=0)
+
+            # Find the point where cum_sum exceeds the threshold
+            threshold_val = total_identity * threshold
+
+            # Find all indices that meet or exceed the threshold
+            indices_meeting_threshold = torch.where(cum_sum >= threshold_val)[
+                0
+            ]
+
+            if len(indices_meeting_threshold) == 0:
+                # Safeguard: if no single loading meets it (e.g. threshold > 1.0)
+                # or if all loadings are zero (already handled), just take the top-1.
+                cutoff_index = 0
+            else:
+                # Get the *first* index that crosses the bar
+                cutoff_index = indices_meeting_threshold[0].item()
+
+            # Get the cluster indices (from the original list) up to the cutoff
+            final_indices = (
+                sorted_indices[: cutoff_index + 1].cpu().numpy().tolist()
+            )
+            factor_assignments.append(final_indices)
+
+        assignments[name] = factor_assignments
+
+    logger.info("--------------------------------------------------")
+    return assignments
+
+
+def save_assignments(
+    assignments: dict,
+    row_names: list,  # Store names
+    col_names: list,  # SKU names
+    feature_names: list,  # Feature names
+    filepath: Path,
+):
+    """
+    Saves the cluster assignments as a flat DataFrame (wide-format)
+    to a CSV or Parquet file.
+
+    Each row represents a single item-to-cluster assignment.
+    """
+    # Map factor names to their corresponding item name lists
+    name_map = {"Store": row_names, "SKU": col_names, "Feature": feature_names}
+
+    all_rows = []  # This will hold the flat data
+
+    # assignment_type is e.g., "top_5_assignments"
+    for assignment_type, data in assignments.items():
+        # factor_name is e.g., "Store"
+        for factor_name, cluster_lists in data.items():
+            item_names = name_map.get(factor_name, [])
+
+            # Zip item names (e.g., "Store_1") with their assignments (e.g., [1, 5, 30])
+            for i, cluster_list in enumerate(cluster_lists):
+                item_name = (
+                    item_names[i] if i < len(item_names) else f"index_{i}"
+                )
+
+                # If an item has no clusters (e.g., from thresholding)
+                if not cluster_list:
+                    all_rows.append(
+                        {
+                            "assignment_type": assignment_type,
+                            "factor_name": factor_name,
+                            "item_name": str(item_name),
+                            "cluster_id": np.nan,  # Use NaN for "no cluster"
+                        }
+                    )
+                else:
+                    # "Explode" the list: [1, 5, 30] becomes 3 rows
+                    for cluster_id in cluster_list:
+                        all_rows.append(
+                            {
+                                "assignment_type": assignment_type,
+                                "factor_name": factor_name,
+                                "item_name": str(item_name),
+                                "cluster_id": cluster_id,
+                            }
+                        )
+
+    # Convert the list of flat dicts into a DataFrame
+    df = pd.DataFrame(all_rows)
+
+    # Save to file using your utility
+    try:
+        save_csv_or_parquet(df, filepath)
+        logger.info(f"Successfully saved assignments DataFrame to {filepath}")
+    except Exception as e:
+        logger.error(
+            f"Failed to save assignments DataFrame to {filepath}: {e}"
+        )
+
+    return df  # Optional: return the df for further use
 
 
 def _nanstd(tensor, dim=None, keepdim=False, ddof=1):
