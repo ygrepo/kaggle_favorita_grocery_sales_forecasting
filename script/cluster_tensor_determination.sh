@@ -73,7 +73,6 @@ python "${SCRIPT_DIR}/cluster_tensor_determination.py" \
   --factor_names "$FACTOR_NAMES" \
   --max_iter "$MAX_ITER" \
   --tol "$TOL" \
-  --features "$FEATURES" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL"
   exit_code=$?
