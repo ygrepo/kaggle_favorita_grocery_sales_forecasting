@@ -54,6 +54,7 @@ mkdir -p "$LOG_DIR"
 # Set up log file with timestamp
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
+echo "Method: $METHOD" | tee -a "$LOG_FILE"
 echo "Ranks: $RANKS" | tee -a "$LOG_FILE"
 echo "Threshold: $THRESHOLD" | tee -a "$LOG_FILE"
 echo "Factor names: $FACTOR_NAMES" | tee -a "$LOG_FILE"

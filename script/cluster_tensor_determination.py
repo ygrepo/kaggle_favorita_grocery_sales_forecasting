@@ -133,6 +133,7 @@ def main():
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Method: {args.method}")
         logger.info(f"  Output fn: {args.output_fn}")
+        logger.info(f"  Method: {args.method}")
         logger.info(f"  Ranks: {args.ranks}")
         logger.info(f"  Threshold: {args.threshold}")
         logger.info(f"  Factor names: {args.factor_names}")
