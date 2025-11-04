@@ -71,7 +71,7 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 
 # Run the script
 set +e
-python "${SCRIPT_DIR}/cluster_tensors.py" \
+python "${SCRIPT_DIR}/cluster_tensor_grid_search.py" \
   --method "$METHOD" \
   --output_path "$OUTPUT_PATH" \
   --data_fn "$DATA_FN" \
