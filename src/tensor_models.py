@@ -240,7 +240,6 @@ def log_tucker_core_stats(stats_dict: dict):
 def log_factor_utilization(
     factors: list[tl.tensor],
     stats_dict: dict,
-    method: str,
     factor_names: list[str] = None,
 ):
     """
@@ -253,8 +252,6 @@ def log_factor_utilization(
 
     if factor_names is None:
         factor_names = [f"Mode {i}" for i in range(len(factors))]
-
-    logger.info(f"--- Factor Utilization Check ({method}) ---")
 
     for name in factor_names:
         # Use .get() for safety, defaulting to np.nan
@@ -456,49 +453,65 @@ def fit_and_decompose(
     n_iter: int = 500,
     tol: float = 1e-8,
 ) -> Tuple[float, float, dict]:
-    logger.info("Multifeature mode: reshaping data to (I, J, D)")
-
-    # Parse features (no change needed)
+    """
+    Builds, pre-processes, and decomposes the tensor, returning
+    PVE, RMSE, and a dictionary of factor/core statistics.
+    """
+    # Parse features
     if isinstance(features, str):
         features = [f.strip() for f in features.split(",") if f.strip()]
         logger.info(f"Parsed features: {features}")
 
-    X, M, row_names, col_names = build_multifeature_X_matrix(df, features)
-    logger.info(f"X shape:{X.shape}")
+    # 1. Build the RAW tensor (contains NaNs)
+    X_raw, M_raw, _, _ = build_multifeature_X_matrix(df, features)
+    logger.info(f"X shape:{X_raw.shape}")
 
-    # Move data to the selected device (GPU or CPU)
-    # Assuming X_mat is float and M is boolean
-    X_mat = tl.tensor(X, device=device, dtype=tl.float32)
-    M = tl.tensor(M, device=device, dtype=torch.bool)
+    # 2. Create tensors FIRST
+    X_mat = tl.tensor(X_raw, device=device, dtype=tl.float32)
+    M_tensor = tl.tensor(M_raw, device=device, dtype=torch.bool)
 
-    # X is already a tensor, center_scale_signed now accepts tensors
-    X, mus, sds = center_scale_signed(X_mat, M)
+    # 3. Conditionally pre-process the data
+    if method in ["tucker", "parafac"]:
+        # These models support signed data, so we z-score
+        logger.info(
+            f"Applying z-score (center_scale_signed) for '{method}' model."
+        )
+        # X is now the processed (z-scored, imputed) tensor
+        X, mus, sds = center_scale_signed(X_mat, M_tensor)
+    elif method == "ntf":
+        # NTF requires non-negative data. We do NOT z-score.
+        logger.info(f"Skipping z-score for non-negative model '{method}'.")
+        # X is the raw tensor (with NaNs)
+        X = X_mat
+    else:
+        raise ValueError(f"Invalid method: {method}")
 
     I, J, D = X_mat.shape
+    logger.info(f"Multifeature mode: reshaping data: ({I}, {J}, {D})")
 
-    # Use provided ranks or compute defaults (no change needed)
+    # Use provided ranks or compute defaults
     if ranks is None:
         rank_tuple = (max(2, I // 4), max(2, J // 4), max(2, D // 4))
         logger.info(f"No ranks provided, using defaults: {rank_tuple}")
     else:
         rank_tuple = ranks
 
+    # 4. Decompose using the correct tensor 'X'
     if method == "tucker":
         logger.info(f"Performing Tucker decomposition with rank={rank_tuple}")
-        # Pass the device tensors to the function
         weights, factors = tucker_decomposition(X, rank_tuple, n_iter, tol)
     elif method == "ntf":
         logger.info(f"Performing NTF decomposition with rank={rank_tuple}")
-        # Pass the device tensors to the function
+        # 'nonneg_parafac' will receive the RAW X and impute NaNs
         weights, factors = nonneg_parafac(X, rank_tuple)
     elif method == "parafac":
         logger.info(f"Performing PARAFAC decomposition with rank={rank_tuple}")
-        # Pass the device tensors to the function
+        # 'parafac_decomposition' will receive the Z-SCORED X
         weights, factors = parafac_decomposition(X, rank_tuple)
     else:
         raise ValueError(f"Invalid method: {method}")
 
-    # Log factor utilization right after decomposition
+    # 5. Log factor/core statistics
     stats_dict = {}  # Initialize an empty dict
 
     if factors:
@@ -513,18 +526,15 @@ def fit_and_decompose(
             # For 'parafac' and 'ntf', compute component strength
             comp_stats = compute_factor_stats(factors, factor_names=mode_names)
             log_factor_utilization(
-                factors, stats_dict, method, factor_names=mode_names
+                factors, comp_stats, factor_names=mode_names
             )
             stats_dict.update(comp_stats)  # Add component stats to dict
 
         # 2. Compute ITEM MEMBERSHIP stats (for ALL methods)
-        # This measures the "softness" of membership for items.
         item_stats = compute_item_membership_stats(
             factors, factor_names=mode_names
         )
-        # Log them (optional, but helpful)
         log_item_membership_stats(item_stats, factor_names=mode_names)
-        # Add them to the main stats dictionary
         stats_dict.update(item_stats)
 
     else:
@@ -533,9 +543,11 @@ def fit_and_decompose(
         )
         return np.nan, np.nan, stats_dict
 
+    # 6. Calculate PVE/RMSE using the correct tensor 'X'
     pve_percent, rmse = errors(X, weights, factors, method=method)
+    logger.info(f"PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
 
-    # Return all three items
+    # 7. Return all three items
     return pve_percent, rmse, stats_dict
 
 

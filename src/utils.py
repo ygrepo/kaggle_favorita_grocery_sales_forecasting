@@ -337,13 +337,13 @@ def build_multifeature_X_matrix(
         X[i, j, :] = row[features].to_numpy(dtype=np.float64)
         M[i, j] = True
 
-    # z-score each channel using only observed cells; keep NaNs for now
-    for d in range(D):
-        vals = X[..., d][M]
-        # Use mean for centering, matching the standard deviation for scaling
-        mu = np.nanmean(vals)
-        s = np.nanstd(vals) if np.nanstd(vals) > 1e-12 else 1.0
-        X[..., d] = (X[..., d] - mu) / s
+    # # z-score each channel using only observed cells; keep NaNs for now
+    # for d in range(D):
+    #     vals = X[..., d][M]
+    #     # Use mean for centering, matching the standard deviation for scaling
+    #     mu = np.nanmean(vals)
+    #     s = np.nanstd(vals) if np.nanstd(vals) > 1e-12 else 1.0
+    #     X[..., d] = (X[..., d] - mu) / s
     row_names = stores.tolist()
     col_names = items.tolist()
     return X, M, row_names, col_names
