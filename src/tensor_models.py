@@ -462,15 +462,15 @@ def fit_and_decompose(
         features = [f.strip() for f in features.split(",") if f.strip()]
         logger.info(f"Parsed features: {features}")
 
-    # 1. Build the RAW tensor (contains NaNs)
+    # Build the RAW tensor (contains NaNs)
     X_raw, M_raw, _, _ = build_multifeature_X_matrix(df, features)
     logger.info(f"X shape:{X_raw.shape}")
 
-    # 2. Create tensors FIRST
+    # Create tensors FIRST
     X_mat = tl.tensor(X_raw, device=device, dtype=tl.float32)
     M_tensor = tl.tensor(M_raw, device=device, dtype=torch.bool)
 
-    # 3. Conditionally pre-process the data
+    # Conditionally pre-process the data
     if method in ["tucker", "parafac"]:
         # These models support signed data, so we z-score
         logger.info(
@@ -559,23 +559,42 @@ def fit(
     n_iter: int = 500,
     tol: float = 1e-8,
 ) -> Tuple[tl.tensor, list[tl.tensor], list, list, list]:
-
+    """
+    Fits a single, final model and returns the model components
+    (weights, factors) and metadata (names).
+    """
+    # Parse features
     if isinstance(features, str):
         features = [f.strip() for f in features.split(",") if f.strip()]
         logger.info(f"Parsed features: {features}")
 
-    X, M, row_names, col_names = build_multifeature_X_matrix(df, features)
-    logger.info(f"X shape:{X.shape}")
+    # Build the RAW tensor (contains NaNs)
+    X_raw, M_raw, row_names, col_names = build_multifeature_X_matrix(
+        df, features
+    )
+    logger.info(f"X shape:{X_raw.shape}")
     logger.info(
         f"Got {len(row_names)} row names (Stores) and {len(col_names)} col names (SKUs)"
     )
 
-    X_mat = tl.tensor(X, device=device, dtype=tl.float32)
-    M = tl.tensor(M, device=device, dtype=torch.bool)
-    X, mus, sds = center_scale_signed(X_mat, M)
+    # Create tensors FIRST
+    X_mat = tl.tensor(X_raw, device=device, dtype=tl.float32)
+    M_tensor = tl.tensor(M_raw, device=device, dtype=torch.bool)
+
+    # Conditionally pre-process the data
+    if method in ["tucker", "parafac"]:
+        logger.info(
+            f"Applying z-score (center_scale_signed) for '{method}' model."
+        )
+        X, mus, sds = center_scale_signed(X_mat, M_tensor)
+    elif method == "ntf":
+        logger.info(f"Skipping z-score for non-negative model '{method}'.")
+        X = X_mat
+    else:
+        raise ValueError(f"Invalid method: {method}")
 
     I, J, D = X_mat.shape
-    logger.info(f"Multifeature mode: reshaping data: {I, J, D}")
+    logger.info(f"Multifeature mode: reshaping data: ({I}, {J}, {D})")
 
     if ranks is None:
         rank_tuple = (max(2, I // 4), max(2, J // 4), max(2, D // 4))
@@ -583,6 +602,7 @@ def fit(
     else:
         rank_tuple = ranks
 
+    # Decompose using the correct tensor 'X'
     if method == "tucker":
         logger.info(f"Performing Tucker decomposition with rank={rank_tuple}")
         weights, factors = tucker_decomposition(X, rank_tuple, n_iter, tol)
@@ -595,9 +615,33 @@ def fit(
     else:
         raise ValueError(f"Invalid method: {method}")
 
-    pve_percent, rmse = errors(X, weights, factors, method=method)
-    logger.info(f"PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
+    # Log stats (but don't return them)
+    if factors:
+        mode_names = ["Store", "SKU", "Feature"]
+        if method == "tucker":
+            core_stats = compute_tucker_core_stats(weights)
+            log_tucker_core_stats(core_stats)
+        else:
+            comp_stats = compute_factor_stats(factors, factor_names=mode_names)
+            log_factor_utilization(
+                factors, comp_stats, factor_names=mode_names
+            )
 
+        item_stats = compute_item_membership_stats(
+            factors, factor_names=mode_names
+        )
+        log_item_membership_stats(item_stats, factor_names=mode_names)
+    else:
+        logger.error(
+            f"Decomposition failed for method {method}, skipping errors."
+        )
+        return None, None, None, None, None
+
+    # Calculate and log PVE/RMSE
+    pve_percent, rmse = errors(X, weights, factors, method=method)
+    logger.info(f"FINAL MODEL PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
+
+    # Return the model components and names
     return weights, factors, row_names, col_names, features
 
 

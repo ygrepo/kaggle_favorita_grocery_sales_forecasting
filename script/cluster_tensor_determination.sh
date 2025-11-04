@@ -13,14 +13,15 @@ cd "$PROJECT_ROOT"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clusters.csv"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/20251004_NTF_2014_January_top_53_store_2000_item_growth_rate_clusters.csv"
 
-RANKS="40,300,7"
+#RANKS="40,300,7"
+RANKS="100"
 FACTOR_NAMES="Store,SKU,Feature"
 THRESHOLD=0.9
 MAX_ITER=500
 TOL=1e-5
-METHOD="tucker"
+METHOD="ntf"
 FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
