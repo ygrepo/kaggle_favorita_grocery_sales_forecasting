@@ -198,11 +198,15 @@ def main():
 
         output_fn = args.output_fn.resolve()
         logger.info(f"Output fn: {output_fn}")
+        name_map = {
+            "Store": row_names,
+            "SKU": col_names,
+            "Feature": feature_names,
+        }
 
         save_assignments(
             output_assignments,
-            row_names,
-            col_names,
+            name_map,
             feature_names,
             output_fn,
         )

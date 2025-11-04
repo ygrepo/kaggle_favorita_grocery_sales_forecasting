@@ -547,7 +547,6 @@ def fit(
     n_iter: int = 500,
     tol: float = 1e-8,
 ) -> Tuple[tl.tensor, list[tl.tensor], list, list, list]:
-    logger.info("Multifeature mode: reshaping data to (I, J, D)")
 
     if isinstance(features, str):
         features = [f.strip() for f in features.split(",") if f.strip()]
@@ -564,6 +563,7 @@ def fit(
     X, mus, sds = center_scale_signed(X_mat, M)
 
     I, J, D = X_mat.shape
+    logger.info(f"Multifeature mode: reshaping data: {I, J, D}")
 
     if ranks is None:
         rank_tuple = (max(2, I // 4), max(2, J // 4), max(2, D // 4))
@@ -706,9 +706,7 @@ def get_threshold_k_assignments(
 
 def save_assignments(
     assignments: dict,
-    row_names: list,  # Store names
-    col_names: list,  # SKU names
-    feature_names: list,  # Feature names
+    name_map: dict,  # Map factor names to their corresponding item name lists.
     filepath: Path,
 ) -> pd.DataFrame:
     """
@@ -717,13 +715,10 @@ def save_assignments(
 
     Each row represents a single item-to-cluster assignment.
     """
-    # Map factor names to their corresponding item name lists
-    name_map = {"Store": row_names, "SKU": col_names, "Feature": feature_names}
-
     all_rows = []  # This will hold the flat data
 
-    # assignment_type is e.g., "top_5_assignments"
-    for assignment_type, data in assignments.items():
+    # _type is e.g., "top_5_assignments"
+    for _type, data in assignments.items():
         # factor_name is e.g., "Store"
         for factor_name, cluster_lists in data.items():
             item_names = name_map.get(factor_name, [])
