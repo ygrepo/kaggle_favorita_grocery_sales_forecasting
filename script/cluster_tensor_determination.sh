@@ -21,6 +21,7 @@ THRESHOLD=0.9
 MAX_ITER=500
 TOL=1e-5
 METHOD="tucker"
+FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -57,6 +58,7 @@ echo "Threshold: $THRESHOLD" | tee -a "$LOG_FILE"
 echo "Factor names: $FACTOR_NAMES" | tee -a "$LOG_FILE"
 echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
+echo "Features: $FEATURES" | tee -a "$LOG_FILE"
 echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
@@ -73,6 +75,7 @@ python "${SCRIPT_DIR}/cluster_tensor_determination.py" \
   --factor_names "$FACTOR_NAMES" \
   --max_iter "$MAX_ITER" \
   --tol "$TOL" \
+  --features "$FEATURES" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL"
   exit_code=$?
