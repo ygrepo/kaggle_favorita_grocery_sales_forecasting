@@ -16,7 +16,7 @@ DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_impu
 OUTPUT_FN="${OUTPUT_DATA_DIR}/20251004_PARAFAC_2014_January_top_53_store_2000_item_growth_rate_clusters.csv"
 
 #RANKS="40,300,7"
-RANKS="100"
+RANKS="150"
 FACTOR_NAMES="Store,SKU,Feature"
 THRESHOLD=0.9
 MAX_ITER=500
