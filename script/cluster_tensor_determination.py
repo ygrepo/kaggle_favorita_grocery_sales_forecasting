@@ -207,7 +207,6 @@ def main():
         save_assignments(
             output_assignments,
             name_map,
-            feature_names,
             output_fn,
         )
 
