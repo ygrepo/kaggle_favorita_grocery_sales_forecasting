@@ -722,26 +722,31 @@ def save_assignments(
 
     all_rows = []  # This will hold the flat data
 
-    # assignment_type is e.g., "top_5_assignments"
-    for assignment_type, data in assignments.items():
+    for factor_name, cluster_lists in assignments.items():
         # factor_name is e.g., "Store"
-        for factor_name, cluster_lists in data.items():
-            item_names = name_map.get(factor_name, [])
+        item_names = name_map.get(factor_name, [])
 
-            # Zip item names (e.g., "Store_1") with their assignments (e.g., [1, 5, 30])
-            for i, cluster_list in enumerate(cluster_lists):
-                item_name = (
-                    item_names[i] if i < len(item_names) else f"index_{i}"
+        # Zip item names (e.g., "Store_1") with their assignments (e.g., [1, 5, 30])
+        for i, cluster_list in enumerate(cluster_lists):
+            item_name = item_names[i] if i < len(item_names) else f"index_{i}"
+
+            # If an item has no clusters (e.g., from thresholding)
+            if not cluster_list:
+                all_rows.append(
+                    {
+                        "factor_name": factor_name,
+                        "item_name": str(item_name),
+                        "cluster_id": np.nan,  # Use NaN for "no cluster"
+                    }
                 )
-
-                # If an item has no clusters (e.g., from thresholding)
-                if not cluster_list:
+            else:
+                # "Explode" the list: [1, 5, 30] becomes 3 rows
+                for cluster_id in cluster_list:
                     all_rows.append(
                         {
-                            "assignment_type": assignment_type,
                             "factor_name": factor_name,
                             "item_name": str(item_name),
-                            "cluster_id": np.nan,  # Use NaN for "no cluster"
+                            "cluster_id": cluster_id,
                         }
                     )
                 else:
@@ -749,7 +754,6 @@ def save_assignments(
                     for cluster_id in cluster_list:
                         all_rows.append(
                             {
-                                "assignment_type": assignment_type,
                                 "factor_name": factor_name,
                                 "item_name": str(item_name),
                                 "cluster_id": cluster_id,
