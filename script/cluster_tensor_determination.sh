@@ -15,7 +15,7 @@ DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
 OUTPUT_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.csv"
-MODEL_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.pkl"
+MODEL_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.pt"
 
 RANKS="40,300,7"
 #RANKS="150"
