@@ -17,8 +17,8 @@ DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_impu
 OUTPUT_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.csv"
 MODEL_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.pkl"
 
-#RANKS="40,300,7"
-RANKS="150"
+RANKS="40,300,7"
+#RANKS="150"
 FACTOR_NAMES="Store,SKU,Feature"
 THRESHOLD=0.9
 MAX_ITER=500
