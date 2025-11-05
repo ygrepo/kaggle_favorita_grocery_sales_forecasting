@@ -558,7 +558,9 @@ def fit(
     ranks: tuple[int, int, int] | int | None = None,
     n_iter: int = 500,
     tol: float = 1e-8,
-) -> Tuple[tl.tensor, list[tl.tensor], list, list, list]:
+) -> Tuple[
+    tl.tensor, list[tl.tensor], list, list, list, np.ndarray, np.ndarray
+]:
     """
     Fits a single, final model and returns the model components
     (weights, factors) and metadata (names).
@@ -635,14 +637,14 @@ def fit(
         logger.error(
             f"Decomposition failed for method {method}, skipping errors."
         )
-        return None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     # Calculate and log PVE/RMSE
     pve_percent, rmse = errors(X, weights, factors, method=method)
     logger.info(f"FINAL MODEL PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
 
     # Return the model components and names
-    return weights, factors, row_names, col_names, features
+    return weights, factors, row_names, col_names, features, X_raw, M_raw
 
 
 def get_top_k_assignments(

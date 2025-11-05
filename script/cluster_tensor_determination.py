@@ -10,6 +10,7 @@ This script handles the complete clustering pipeline including:
 import sys
 import argparse
 from pathlib import Path
+import pickle
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -89,6 +90,12 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
+        "--model_fn",
+        type=str,
+        default="",
+        help="Path to save model (relative to project root)",
+    )
+    parser.add_argument(
         "--max_iter",
         type=int,
         default=500,
@@ -138,6 +145,7 @@ def main():
         logger.info(f"  Threshold: {args.threshold}")
         logger.info(f"  Factor names: {args.factor_names}")
         logger.info(f"  Data fn: {args.data_fn}")
+        logger.info(f"  Model fn: {args.model_fn}")
         logger.info(f"  Features: {args.features}")
         logger.info(f"  Max iter: {args.max_iter}")
         logger.info(f"  Tolerance: {args.tol}")
@@ -173,13 +181,15 @@ def main():
             )
             return
 
-        weights, factors, row_names, col_names, feature_names = fit(
-            args.method,
-            df,
-            args.features,
-            ranks=rank_ints,
-            n_iter=args.max_iter,
-            tol=args.tol,
+        weights, factors, row_names, col_names, feature_names, X_raw, M_raw = (
+            fit(
+                args.method,
+                df,
+                args.features,
+                ranks=rank_ints,
+                n_iter=args.max_iter,
+                tol=args.tol,
+            )
         )
         logger.info("Data clustering completed successfully.")
 
@@ -196,9 +206,19 @@ def main():
         output_assignments = {
             f"threshold_{threshold*100:.0f}pct_assignments": threshold_k_assignments,
         }
-
+        model_dict = {
+            "weights": weights,
+            "factors": factors,
+            "row_names": row_names,
+            "col_names": col_names,
+            "feature_names": feature_names,
+            "X_raw": X_raw,
+            "M_raw": M_raw,
+        }
+        model_fn = Path(args.model_fn).resolve()
+        logger.info(f"Saving model to {model_fn}")
+        pickle.dump(model_dict, open(model_fn, "wb"))
         output_fn = args.output_fn.resolve()
-        logger.info(f"Output fn: {output_fn}")
         name_map = {
             "Store": row_names,
             "SKU": col_names,

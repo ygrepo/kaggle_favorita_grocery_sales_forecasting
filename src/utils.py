@@ -99,16 +99,24 @@ def save_csv_or_parquet(df: pd.DataFrame, fn: Path | None) -> None:
     logger.info(f"Saving df to {fn}")
     if fn.suffix == ".parquet":
         df.to_parquet(fn)
-    else:
+    elif fn.suffix == ".csv":
         df.to_csv(fn, index=False)
+    elif fn.suffix == ".pkl":
+        df.to_pickle(fn)
+    else:
+        raise ValueError(f"Unsupported file extension: {fn.suffix}")
 
 
 def read_csv_or_parquet(fn: Path) -> pd.DataFrame:
     logger.info(f"Loading df from {fn}")
     if fn.suffix == ".parquet":
         return pd.read_parquet(fn)
-    else:
+    elif fn.suffix == ".csv":
         return pd.read_csv(fn)
+    elif fn.suffix == ".pkl":
+        return pd.read_pickle(fn)
+    else:
+        raise ValueError(f"Unsupported file extension: {fn.suffix}")
 
 
 def get_n_jobs(n_jobs: int) -> int:
