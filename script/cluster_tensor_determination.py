@@ -10,7 +10,7 @@ This script handles the complete clustering pipeline including:
 import sys
 import argparse
 from pathlib import Path
-import pickle
+import torch
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -206,18 +206,22 @@ def main():
         output_assignments = {
             f"threshold_{threshold*100:.0f}pct_assignments": threshold_k_assignments,
         }
+        logger.info("Building model dictionary...")
         model_dict = {
-            "weights": weights,
-            "factors": factors,
+            # Move tensors to CPU for max portability
+            "weights": weights.cpu(),
+            "factors": [f.cpu() for f in factors],
             "row_names": row_names,
             "col_names": col_names,
             "feature_names": feature_names,
             "X_raw": X_raw,
             "M_raw": M_raw,
+            "method": args.method,
+            "ranks": rank_ints,
         }
         model_fn = Path(args.model_fn).resolve()
         logger.info(f"Saving model to {model_fn}")
-        pickle.dump(model_dict, open(model_fn, "wb"))
+        torch.save(model_dict, model_fn)
         output_fn = args.output_fn.resolve()
         name_map = {
             "Store": row_names,
