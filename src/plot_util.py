@@ -5,18 +5,19 @@ from matplotlib.ticker import MultipleLocator
 import seaborn as sns
 import numpy as np
 import pandas as pd
-from scipy.stats import sem, t
+from scipy.stats import sem
 
 from matplotlib.ticker import MaxNLocator
-from typing import Sequence, Union, Mapping
+from typing import Sequence, Union, Mapping, Callable, Optional, Tuple, List
 import math
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pathlib import Path
-
-from typing import Optional, Tuple, Callable
+from matplotlib.ticker import ScalarFormatter
+from matplotlib.lines import Line2D
 from scipy.cluster.hierarchy import linkage, leaves_list
 from sklearn.decomposition import PCA
+import tensorly as tl
 
 Number = Union[int, float]
 
@@ -2157,3 +2158,725 @@ def plot_pca_explained_variance(
         plt.savefig(fn, dpi=300)
     plt.show()
     plt.close()
+
+
+# def plot_tensor_reconstruction_quality(
+#     X_orig: np.ndarray,
+#     weights: tl.tensor,
+#     factors: List[tl.tensor],
+#     method: str,
+#     *,
+#     M: np.ndarray = None,
+#     features: List[str] = None,
+#     feature_for_heatmap: int = 0,
+#     show_pve_line: bool = True,
+#     use_rmse: bool = True,
+#     max_scatter_points: int = 200_000,
+#     fn: Path | None = None,
+#     figsize=(12, 8),
+# ):
+#     """
+#     Plots reconstruction quality from raw tensor components.
+
+#     Args:
+#         X_orig: The original data tensor (numpy, float, with NaNs)
+#         weights: The core tensor (Tucker) or weights vector (CP/NTF)
+#         factors: List of factor matrices
+#         method: 'tucker', 'parafac', or 'ntf'
+#         M: (I,J) boolean mask of observed entries
+#         ... (other plotting args)
+#     """
+#     tl.set_backend("pytorch")
+#     logger.info(f"Plotting reconstruction for method '{method}'...")
+#     X = np.asarray(X_orig)
+#     assert X.ndim == 3, f"Expected (I,J,D), got {X.shape}"
+#     I, J, D = X.shape
+#     names = (
+#         list(features)
+#         if features is not None
+#         else [f"feat_{d}" for d in range(D)]
+#     )
+
+#     # Reconstruct the tensor from components
+#     logger.info("Reconstructing tensor...")
+#     try:
+#         if method == "tucker":
+#             X_rec_torch = tl.tucker_to_tensor((weights, factors))
+#         elif method in ["parafac", "ntf"]:
+#             X_rec_torch = tl.cp_to_tensor((weights, factors))
+#         else:
+#             raise ValueError(f"Unknown method for reconstruction: {method}")
+
+#         # Convert to NumPy for plotting
+#         X_rec = X_rec_torch.cpu().numpy()
+
+#     except Exception as e:
+#         logger.error(f"!!! Reconstruction failed: {e}")
+#         # Create a dummy array to prevent a crash
+#         X_rec = np.full(X.shape, np.nan)
+
+#     if X_rec.shape != X.shape:
+#         raise ValueError(f"X_rec shape {X_rec.shape} != X shape {X.shape}")
+
+#     # --- Build masks ---
+#     if M is not None:
+#         assert M.shape == (I, J), f"M must be (I,J), got {M.shape}"
+#         Md = np.repeat(M[:, :, None], D, axis=2)  # (I,J,D)
+#     else:
+#         # fall back: observed if not NaN in that feature channel
+#         Md = ~np.isnan(X)
+
+#     # --- Scatter over observed elements only ---
+#     x_flat = X[Md]
+#     xr_flat = X_rec[Md]
+#     n = x_flat.size
+#     if n == 0:
+#         logger.warning("Warning: No observed data points found in mask M.")
+#         x_plot, xr_plot = np.array([]), np.array([])
+#     elif n > max_scatter_points:
+#         idx = np.random.RandomState(0).choice(
+#             n, size=max_scatter_points, replace=False
+#         )
+#         x_plot, xr_plot = x_flat[idx], xr_flat[idx]
+#     else:
+#         x_plot, xr_plot = x_flat, xr_flat
+
+#     # --- Per-feature metrics on observed cells only ---
+#     n_total = I * J
+#     n_obs_per = np.zeros(D, dtype=int)
+#     coverage = np.zeros(D, dtype=float)
+#     rss_per = np.full(D, np.nan)
+#     rmse_per = np.full(D, np.nan)
+#     pve_per = np.full(D, np.nan)
+
+#     for d in range(D):
+#         md = Md[:, :, d]
+#         n_obs = int(md.sum())
+#         n_obs_per[d] = n_obs
+#         coverage[d] = (n_obs / n_total) if n_total > 0 else 0.0
+#         if n_obs == 0:
+#             logger.warning(f"Warning: No observed data for feature {d}")
+#             continue
+#         xd = X[:, :, d][md]
+#         xhd = X_rec[:, :, d][md]
+#         resid = xd - xhd
+#         rss = float(np.sum(resid * resid))
+#         rss_per[d] = rss
+#         rmse_per[d] = float(np.sqrt(rss / n_obs))
+#         mu = float(xd.mean())
+#         tss = float(np.sum((xd - mu) ** 2))
+#         pve_per[d] = (
+#             (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
+#         )
+
+#     # --- Residual heatmap for selected feature (observed cells only) ---
+#     fidx = int(np.clip(feature_for_heatmap, 0, D - 1))
+#     md_hm = Md[:, :, fidx]
+#     residual_2d = np.full((I, J), np.nan)
+#     if md_hm.any():
+#         residual_2d[md_hm] = X[:, :, fidx][md_hm] - X_rec[:, :, fidx][md_hm]
+
+#     # --- Figure layout ---
+#     fig, axes = plt.subplots(1, 2, figsize=figsize)
+#     try:
+#         rank_str = tuple(f.shape[1] for f in factors)
+#     except Exception:
+#         rank_str = "(unknown rank)"
+#     fig.suptitle(
+#         f"Reconstruction Quality: {method.upper()} @ rank={rank_str}",
+#         fontsize=16,
+#     )
+
+#     # Scatter
+#     ax = axes[0]
+#     if x_plot.size > 0:
+#         ax.scatter(x_plot, xr_plot, alpha=0.35, s=2)
+#         lo, hi = float(np.nanmin(x_plot)), float(np.nanmax(x_plot))
+#         ax.plot([lo, hi], [lo, hi], "r--", lw=1)
+#     ax.set_xlabel("Original values")
+#     ax.set_ylabel("Reconstructed values")
+#     ax.set_title("Reconstruction")
+#     ax.grid(True, alpha=0.2)
+
+#     # Per-feature bars
+#     ax = axes[1]
+#     xloc = np.arange(D)
+#     vals = rmse_per if use_rmse else rss_per
+#     label = "RMSE" if use_rmse else "RSS"
+#     heights = np.array(
+#         [v if np.isfinite(v) else 0.0 for v in vals], dtype=float
+#     )
+#     bars = ax.bar(xloc, heights)
+#     y_max_val = np.nanmax(heights)
+#     y_max = y_max_val if (np.isfinite(y_max_val) and y_max_val > 0) else 1.0
+
+#     for d, b in enumerate(bars):
+#         if not np.isfinite(vals[d]) or n_obs_per[d] == 0:
+#             b.set_height(0.02 * y_max)
+#             b.set_color("lightgray")
+#             b.set_hatch("//")
+
+#     ax.set_xticks(xloc)
+#     ax.set_xticklabels(names, rotation=45, ha="right")
+#     ax.set_ylabel(label)
+#     ax.set_title(f"Per-feature {label}")
+
+#     if show_pve_line:
+#         ax2 = ax.twinx()
+
+#         # Plot all features, handling NaN/infinite values explicitly
+#         for d in range(D):
+#             if np.isfinite(pve_per[d]):
+#                 # Valid PVE - plot as normal
+#                 ax2.plot(
+#                     xloc[d], pve_per[d], marker="o", markersize=6, color="C1"
+#                 )
+#             elif n_obs_per[d] == 0:
+#                 # No data - plot as gray X at bottom
+#                 ax2.plot(
+#                     xloc[d],
+#                     2,
+#                     marker="x",
+#                     markersize=8,
+#                     color="gray",
+#                     markeredgewidth=2,
+#                 )
+#             else:
+#                 # Invalid calculation (e.g., zero variance) - plot as red X
+#                 ax2.plot(
+#                     xloc[d],
+#                     5,
+#                     marker="x",
+#                     markersize=8,
+#                     color="red",
+#                     markeredgewidth=2,
+#                 )
+
+#     ax2.set_ylabel("PVE (%)")
+#     ax2.set_ylim(0, 100)
+
+#     # Add a legend to explain the symbols
+#     from matplotlib.lines import Line2D
+
+#     legend_elements = [
+#         Line2D(
+#             [0],
+#             [0],
+#             marker="o",
+#             color="w",
+#             markerfacecolor="C1",
+#             markersize=6,
+#             label="Valid PVE",
+#         ),
+#         Line2D(
+#             [0],
+#             [0],
+#             marker="x",
+#             color="w",
+#             markerfacecolor="gray",
+#             markersize=8,
+#             label="No data",
+#         ),
+#         Line2D(
+#             [0],
+#             [0],
+#             marker="x",
+#             color="w",
+#             markerfacecolor="red",
+#             markersize=8,
+#             label="Invalid calc",
+#         ),
+#     ]
+#     ax2.legend(handles=legend_elements, loc="upper right", fontsize=8)
+
+#     plt.tight_layout()
+
+#     if fn:
+#         print(f"Saving plot to {fn}")
+#         plt.savefig(fn, dpi=300)
+
+#     plt.show()
+#     plt.close(fig)
+
+
+def _apply_ticks(
+    ax_in, N, names_in, axis: str, max_labels: int = 50, tick_step: int = None
+):
+    """Helper function to set heatmap ticks"""
+    if names_in is None:
+        return
+    names_in = list(map(str, names_in))
+    if tick_step is not None and tick_step > 0:
+        step = tick_step
+    else:
+        step = max(1, math.ceil(N / max_labels))
+    idxs = list(range(0, N, step))
+    if axis == "x":
+        ax_in.set_xticks(idxs)
+        ax_in.set_xticklabels(
+            [names_in[k] for k in idxs], rotation=45, ha="right", fontsize=8
+        )
+    else:
+        ax_in.set_yticks(idxs)
+        ax_in.set_yticklabels([names_in[k] for k in idxs], fontsize=8)
+
+
+def plot_tensor_reconstruction_quality(
+    X_orig: np.ndarray,
+    weights: tl.tensor,
+    factors: List[tl.tensor],
+    method: str,
+    *,
+    M: np.ndarray = None,
+    features: List[str] = None,
+    # feature_for_heatmap: int = 0, # Removed
+    show_pve_line: bool = True,
+    use_rmse: bool = True,
+    max_scatter_points: int = 200_000,
+    # store_names: List[str] = None, # Removed
+    # item_names: List[str] = None, # Removed
+    fn: Path | None = None,
+    figsize=(12, 6),  # Changed for 1x2 grid
+):
+    """
+    Plots reconstruction quality from raw tensor components.
+    Includes 1x2 grid: Scatter, Per-Feature RMSE/PVE.
+
+    Args:
+        X_orig: The original data tensor (numpy, float, with NaNs)
+        weights: The core tensor (Tucker) or weights vector (CP/NTF)
+        factors: List of factor matrices
+        method: 'tucker', 'parafac', or 'ntf'
+        M: (I,J) boolean mask of observed entries
+        ... (other plotting args)
+    """
+    tl.set_backend("pytorch")
+    logger.info(f"Plotting reconstruction for method '{method}'...")
+    X = np.asarray(X_orig)
+    assert X.ndim == 3, f"Expected (I,J,D), got {X.shape}"
+    I, J, D = X.shape
+    names = (
+        list(features)
+        if features is not None
+        else [f"feat_{d}" for d in range(D)]
+    )
+
+    # Reconstruct the tensor from components
+    logger.info("Reconstructing tensor...")
+    try:
+        if method == "tucker":
+            X_rec_torch = tl.tucker_to_tensor((weights, factors))
+        elif method in ["parafac", "ntf"]:
+            X_rec_torch = tl.cp_to_tensor((weights, factors))
+        else:
+            raise ValueError(f"Unknown method for reconstruction: {method}")
+
+        # Convert to NumPy for plotting
+        X_rec = X_rec_torch.cpu().numpy()
+
+    except Exception as e:
+        logger.error(f"!!! Reconstruction failed: {e}")
+        # Create a dummy array to prevent a crash
+        X_rec = np.full(X.shape, np.nan)
+
+    if X_rec.shape != X.shape:
+        raise ValueError(f"X_rec shape {X_rec.shape} != X shape {X.shape}")
+
+    # --- Build masks ---
+    if M is not None:
+        assert M.shape == (I, J), f"M must be (I,J), got {M.shape}"
+        Md = np.repeat(M[:, :, None], D, axis=2)  # (I,J,D)
+    else:
+        # fall back: observed if not NaN in that feature channel
+        Md = ~np.isnan(X)
+
+    # --- Scatter over observed elements only ---
+    x_flat = X[Md]
+    xr_flat = X_rec[Md]
+    n = x_flat.size
+    if n == 0:
+        logger.warning("Warning: No observed data points found in mask M.")
+        x_plot, xr_plot = np.array([]), np.array([])
+    elif n > max_scatter_points:
+        idx = np.random.RandomState(0).choice(
+            n, size=max_scatter_points, replace=False
+        )
+        x_plot, xr_plot = x_flat[idx], xr_flat[idx]
+    else:
+        x_plot, xr_plot = x_flat, xr_flat
+
+    # --- Per-feature metrics on observed cells only ---
+    n_total = I * J
+    n_obs_per = np.zeros(D, dtype=int)
+    rss_per = np.full(D, np.nan)
+    rmse_per = np.full(D, np.nan)
+    pve_per = np.full(D, np.nan)
+
+    for d in range(D):
+        md = Md[:, :, d]
+        n_obs = int(md.sum())
+        n_obs_per[d] = n_obs
+        if n_obs == 0:
+            logger.warning(f"Warning: No observed data for feature {d}")
+            continue
+        xd = X[:, :, d][md]
+        xhd = X_rec[:, :, d][md]
+        resid = xd - xhd
+        rss = float(np.sum(resid * resid))
+        rss_per[d] = rss
+        rmse_per[d] = float(np.sqrt(rss / n_obs))
+        mu = float(xd.mean())
+        tss = float(np.sum((xd - mu) ** 2))
+        pve_per[d] = (
+            (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
+        )
+
+    # --- Residual heatmap for selected feature (REMOVED) ---
+
+    # --- Figure layout ---
+    fig, axes = plt.subplots(1, 2, figsize=figsize)  # Changed to 1x2
+    try:
+        rank_str = tuple(f.shape[1] for f in factors)
+    except Exception:
+        rank_str = "(unknown rank)"
+    fig.suptitle(
+        f"Reconstruction Quality: {method.upper()} @ rank={rank_str}",
+        fontsize=16,
+    )
+
+    # 1) Scatter
+    ax = axes[0]
+    if x_plot.size > 0:
+        ax.scatter(x_plot, xr_plot, alpha=0.35, s=2)
+        lo, hi = float(np.nanmin(x_plot)), float(np.nanmax(x_plot))
+        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
+    ax.set_xlabel("Original values")
+    ax.set_ylabel("Reconstructed values")
+    ax.set_title("Reconstruction Scatter (Observed Cells)")
+    ax.grid(True, alpha=0.2)
+
+    # 2) Per-feature bars
+    ax = axes[1]
+    xloc = np.arange(D)
+    vals = rmse_per if use_rmse else rss_per
+    label = "RMSE" if use_rmse else "RSS"
+    heights = np.array(
+        [v if np.isfinite(v) else 0.0 for v in vals], dtype=float
+    )
+    bars = ax.bar(xloc, heights)
+    y_max_val = np.nanmax(heights)
+    y_max = y_max_val if (np.isfinite(y_max_val) and y_max_val > 0) else 1.0
+
+    for d, b in enumerate(bars):
+        if not np.isfinite(vals[d]) or n_obs_per[d] == 0:
+            b.set_height(0.02 * y_max)
+            b.set_color("lightgray")
+            b.set_hatch("//")
+
+    ax.set_xticks(xloc)
+    ax.set_xticklabels(names, rotation=45, ha="right")
+    ax.set_ylabel(label)
+    ax.set_title(f"Per-feature {label}")
+
+    if show_pve_line:
+        ax2 = ax.twinx()
+
+        # Plot all features based on user request
+        for d in range(D):
+            if np.isfinite(pve_per[d]):
+                # Valid PVE - plot as orange dot
+                ax2.plot(
+                    xloc[d],
+                    pve_per[d],
+                    marker="o",
+                    markersize=6,
+                    color="orange",
+                )
+            else:
+                # Invalid PVE (NaN) or No Observations - plot as red dot
+                ax2.plot(
+                    xloc[d],
+                    5,  # Plot at a low y-value
+                    marker="o",  # "dot"
+                    markersize=6,
+                    color="red",
+                )
+
+        ax2.set_ylabel("PVE (%)")
+        ax2.set_ylim(0, 100)
+
+        # Add a legend to explain the new symbols
+        legend_elements = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="orange",
+                markersize=6,
+                label="Valid PVE",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="red",
+                markersize=6,
+                label="Invalid / No PVE",
+            ),
+        ]
+        ax2.legend(handles=legend_elements, loc="upper right", fontsize=8)
+
+    # 3) Residual heatmap (REMOVED)
+    # 4) Blank panel (REMOVED)
+
+    plt.tight_layout()
+
+    if fn:
+        print(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300)
+
+    plt.show()
+    plt.close(fig)
+
+
+def plot_tensor_heatmap(
+    X_orig: np.ndarray,  # The original, raw data (as numpy)
+    weights: tl.tensor,  # The core (Tucker) or weights (CP)
+    factors: List[tl.tensor],  # The list of factor matrices
+    method: str,  # 'tucker', 'parafac', or 'ntf'
+    *,
+    M: np.ndarray = None,  # (I,J) boolean mask of observed entries
+    features: List[str] = None,
+    feature_for_heatmap: int = 0,
+    show_pve_line: bool = True,
+    use_rmse: bool = True,
+    max_scatter_points: int = 200_000,
+    store_names: List[str] = None,  # list/array length I
+    item_names: List[str] = None,  # list/array length J  (SKUs)
+    max_labels: int = 50,
+    tick_step: int | None = None,
+    fn: Path | None = None,
+    figsize=(12, 8),
+):
+    """
+    Plots reconstruction quality from raw tensor components.
+
+    Args:
+        X_orig: The original data tensor (numpy, float, with NaNs)
+        weights: The core tensor (Tucker) or weights vector (CP/NTF)
+        factors: List of factor matrices
+        method: 'tucker', 'parafac', or 'ntf'
+        M: (I,J) boolean mask of observed entries
+        ... (other plotting args)
+    """
+    tl.set_backend("pytorch")
+    logger.info(f"Plotting reconstruction for method '{method}'...")
+    X = np.asarray(X_orig)
+    assert X.ndim == 3, f"Expected (I,J,D), got {X.shape}"
+    I, J, D = X.shape
+    names = (
+        list(features)
+        if features is not None
+        else [f"feat_{d}" for d in range(D)]
+    )
+
+    # Reconstruct the tensor from components
+    logger.info("Reconstructing tensor...")
+    try:
+        if method == "tucker":
+            X_rec_torch = tl.tucker_to_tensor((weights, factors))
+        elif method in ["parafac", "ntf"]:
+            X_rec_torch = tl.cp_to_tensor((weights, factors))
+        else:
+            raise ValueError(f"Unknown method for reconstruction: {method}")
+
+        # Convert to NumPy for plotting
+        X_rec = X_rec_torch.cpu().numpy()
+
+    except Exception as e:
+        logger.error(f"!!! Reconstruction failed: {e}")
+        # Create a dummy array to prevent a crash
+        X_rec = np.full(X.shape, np.nan)
+
+    if X_rec.shape != X.shape:
+        raise ValueError(f"X_rec shape {X_rec.shape} != X shape {X.shape}")
+
+    # --- Build masks ---
+    if M is not None:
+        assert M.shape == (I, J), f"M must be (I,J), got {M.shape}"
+        Md = np.repeat(M[:, :, None], D, axis=2)  # (I,J,D)
+    else:
+        # fall back: observed if not NaN in that feature channel
+        Md = ~np.isnan(X)
+
+    # --- Scatter over observed elements only ---
+    x_flat = X[Md]
+    xr_flat = X_rec[Md]
+    n = x_flat.size
+    if n == 0:
+        logger.warning("Warning: No observed data points found in mask M.")
+        x_plot, xr_plot = np.array([]), np.array([])
+    elif n > max_scatter_points:
+        idx = np.random.RandomState(0).choice(
+            n, size=max_scatter_points, replace=False
+        )
+        x_plot, xr_plot = x_flat[idx], xr_flat[idx]
+    else:
+        x_plot, xr_plot = x_flat, xr_flat
+
+    # --- Per-feature metrics on observed cells only ---
+    n_total = I * J
+    n_obs_per = np.zeros(D, dtype=int)
+    coverage = np.zeros(D, dtype=float)
+    rss_per = np.full(D, np.nan)
+    rmse_per = np.full(D, np.nan)
+    pve_per = np.full(D, np.nan)
+
+    for d in range(D):
+        md = Md[:, :, d]
+        n_obs = int(md.sum())
+        n_obs_per[d] = n_obs
+        coverage[d] = (n_obs / n_total) if n_total > 0 else 0.0
+        if n_obs == 0:
+            continue
+        xd = X[:, :, d][md]
+        xhd = X_rec[:, :, d][md]
+        resid = xd - xhd
+        rss = float(np.sum(resid * resid))
+        rss_per[d] = rss
+        rmse_per[d] = float(np.sqrt(rss / n_obs))
+        mu = float(xd.mean())
+        tss = float(np.sum((xd - mu) ** 2))
+        pve_per[d] = (
+            (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
+        )
+
+    # --- Residual heatmap for selected feature (observed cells only) ---
+    fidx = int(np.clip(feature_for_heatmap, 0, D - 1))
+    md_hm = Md[:, :, fidx]
+    residual_2d = np.full((I, J), np.nan)
+    if md_hm.any():
+        residual_2d[md_hm] = X[:, :, fidx][md_hm] - X_rec[:, :, fidx][md_hm]
+
+    # --- MODIFIED VMAX/VMIN CALCULATION ---
+    # Option 1: Fixed Symmetrical Range (recommended to try first)
+    fixed_vmax = (
+        2.5  # You can experiment with this value (e.g., 1.0, 2.0, 3.0)
+    )
+    vmax = fixed_vmax
+    vmin = -fixed_vmax
+
+    # --- Figure layout ---
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    try:
+        rank_str = tuple(f.shape[1] for f in factors)
+    except Exception:
+        rank_str = "(unknown rank)"
+    fig.suptitle(
+        f"Reconstruction Quality: {method.upper()} @ rank={rank_str}",
+        fontsize=16,
+    )
+
+    # Scatter
+    ax = axes[0, 0]
+    if x_plot.size > 0:
+        ax.scatter(x_plot, xr_plot, alpha=0.35, s=2)
+        lo, hi = float(np.nanmin(x_plot)), float(np.nanmax(x_plot))
+        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
+    ax.set_xlabel("Original values")
+    ax.set_ylabel("Reconstructed values")
+    ax.set_title("Reconstruction")
+    ax.grid(True, alpha=0.2)
+
+    # Per-feature bars
+    ax = axes[0, 1]
+    xloc = np.arange(D)
+    vals = rmse_per if use_rmse else rss_per
+    label = "RMSE" if use_rmse else "RSS"
+    heights = np.array(
+        [v if np.isfinite(v) else 0.0 for v in vals], dtype=float
+    )
+    bars = ax.bar(xloc, heights)
+    y_max_val = np.nanmax(heights)
+    y_max = y_max_val if (np.isfinite(y_max_val) and y_max_val > 0) else 1.0
+
+    for d, b in enumerate(bars):
+        if not np.isfinite(vals[d]) or n_obs_per[d] == 0:
+            b.set_height(0.02 * y_max)
+            b.set_color("lightgray")
+            b.set_hatch("//")
+            ax.text(
+                b.get_x() + b.get_width() / 2.0,
+                b.get_height(),
+                "no data",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="dimgray",
+            )
+        else:
+            ax.text(
+                b.get_x() + b.get_width() / 2.0,
+                b.get_height(),
+                f"{n_obs_per[d]}/{n_total}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                alpha=0.9,
+            )
+
+    ax.set_xticks(xloc)
+    ax.set_xticklabels(names, rotation=45, ha="right")
+    ax.set_ylabel(label)
+    ax.set_title(f"Per-feature {label}")
+
+    if show_pve_line:
+        ax2 = ax.twinx()
+        ok = np.isfinite(pve_per)
+        if np.any(ok):
+            ax2.plot(xloc[ok], pve_per[ok], marker="o", lw=1, color="C1")
+        ax2.set_ylabel("PVE (%)")
+        ax2.set_ylim(0, 100)
+
+    # Residual heatmap
+    ax = axes[1, 0]
+    im = ax.imshow(
+        residual_2d, cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect="auto"
+    )
+
+    def _apply_ticks(ax, N, names, axis: str):
+        if names is None:
+            return
+        names = list(map(str, names))
+        if tick_step is not None and tick_step > 0:
+            step = tick_step
+        else:
+            step = max(1, math.ceil(N / max_labels))
+        idxs = list(range(0, N, step))
+        if axis == "x":
+            ax.set_xticks(idxs)
+            ax.set_xticklabels(
+                [names[k] for k in idxs], rotation=45, ha="right", fontsize=8
+            )
+        else:
+            ax.set_yticks(idxs)
+            ax.set_yticklabels([names[k] for k in idxs], fontsize=8)
+
+    _apply_ticks(ax, I, store_names, axis="y")
+    _apply_ticks(ax, J, item_names, axis="x")
+
+    ax.set_title(f"Residuals — {names[fidx]}")
+    ax.set_xlabel("SKU" if item_names is not None else "SKU (J)")
+    ax.set_ylabel("Store" if store_names is not None else "Store (I)")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    plt.tight_layout()
+
+    if fn:
+        print(f"Saving plot to {fn}")
+        plt.savefig(fn, dpi=300)
+
+    plt.show()
+    plt.close(fig)
