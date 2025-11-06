@@ -1,8 +1,9 @@
 import os
 import itertools
-from typing import List, Union
+from typing import List, Union, Any, Dict
 import pandas as pd
 import numpy as np
+import torch
 import tensorly as tl
 from pathlib import Path
 from tensorly.decomposition import (
@@ -11,7 +12,6 @@ from tensorly.decomposition import (
     parafac,
 )
 from datetime import datetime
-import torch  # Import torch to check for CUDA
 from typing import Tuple
 
 tl.set_backend("pytorch")
@@ -285,6 +285,36 @@ def log_item_membership_stats(stats_dict: dict, factor_names: list[str]):
             f"Avg={avg:.4f}, Q1(25%)={q25:.4f}, Q3(75%)={q75:.4f}"
         )
     logger.info("----------------------------------------")
+
+
+def compute_cluster_stats(df: pd.DataFrame) -> pd.Series:
+    """
+    Computes statistics on the number of clusters assigned to each item.
+    """
+    # First, count how many clusters each item belongs to
+    cluster_counts = (
+        df.groupby(["factor_name", "item_name"])
+        .size()
+        .reset_index(name="num_clusters")
+    )
+
+    # Then calculate statistics by factor_name
+    stats = (
+        cluster_counts.groupby("factor_name")["num_clusters"]
+        .agg(
+            [
+                "min",
+                "mean",
+                "max",
+                lambda x: np.percentile(x, 75) - np.percentile(x, 25),  # IQR
+            ]
+        )
+        .round(2)
+    )
+
+    # Rename the lambda column to IQR
+    stats = stats.rename(columns={"<lambda_0>": "IQR"})
+    return stats
 
 
 def tune_ranks(
@@ -667,6 +697,137 @@ def fit(
     )
 
 
+def compute_reconstruction_metrics(
+    X: np.ndarray,
+    weights: tl.tensor,
+    factors: List[tl.tensor],
+    method: str,
+    mus: tl.tensor,
+    sds: tl.tensor,
+    *,
+    M: np.ndarray = None,
+    max_scatter_points: int = 200_000,
+) -> Dict[str, Any]:
+    """
+    Computes reconstruction metrics after scaling back to the original data space.
+
+    Args:
+        X: The *original* data tensor (numpy, float, with NaNs) (I,J,D)
+        weights: The core tensor (Tucker) or weights vector (CP/NTF)
+        factors: List of factor matrices
+        method: 'tucker', 'parafac', or 'ntf'
+        mus: The 1D tensor of means (length D) from scaling
+        sds: The 1D tensor of std devs (length D) from scaling
+        M: (I,J) boolean mask of observed entries
+        max_scatter_points: Max points for scatter plot data
+
+    Returns:
+        A dictionary containing all computed metrics for plotting.
+    """
+    tl.set_backend("pytorch")
+    logger.info(f"Computing reconstruction metrics for method '{method}'...")
+    X = np.asarray(X)
+    assert X.ndim == 3, f"Expected (I,J,D), got {X.shape}"
+    I, J, D = X.shape
+
+    # --- 1. Reconstruct the Z-Scored Tensor ---
+    logger.info("Reconstructing z-scored tensor...")
+    try:
+        if method == "tucker":
+            X_rec_zscored_torch = tl.tucker_to_tensor((weights, factors))
+        elif method in ["parafac", "ntf"]:
+            X_rec_zscored_torch = tl.cp_to_tensor((weights, factors))
+        else:
+            raise ValueError(f"Unknown method for reconstruction: {method}")
+        X_rec_zscored = X_rec_zscored_torch.cpu().numpy()
+    except Exception as e:
+        logger.error(f"!!! Reconstruction failed: {e}")
+        X_rec_zscored = np.full(X.shape, np.nan)
+
+    if X_rec_zscored.shape != X.shape:
+        raise ValueError(
+            f"X_rec_zscored shape {X_rec_zscored.shape} != X shape {X.shape}"
+        )
+
+    # --- 2. Scale Back to Original Data Space ---
+    logger.info("Scaling reconstruction back to original data space...")
+    mus_np = mus.cpu().numpy()  # (D,)
+    sds_np = sds.cpu().numpy()  # (D,)
+    # Use broadcasting: (I, J, D) = (I, J, D) * (D,) + (D,)
+    X_rec_unscaled = (X_rec_zscored * sds_np) + mus_np
+
+    # --- 3. Build Masks ---
+    if M is not None:
+        assert M.shape == (I, J), f"M must be (I,J), got {M.shape}"
+        Md = np.repeat(M[:, :, None], D, axis=2)  # (I,J,D)
+    else:
+        Md = ~np.isnan(X)
+
+    # --- 4. Get Data for Scatter Plot ---
+    x_flat = X[Md]
+    # IMPORTANT: Use the unscaled reconstruction here
+    xr_flat = X_rec_unscaled[Md]
+
+    n = x_flat.size
+    if n == 0:
+        logger.warning("Warning: No observed data points found in mask M.")
+        x_plot, xr_plot = np.array([]), np.array([])
+    elif n > max_scatter_points:
+        idx = np.random.RandomState(0).choice(
+            n, size=max_scatter_points, replace=False
+        )
+        x_plot, xr_plot = x_flat[idx], xr_flat[idx]
+    else:
+        x_plot, xr_plot = x_flat, xr_flat
+
+    # --- 5. Per-feature Metrics (PVE, RMSE) ---
+    n_obs_per = np.zeros(D, dtype=int)
+    rss_per = np.full(D, np.nan)
+    rmse_per = np.full(D, np.nan)
+    pve_per = np.full(D, np.nan)
+
+    for d in range(D):
+        md = Md[:, :, d]
+        n_obs = int(md.sum())
+        n_obs_per[d] = n_obs
+        if n_obs == 0:
+            logger.warning(f"Warning: No observed data for feature {d}")
+            continue
+
+        xd = X[:, :, d][md]
+        # IMPORTANT: Use the unscaled reconstruction here
+        xhd = X_rec_unscaled[:, :, d][md]
+
+        resid = xd - xhd
+        rss = float(np.sum(resid * resid))
+        rss_per[d] = rss
+        rmse_per[d] = float(np.sqrt(rss / n_obs))
+        mu = float(xd.mean())
+        tss = float(np.sum((xd - mu) ** 2))
+        pve_per[d] = (
+            (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
+        )
+
+    # --- 6. Get Rank String ---
+    try:
+        rank_str = tuple(f.shape[1] for f in factors)
+    except Exception:
+        rank_str = "(unknown rank)"
+
+    # --- 7. Package results ---
+    metrics = {
+        "x_plot": x_plot,
+        "xr_plot": xr_plot,
+        "n_obs_per": n_obs_per,
+        "rss_per": rss_per,
+        "rmse_per": rmse_per,
+        "pve_per": pve_per,
+        "D": D,
+        "rank_str": rank_str,
+    }
+    return metrics
+
+
 def get_top_k_assignments(
     factors: list[tl.tensor], factor_names: list[str] = None, k: int = 3
 ) -> dict:
@@ -782,10 +943,9 @@ def get_threshold_k_assignments(
     return assignments
 
 
-def save_assignments(
+def create_assignments(
     assignments: dict,
     name_map: dict,  # Map factor names to their corresponding item name lists.
-    filepath: Path,
 ) -> pd.DataFrame:
     """
     Saves the cluster assignments as a flat DataFrame (wide-format)
@@ -829,16 +989,6 @@ def save_assignments(
 
     # Convert the list of flat dicts into a DataFrame
     df = pd.DataFrame(all_rows)
-
-    # Save to file using your utility
-    try:
-        save_csv_or_parquet(df, filepath)
-        logger.info(f"Successfully saved assignments DataFrame to {filepath}")
-    except Exception as e:
-        logger.error(
-            f"Failed to save assignments DataFrame to {filepath}: {e}"
-        )
-
     return df
 
 

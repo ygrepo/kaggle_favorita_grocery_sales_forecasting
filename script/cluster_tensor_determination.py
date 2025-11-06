@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root))
 from src.tensor_models import (
     fit,
     get_threshold_k_assignments,
-    save_assignments,
+    create_assignments,
 )
 from src.utils import setup_logging, read_csv_or_parquet, get_logger
 
@@ -78,12 +78,6 @@ def parse_args():
         help="Comma-separated list of factor names",
     )
     parser.add_argument(
-        "--output_fn",
-        type=Path,
-        default=None,
-        help="Path to save results (relative to project root)",
-    )
-    parser.add_argument(
         "--data_fn",
         type=str,
         default="",
@@ -139,7 +133,6 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Method: {args.method}")
-        logger.info(f"  Output fn: {args.output_fn}")
         logger.info(f"  Method: {args.method}")
         logger.info(f"  Ranks: {args.ranks}")
         logger.info(f"  Threshold: {args.threshold}")
@@ -214,6 +207,15 @@ def main():
         output_assignments = {
             f"threshold_{threshold*100:.0f}pct_assignments": threshold_k_assignments,
         }
+        name_map = {
+            "Store": row_names,
+            "SKU": col_names,
+            "Feature": feature_names,
+        }
+        assignment_df = create_assignments(
+            output_assignments,
+            name_map,
+        )
         logger.info("Building model dictionary...")
         model_dict = {
             # Move tensors to CPU for max portability
@@ -228,22 +230,11 @@ def main():
             "ranks": rank_ints,
             "mus": mus,
             "sds": sds,
+            "assignments": assignment_df,
         }
         model_fn = Path(args.model_fn).resolve()
         logger.info(f"Saving model to {model_fn}")
         torch.save(model_dict, model_fn)
-        output_fn = args.output_fn.resolve()
-        name_map = {
-            "Store": row_names,
-            "SKU": col_names,
-            "Feature": feature_names,
-        }
-
-        save_assignments(
-            output_assignments,
-            name_map,
-            output_fn,
-        )
 
     except Exception as e:
         logger.error(f"Error clustering data: {e}", exc_info=True)

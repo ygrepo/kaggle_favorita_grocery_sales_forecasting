@@ -14,7 +14,6 @@ METHOD="tucker"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.csv"
 MODEL_FN="${OUTPUT_DATA_DIR}/20251004_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clusters.pt"
 
 RANKS="40,300,7"
@@ -34,7 +33,6 @@ LOG_LEVEL="INFO"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --method) METHOD="$2"; shift 2 ;;
-    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --model_fn) MODEL_FN="$2"; shift 2 ;;
     --ranks) RANKS="$2"; shift 2 ;;
@@ -63,7 +61,6 @@ echo "Factor names: $FACTOR_NAMES" | tee -a "$LOG_FILE"
 echo "Max iter: $MAX_ITER" | tee -a "$LOG_FILE"
 echo "Tolerance: $TOL" | tee -a "$LOG_FILE"
 echo "Features: $FEATURES" | tee -a "$LOG_FILE"
-echo "Output fn: $OUTPUT_FN" | tee -a "$LOG_FILE"
 echo "Model fn: $MODEL_FN" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
@@ -73,7 +70,6 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 set +e
 python "${SCRIPT_DIR}/cluster_tensor_determination.py" \
   --method "$METHOD" \
-  --output_fn "$OUTPUT_FN" \
   --data_fn "$DATA_FN" \
   --model_fn "$MODEL_FN" \
   --ranks "$RANKS" \
