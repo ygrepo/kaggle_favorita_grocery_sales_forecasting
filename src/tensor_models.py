@@ -943,6 +943,52 @@ def get_threshold_k_assignments(
     return assignments
 
 
+def get_hard_assignments(
+    factors: list[tl.tensor],
+    factor_names: list[str] = None,
+) -> dict:
+    """
+    Implements a "hard" or "argmax" assignment.
+    Assigns each item to the single factor it has the highest loading for.
+    """
+    assignments = {}
+    if not factors:
+        return assignments
+
+    if factor_names is None:
+        factor_names = [f"Mode {i}" for i in range(len(factors))]
+
+    logger.info("--- Generating Hard (Argmax) Assignments ---")
+
+    for i, F in enumerate(factors):
+        name = factor_names[i]
+        factor_assignments = []
+
+        # Iterate over each item (row)
+        for item_loadings in F:
+
+            # --- START MODIFICATION ---
+
+            # Find the index of the single factor with the max absolute loading
+            if (
+                len(item_loadings) == 0
+                or torch.sum(torch.abs(item_loadings)) <= 1e-8
+            ):
+                final_indices = []  # Or assign to a default, e.g., [0]
+            else:
+                top_index = torch.argmax(torch.abs(item_loadings)).item()
+                final_indices = [top_index]  # Assign to *only* that one factor
+
+            # --- END MODIFICATION ---
+
+            factor_assignments.append(final_indices)
+
+        assignments[name] = factor_assignments
+
+    logger.info("--------------------------------------------------")
+    return assignments
+
+
 def create_assignments(
     assignments: dict,
     name_map: dict,  # Map factor names to their corresponding item name lists.
@@ -955,8 +1001,7 @@ def create_assignments(
     """
     all_rows = []  # This will hold the flat data
 
-    # _type is e.g., "top_5_assignments"
-    for _type, data in assignments.items():
+    for _, data in assignments.items():
         # factor_name is e.g., "Store"
         for factor_name, cluster_lists in data.items():
             item_names = name_map.get(factor_name, [])

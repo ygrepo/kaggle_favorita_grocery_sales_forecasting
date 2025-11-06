@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 from src.tensor_models import (
     fit,
     get_threshold_k_assignments,
+    get_top_k_assignments,
     create_assignments,
 )
 from src.utils import setup_logging, read_csv_or_parquet, get_logger
@@ -200,12 +201,13 @@ def main():
         logger.info(f"Factor names: {factor_names}")
         threshold = args.threshold
         logger.info(f"Threshold: {threshold}")
-        threshold_k_assignments = get_threshold_k_assignments(
-            factors, factor_names, threshold=threshold
-        )
+        # assignments = get_threshold_k_assignments(
+        #     factors, factor_names, threshold=threshold
+        # )
+        assignments = get_top_k_assignments(factors, factor_names, k=3)
 
         output_assignments = {
-            f"threshold_{threshold*100:.0f}pct_assignments": threshold_k_assignments,
+            "assignments": assignments,
         }
         name_map = {
             "Store": row_names,

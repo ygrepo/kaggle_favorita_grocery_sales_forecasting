@@ -25,8 +25,7 @@ from pathlib import Path
 from matplotlib.lines import Line2D
 from scipy.cluster.hierarchy import linkage, leaves_list
 from sklearn.decomposition import PCA
-import tensorly as tl
-
+import torch
 
 Number = Union[int, float]
 
@@ -2343,4 +2342,202 @@ def plot_factor_matrix(
     ax.set_title(title, fontsize=16, pad=20)
     plt.xlabel("Factor Components", fontsize=12)
     plt.ylabel("Original Dimensions", fontsize=12)
+    plt.show()
+
+
+def plot_feature_factor_interpretation(model_dict):
+    """
+    Calls your plot_factor_matrix function to visualize the
+    feature factor matrix (F_features) from the model_dict.
+
+    Args:
+        model_dict (dict): The loaded model dictionary.
+    """
+    try:
+        # F_features is factors[2] based on (stores, SKU, FEATURES)
+        f_features = model_dict["factors"][2]
+        feature_names = model_dict["feature_names"]
+        k_rank = f_features.shape[1]
+    except KeyError:
+        print("ERROR: 'factors' or 'feature_names' not found in model_dict.")
+        return
+    except IndexError:
+        print("ERROR: Feature factor matrix not found at index 2.")
+        return
+
+    logger.info("Plotting Feature Factor Loadings...")
+    plot_factor_matrix(
+        f_features,
+        title="Feature Factor Loadings",
+        x_labels=[f"Factor {k+1}" for k in range(k_rank)],
+        y_labels=feature_names,
+    )
+
+
+def plot_cluster_profiles_radar(model_dict, mask: str):
+    """
+    Calculates the mean feature values for each cluster/factor and plots them
+    on a radar chart.
+
+    UPDATED:
+    - Correctly handles 'Store' vs 'SKU' mask.
+    - Averages X_raw along the correct axis.
+    - Correctly merges multi-label 'assignments' with feature data.
+
+    Args:
+        model_dict (dict): The loaded model dictionary.
+        mask (str): The factor to plot, e.g., 'Store' or 'SKU'.
+    """
+    try:
+        X_raw = np.copy(model_dict["X_raw"])
+        M_raw = model_dict["M_raw"]
+        feature_names = model_dict["feature_names"]
+        assignments_df = model_dict["assignments"]
+
+        # 1. Replace masked values with NaN
+        X_raw[M_raw == 0] = np.nan
+
+        # 2. Average features based on the mask
+        if mask == "Store":
+            # Average over SKUs (axis 1) to get (n_stores, n_features)
+            avg_features = np.nanmean(X_raw, axis=1)
+            # Get the store names
+            item_names = model_dict["row_names"]
+        elif mask == "SKU":
+            # Average over Stores (axis 0) to get (n_skus, n_features)
+            avg_features = np.nanmean(X_raw, axis=0)
+            # Get the SKU names
+            item_names = model_dict["col_names"]
+        else:
+            print(
+                f"ERROR: Unknown mask '{mask}'. Please use 'Store' or 'SKU'."
+            )
+            return
+
+        # 3. Create a DataFrame of the averaged features
+        feature_df = pd.DataFrame(avg_features, columns=feature_names)
+        feature_df["item_name"] = item_names
+
+        # 4. Filter assignments to only the factor we care about
+        assignments_filtered = assignments_df.query("factor_name == @mask")
+
+        # 5. Merge features with cluster/factor assignments
+        # This joins the (item, feature_vector) with all (item, cluster_id) pairs
+        merged_df = pd.merge(feature_df, assignments_filtered, on="item_name")
+
+        if merged_df.empty:
+            print(
+                "ERROR: Merge failed. No matching 'item_name' found between model data and assignments."
+            )
+            print(f"Example item name from model: {item_names[0]}")
+            print(
+                f"Example item name from assignments: {assignments_filtered['item_name'].iloc[0]}"
+            )
+            return
+
+        # 6. Group by the CLUSTER/FACTOR ID and get the mean profile
+        # This finds the average feature profile for all items belonging to a factor
+        cluster_means = merged_df.groupby("cluster_id")[feature_names].mean()
+
+    except KeyError as e:
+        print(f"ERROR: Key not found: {e}")
+        return
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return
+
+    # --- Plotting ---
+    num_vars = len(feature_names)
+    angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+    angles += angles[:1]
+
+    _, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+
+    # Iterate over the calculated mean profiles
+    for cluster_id, row in cluster_means.iterrows():
+        values = row.tolist()
+        values += values[:1]
+        ax.plot(
+            angles,
+            values,
+            linewidth=2,
+            linestyle="solid",
+            label=f"Factor {cluster_id}",  # Label is now "Factor"
+        )
+        ax.fill(angles, values, alpha=0.2)
+
+    ax.set_yticklabels([])
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(feature_names, size=12, rotation=45, ha="right")
+    ax.set_title(
+        f"{mask} Factor Profiles", size=20, y=1.15
+    )  # Title is dynamic
+    # plt.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
+    plt.show()
+
+
+def plot_external_correlation(
+    model_dict, metadata_df, sku_id_col, category_col
+):
+    """
+    Creates a stacked bar chart to show the composition of an external categorical
+    variable (e.g., 'product_category') within each cluster.
+
+    Args:
+        model_dict (dict): The loaded model dictionary.
+        metadata_df (pd.DataFrame): A DataFrame with your external metadata.
+        sku_id_col (str): The name of the column in metadata_df with SKU names/IDs.
+        category_col (str): The name of the column in metadata_df with the categories.
+    """
+    try:
+        sku_names = model_dict["col_names"]
+        cluster_labels = model_dict["cluster_assignments"]
+    except KeyError:
+        print(
+            "ERROR: 'cluster_assignments' or 'col_names' not found in model_dict."
+        )
+        return
+
+    df_clusters = pd.DataFrame(
+        {"sku_id": sku_names, "cluster": cluster_labels}
+    )
+
+    if (
+        sku_id_col not in metadata_df.columns
+        or category_col not in metadata_df.columns
+    ):
+        print(
+            f"ERROR: Columns '{sku_id_col}' or '{category_col}' not found in metadata DataFrame."
+        )
+        return
+
+    df_merged = pd.merge(
+        df_clusters,
+        metadata_df[[sku_id_col, category_col]],
+        left_on="sku_id",
+        right_on=sku_id_col,
+    )
+
+    if df_merged.empty:
+        print("ERROR: Merge failed. No matching SKUs found.")
+        return
+
+    contingency_table = pd.crosstab(
+        df_merged["cluster"], df_merged[category_col]
+    )
+    contingency_percent = contingency_table.div(
+        contingency_table.sum(axis=1), axis=0
+    )
+
+    ax = contingency_percent.plot(
+        kind="bar", stacked=True, figsize=(12, 7), colormap="viridis"
+    )
+
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+    plt.title(f"Composition of {category_col} by Cluster", fontsize=16)
+    plt.xlabel("Cluster", fontsize=12)
+    plt.ylabel(f"Proportion of SKUs", fontsize=12)
+    plt.xticks(rotation=0)
+    plt.legend(title=category_col, bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.tight_layout()
     plt.show()
