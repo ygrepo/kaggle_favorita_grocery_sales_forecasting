@@ -559,7 +559,15 @@ def fit(
     n_iter: int = 500,
     tol: float = 1e-8,
 ) -> Tuple[
-    tl.tensor, list[tl.tensor], list, list, list, np.ndarray, np.ndarray
+    tl.tensor,
+    list[tl.tensor],
+    list,
+    list,
+    list,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
 ]:
     """
     Fits a single, final model and returns the model components
@@ -584,6 +592,8 @@ def fit(
     M_tensor = tl.tensor(M_raw, device=device, dtype=torch.bool)
 
     # Conditionally pre-process the data
+    mus = tl.zeros(D, device=X_mat.device, dtype=X_mat.dtype)
+    sds = tl.ones(D, device=X_mat.device, dtype=X_mat.dtype)
     if method in ["tucker", "parafac"]:
         logger.info(
             f"Applying z-score (center_scale_signed) for '{method}' model."
@@ -637,14 +647,24 @@ def fit(
         logger.error(
             f"Decomposition failed for method {method}, skipping errors."
         )
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     # Calculate and log PVE/RMSE
     pve_percent, rmse = errors(X, weights, factors, method=method)
     logger.info(f"FINAL MODEL PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
 
     # Return the model components and names
-    return weights, factors, row_names, col_names, features, X_raw, M_raw
+    return (
+        weights,
+        factors,
+        row_names,
+        col_names,
+        features,
+        X_raw,
+        M_raw,
+        mus,
+        sds,
+    )
 
 
 def get_top_k_assignments(
@@ -860,7 +880,6 @@ def center_scale_signed(
     M: tl.tensor,
     eps: float = 1e-8,
 ) -> Tuple[tl.tensor, tl.tensor, tl.tensor]:
-    # --- End MODIFICATION ---
     """
     Z-score each feature using only observed entries; then fill missing with 0,
     which is the feature mean after centering.
@@ -1020,5 +1039,3 @@ def parafac_decomposition(  # Renamed function for clarity
         return None, None
 
     return weights, factors
-
-

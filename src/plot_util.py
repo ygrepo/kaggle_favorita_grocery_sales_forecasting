@@ -2506,7 +2506,6 @@ def plot_tensor_reconstruction_quality(
         x_plot, xr_plot = x_flat, xr_flat
 
     # --- Per-feature metrics on observed cells only ---
-    n_total = I * J
     n_obs_per = np.zeros(D, dtype=int)
     rss_per = np.full(D, np.nan)
     rmse_per = np.full(D, np.nan)
@@ -2531,8 +2530,6 @@ def plot_tensor_reconstruction_quality(
             (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
         )
 
-    # --- Residual heatmap for selected feature (REMOVED) ---
-
     # --- Figure layout ---
     fig, axes = plt.subplots(1, 2, figsize=figsize)  # Changed to 1x2
     try:
@@ -2550,9 +2547,13 @@ def plot_tensor_reconstruction_quality(
         ax.scatter(x_plot, xr_plot, alpha=0.35, s=2)
         lo, hi = float(np.nanmin(x_plot)), float(np.nanmax(x_plot))
         ax.plot([lo, hi], [lo, hi], "r--", lw=1)
-    ax.set_xlabel("Original values")
-    ax.set_ylabel("Reconstructed values")
-    ax.set_title("Reconstruction Scatter (Observed Cells)")
+    ax.set_xlabel("Original values", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Reconstructed values", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Reconstruction Scatter (Observed Cells)",
+        fontsize=14,
+        fontweight="bold",
+    )
     ax.grid(True, alpha=0.2)
 
     # 2) Per-feature bars
@@ -2575,21 +2576,22 @@ def plot_tensor_reconstruction_quality(
 
     ax.set_xticks(xloc)
     ax.set_xticklabels(names, rotation=45, ha="right")
-    ax.set_ylabel(label)
-    ax.set_title(f"Per-feature {label}")
+    ax.set_ylabel(label, fontsize=14, fontweight="bold")
+    ax.set_title(f"Per-feature {label}", fontsize=14, fontweight="bold")
 
     if show_pve_line:
         ax2 = ax.twinx()
 
         # Plot all features based on user request
         for d in range(D):
+            print(f"pve_per[{d}]={pve_per[d]}")
             if np.isfinite(pve_per[d]):
                 # Valid PVE - plot as orange dot
                 ax2.plot(
                     xloc[d],
                     pve_per[d],
                     marker="o",
-                    markersize=6,
+                    markersize=12,
                     color="orange",
                 )
             else:
@@ -2627,9 +2629,6 @@ def plot_tensor_reconstruction_quality(
             ),
         ]
         ax2.legend(handles=legend_elements, loc="upper right", fontsize=8)
-
-    # 3) Residual heatmap (REMOVED)
-    # 4) Blank panel (REMOVED)
 
     plt.tight_layout()
 

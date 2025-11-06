@@ -181,15 +181,23 @@ def main():
             )
             return
 
-        weights, factors, row_names, col_names, feature_names, X_raw, M_raw = (
-            fit(
-                args.method,
-                df,
-                args.features,
-                ranks=rank_ints,
-                n_iter=args.max_iter,
-                tol=args.tol,
-            )
+        (
+            weights,
+            factors,
+            row_names,
+            col_names,
+            feature_names,
+            X_raw,
+            M_raw,
+            mus,
+            sds,
+        ) = fit(
+            args.method,
+            df,
+            args.features,
+            ranks=rank_ints,
+            n_iter=args.max_iter,
+            tol=args.tol,
         )
         logger.info("Data clustering completed successfully.")
 
@@ -218,6 +226,8 @@ def main():
             "M_raw": M_raw,
             "method": args.method,
             "ranks": rank_ints,
+            "mus": mus,
+            "sds": sds,
         }
         model_fn = Path(args.model_fn).resolve()
         logger.info(f"Saving model to {model_fn}")
