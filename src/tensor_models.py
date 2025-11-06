@@ -592,6 +592,7 @@ def fit(
     M_tensor = tl.tensor(M_raw, device=device, dtype=torch.bool)
 
     # Conditionally pre-process the data
+    I, J, D = X_mat.shape
     mus = tl.zeros(D, device=X_mat.device, dtype=X_mat.dtype)
     sds = tl.ones(D, device=X_mat.device, dtype=X_mat.dtype)
     if method in ["tucker", "parafac"]:
@@ -605,7 +606,6 @@ def fit(
     else:
         raise ValueError(f"Invalid method: {method}")
 
-    I, J, D = X_mat.shape
     logger.info(f"Multifeature mode: reshaping data: ({I}, {J}, {D})")
 
     if ranks is None:
