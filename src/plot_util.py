@@ -17,6 +17,8 @@ from typing import (
     Tuple,
     List,
     Any,
+    Literal,
+    Dict,
 )
 import math
 from matplotlib.colors import ListedColormap, BoundaryNorm
@@ -25,10 +27,11 @@ from pathlib import Path
 from matplotlib.lines import Line2D
 from scipy.cluster.hierarchy import linkage, leaves_list
 from sklearn.decomposition import PCA
-import torch
+
 
 Number = Union[int, float]
 
+from src.utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -2374,19 +2377,16 @@ def plot_feature_factor_interpretation(model_dict):
     )
 
 
-def plot_cluster_profiles_radar(model_dict, mask: str):
+def calculate_cluster_profiles(
+    model_dict: Dict[str, Any],
+    mask: str,
+    max_clusters: int = 5,  # Reduced default to 5
+    selection_method: Literal[
+        "size", "variance", "random", "hierarchical"
+    ] = "size",
+) -> Optional[pd.DataFrame]:
     """
-    Calculates the mean feature values for each cluster/factor and plots them
-    on a radar chart.
-
-    UPDATED:
-    - Correctly handles 'Store' vs 'SKU' mask.
-    - Averages X_raw along the correct axis.
-    - Correctly merges multi-label 'assignments' with feature data.
-
-    Args:
-        model_dict (dict): The loaded model dictionary.
-        mask (str): The factor to plot, e.g., 'Store' or 'SKU'.
+    Extract and calculate mean feature profiles for clusters.
     """
     try:
         X_raw = np.copy(model_dict["X_raw"])
@@ -2394,150 +2394,759 @@ def plot_cluster_profiles_radar(model_dict, mask: str):
         feature_names = model_dict["feature_names"]
         assignments_df = model_dict["assignments"]
 
-        # 1. Replace masked values with NaN
+        # Replace masked values with NaN
         X_raw[M_raw == 0] = np.nan
 
-        # 2. Average features based on the mask
+        # Average features based on the mask
         if mask == "Store":
-            # Average over SKUs (axis 1) to get (n_stores, n_features)
             avg_features = np.nanmean(X_raw, axis=1)
-            # Get the store names
             item_names = model_dict["row_names"]
         elif mask == "SKU":
-            # Average over Stores (axis 0) to get (n_skus, n_features)
             avg_features = np.nanmean(X_raw, axis=0)
-            # Get the SKU names
             item_names = model_dict["col_names"]
         else:
-            print(
-                f"ERROR: Unknown mask '{mask}'. Please use 'Store' or 'SKU'."
-            )
-            return
+            logger.error(f"Unknown mask '{mask}'. Use 'Store' or 'SKU'.")
+            return None
 
-        # 3. Create a DataFrame of the averaged features
+        # Create feature DataFrame
         feature_df = pd.DataFrame(avg_features, columns=feature_names)
         feature_df["item_name"] = item_names
 
-        # 4. Filter assignments to only the factor we care about
+        # Filter and merge assignments
         assignments_filtered = assignments_df.query("factor_name == @mask")
-
-        # 5. Merge features with cluster/factor assignments
-        # This joins the (item, feature_vector) with all (item, cluster_id) pairs
         merged_df = pd.merge(feature_df, assignments_filtered, on="item_name")
 
         if merged_df.empty:
-            print(
-                "ERROR: Merge failed. No matching 'item_name' found between model data and assignments."
-            )
-            print(f"Example item name from model: {item_names[0]}")
-            print(
-                f"Example item name from assignments: {assignments_filtered['item_name'].iloc[0]}"
-            )
-            return
+            logger.error("Merge failed. No matching 'item_name' found.")
+            return None
 
-        # 6. Group by the CLUSTER/FACTOR ID and get the mean profile
-        # This finds the average feature profile for all items belonging to a factor
+        # Calculate cluster means and sizes
         cluster_means = merged_df.groupby("cluster_id")[feature_names].mean()
+        cluster_sizes = merged_df.groupby("cluster_id").size()
+        cluster_means["cluster_size"] = cluster_sizes
 
-    except KeyError as e:
-        print(f"ERROR: Key not found: {e}")
-        return
+        logger.info(f"Total clusters found: {len(cluster_means)}")
+
+        # FORCE limit clusters if we have too many
+        if len(cluster_means) > max_clusters:
+            if selection_method == "size":
+                # Select clusters with the most members
+                top_clusters = cluster_sizes.nlargest(max_clusters).index
+            elif selection_method == "variance":
+                # Select clusters with highest variance
+                cluster_variance = cluster_means[feature_names].var(axis=1)
+                top_clusters = cluster_variance.nlargest(max_clusters).index
+            elif selection_method == "hierarchical":
+                # Group similar clusters using hierarchical clustering
+                from sklearn.cluster import AgglomerativeClustering
+                from sklearn.preprocessing import StandardScaler
+
+                # Standardize the cluster profiles
+                scaler = StandardScaler()
+                profiles_scaled = scaler.fit_transform(
+                    cluster_means[feature_names]
+                )
+
+                # Apply hierarchical clustering to group similar clusters
+                hierarchical = AgglomerativeClustering(n_clusters=max_clusters)
+                meta_clusters = hierarchical.fit_predict(profiles_scaled)
+
+                # Select one representative from each meta-cluster (largest cluster)
+                top_clusters = []
+                for meta_id in range(max_clusters):
+                    clusters_in_meta = cluster_means.index[
+                        meta_clusters == meta_id
+                    ]
+                    # Pick the largest cluster from this meta-cluster
+                    largest_in_meta = cluster_sizes.loc[
+                        clusters_in_meta
+                    ].idxmax()
+                    top_clusters.append(largest_in_meta)
+
+                top_clusters = pd.Index(top_clusters)
+            else:  # random
+                top_clusters = cluster_means.sample(n=max_clusters).index
+
+            cluster_means = cluster_means.loc[top_clusters]
+            logger.info(
+                f"Reduced to {len(cluster_means)} clusters using {selection_method} method"
+            )
+
+        return cluster_means
+
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"Error calculating cluster profiles: {e}")
+        return None
+
+
+def plot_cluster_profiles(
+    model_dict: Dict[str, Any],
+    mask: str,
+    plot_type: Literal["heatmap", "parallel", "bar", "radar"] = "heatmap",
+    figsize: tuple = (12, 8),
+    normalize: bool = True,
+    save_path: Optional[str] = None,
+    max_clusters: int = 10,
+    selection_method: Literal["size", "variance", "random"] = "size",
+):
+    """
+    Plot cluster profiles using various visualization methods.
+
+    Args:
+        model_dict: The loaded model dictionary
+        mask: 'Store' or 'SKU'
+        plot_type: Type of visualization
+        figsize: Figure size
+        normalize: Whether to normalize features for better comparison
+        save_path: Path to save the plot
+        max_clusters: Maximum number of clusters to show (default: 10)
+        selection_method: How to select top clusters ('size', 'variance', 'random')
+    """
+
+    cluster_means = calculate_cluster_profiles(
+        model_dict, mask, max_clusters, selection_method
+    )
+    if cluster_means is None:
         return
 
-    # --- Plotting ---
-    num_vars = len(feature_names)
+    feature_names = model_dict["feature_names"]
+    feature_data = cluster_means[feature_names]
+
+    # Normalize features if requested (z-score normalization)
+    if normalize:
+        feature_data = (
+            feature_data - feature_data.mean()
+        ) / feature_data.std()
+        value_label = "Normalized Values"
+    else:
+        value_label = "Feature Values"
+
+    # Add cluster size info to the title
+    total_clusters = len(
+        model_dict["assignments"]
+        .query("factor_name == @mask")["cluster_id"]
+        .unique()
+    )
+    title_suffix = f" (Top {len(feature_data)}/{total_clusters} clusters by {selection_method})"
+
+    if plot_type == "heatmap":
+        _plot_heatmap(
+            feature_data,
+            mask,
+            figsize,
+            value_label,
+            title_suffix,
+            cluster_means,
+        )
+    elif plot_type == "parallel":
+        _plot_parallel_coordinates(
+            feature_data,
+            mask,
+            figsize,
+            value_label,
+            title_suffix,
+            cluster_means,
+        )
+    elif plot_type == "bar":
+        _plot_grouped_bars(
+            feature_data,
+            mask,
+            figsize,
+            value_label,
+            title_suffix,
+            cluster_means,
+        )
+    elif plot_type == "radar":
+        _plot_radar_improved(
+            feature_data, mask, figsize, title_suffix, cluster_means
+        )
+    else:
+        logger.error(f"Unknown plot_type: {plot_type}")
+        return
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+
+def _plot_heatmap(
+    feature_data: pd.DataFrame,
+    mask: str,
+    figsize: tuple,
+    value_label: str,
+    title_suffix: str,
+    cluster_means: pd.DataFrame,
+):
+    """Create an improved heatmap visualization with cluster size annotations."""
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Create heatmap with better styling
+    sns.heatmap(
+        feature_data,
+        annot=True,
+        fmt=".2f",
+        cmap="RdBu_r",
+        center=0,
+        cbar_kws={"label": value_label},
+        ax=ax,
+        linewidths=0.5,
+    )
+
+    ax.set_title(
+        f"{mask} Factor Profiles - Heatmap{title_suffix}",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.set_xlabel("Features", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Cluster ID (size)", fontsize=12, fontweight="bold")
+
+    # Update y-axis labels to include cluster sizes
+    y_labels = [
+        f"Cluster {idx} (n={cluster_means.loc[idx, 'cluster_size']})"
+        for idx in feature_data.index
+    ]
+    ax.set_yticklabels(y_labels, rotation=0)
+
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+
+
+def _plot_parallel_coordinates(
+    feature_data: pd.DataFrame,
+    mask: str,
+    figsize: tuple,
+    value_label: str,
+    title_suffix: str,
+    cluster_means: pd.DataFrame,
+):
+    """Create parallel coordinates plot with cluster size info."""
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Create color palette with better distinction
+    colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data)))
+
+    # Plot each cluster
+    for idx, (cluster_id, row) in enumerate(feature_data.iterrows()):
+        cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+        ax.plot(
+            range(len(feature_data.columns)),
+            row.values,
+            marker="o",
+            linewidth=2.5,
+            markersize=8,
+            label=f"Cluster {cluster_id} (n={cluster_size})",
+            color=colors[idx],
+            alpha=0.8,
+        )
+
+    ax.set_xticks(range(len(feature_data.columns)))
+    ax.set_xticklabels(
+        feature_data.columns, rotation=45, ha="right", fontweight="bold"
+    )
+    ax.set_ylabel(value_label, fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"{mask} Factor Profiles - Parallel Coordinates{title_suffix}",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+
+    ax.grid(True, alpha=0.3)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+
+
+def _plot_grouped_bars(
+    feature_data: pd.DataFrame,
+    mask: str,
+    figsize: tuple,
+    value_label: str,
+    title_suffix: str,
+    cluster_means: pd.DataFrame,
+):
+    """Create grouped bar chart with cluster size info."""
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Transpose for better bar grouping
+    feature_data_t = feature_data.T
+
+    # Create grouped bar plot with better colors
+    feature_data_t.plot(kind="bar", ax=ax, width=0.8, colormap="tab10")
+
+    ax.set_title(
+        f"{mask} Factor Profiles - Grouped Bars{title_suffix}",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.set_xlabel("Features", fontsize=12, fontweight="bold")
+    ax.set_ylabel(value_label, fontsize=12, fontweight="bold")
+
+    # Update legend with cluster sizes
+    legend_labels = [
+        f"Cluster {col} (n={cluster_means.loc[col, 'cluster_size']})"
+        for col in feature_data.index
+    ]
+    ax.legend(
+        legend_labels,
+        title="Cluster ID",
+        bbox_to_anchor=(1.05, 1),
+        loc="upper left",
+    )
+
+    plt.xticks(rotation=45, ha="right")
+    plt.grid(True, alpha=0.3, axis="y")
+    plt.tight_layout()
+
+
+def _plot_radar_improved(
+    feature_data: pd.DataFrame,
+    mask: str,
+    figsize: tuple,
+    title_suffix: str,
+    cluster_means: pd.DataFrame,
+):
+    """Create an improved radar plot with cluster size info."""
+    num_vars = len(feature_data.columns)
     angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-    angles += angles[:1]
+    angles += angles[:1]  # Complete the circle
 
-    _, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
 
-    # Iterate over the calculated mean profiles
-    for cluster_id, row in cluster_means.iterrows():
+    # Color palette with better distinction
+    colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data)))
+
+    # Plot each cluster
+    for idx, (cluster_id, row) in enumerate(feature_data.iterrows()):
         values = row.tolist()
-        values += values[:1]
+        values += values[:1]  # Complete the circle
+        cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+
         ax.plot(
             angles,
             values,
-            linewidth=2,
-            linestyle="solid",
-            label=f"Factor {cluster_id}",  # Label is now "Factor"
+            "o-",
+            linewidth=2.5,
+            markersize=6,
+            label=f"Cluster {cluster_id} (n={cluster_size})",
+            color=colors[idx],
+            alpha=0.8,
         )
-        ax.fill(angles, values, alpha=0.2)
+        ax.fill(angles, values, alpha=0.1, color=colors[idx])
 
-    ax.set_yticklabels([])
+    # Customize the plot
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(feature_names, size=12, rotation=45, ha="right")
+    ax.set_xticklabels(feature_data.columns, fontsize=10, fontweight="bold")
     ax.set_title(
-        f"{mask} Factor Profiles", size=20, y=1.15
-    )  # Title is dynamic
-    # plt.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
-    plt.show()
+        f"{mask} Factor Profiles - Radar Chart{title_suffix}",
+        fontsize=16,
+        fontweight="bold",
+        y=1.08,
+    )
+
+    # Add grid
+    ax.grid(True, alpha=0.3)
+
+    # Legend
+    plt.legend(loc="upper right", bbox_to_anchor=(1.3, 1.0))
+    plt.tight_layout()
 
 
-def plot_external_correlation(
-    model_dict, metadata_df, sku_id_col, category_col
+# Updated convenience function
+def plot_all_cluster_visualizations(
+    model_dict: Dict[str, Any],
+    mask: str,
+    figsize: tuple = (15, 12),
+    max_clusters: int = 10,
+    selection_method: Literal["size", "variance", "random"] = "size",
 ):
-    """
-    Creates a stacked bar chart to show the composition of an external categorical
-    variable (e.g., 'product_category') within each cluster.
+    """Create a 2x2 subplot with all visualization types for top clusters."""
+    cluster_means = calculate_cluster_profiles(
+        model_dict, mask, max_clusters, selection_method
+    )
+    if cluster_means is None:
+        return
 
-    Args:
-        model_dict (dict): The loaded model dictionary.
-        metadata_df (pd.DataFrame): A DataFrame with your external metadata.
-        sku_id_col (str): The name of the column in metadata_df with SKU names/IDs.
-        category_col (str): The name of the column in metadata_df with the categories.
-    """
-    try:
-        sku_names = model_dict["col_names"]
-        cluster_labels = model_dict["cluster_assignments"]
-    except KeyError:
-        print(
-            "ERROR: 'cluster_assignments' or 'col_names' not found in model_dict."
+    feature_names = model_dict["feature_names"]
+    feature_data = cluster_means[feature_names]
+
+    # Normalize for better comparison
+    feature_data_norm = (
+        feature_data - feature_data.mean()
+    ) / feature_data.std()
+
+    total_clusters = len(
+        model_dict["assignments"]
+        .query("factor_name == @mask")["cluster_id"]
+        .unique()
+    )
+    title_suffix = (
+        f" (Top {len(feature_data)}/{total_clusters} by {selection_method})"
+    )
+
+    fig = plt.figure(figsize=figsize)
+
+    # Heatmap
+    ax1 = plt.subplot(2, 2, 1)
+    sns.heatmap(
+        feature_data_norm,
+        annot=True,
+        fmt=".2f",
+        cmap="RdBu_r",
+        center=0,
+        ax=ax1,
+    )
+    ax1.set_title("Heatmap", fontweight="bold")
+
+    # Parallel coordinates
+    ax2 = plt.subplot(2, 2, 2)
+    colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data_norm)))
+    for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
+        cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+        ax2.plot(
+            range(len(row)),
+            row.values,
+            "o-",
+            label=f"C{cluster_id} (n={cluster_size})",
+            color=colors[idx],
         )
-        return
+    ax2.set_xticks(range(len(feature_data_norm.columns)))
+    ax2.set_xticklabels(feature_data_norm.columns, rotation=45, ha="right")
+    ax2.set_title("Parallel Coordinates", fontweight="bold")
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
 
-    df_clusters = pd.DataFrame(
-        {"sku_id": sku_names, "cluster": cluster_labels}
-    )
+    # Bar chart
+    ax3 = plt.subplot(2, 2, 3)
+    feature_data_norm.T.plot(kind="bar", ax=ax3, colormap="tab10")
+    ax3.set_title("Grouped Bars", fontweight="bold")
+    legend_labels = [
+        f"C{col} (n={cluster_means.loc[col, 'cluster_size']})"
+        for col in feature_data_norm.index
+    ]
+    ax3.legend(legend_labels, title="Cluster", fontsize=8)
 
-    if (
-        sku_id_col not in metadata_df.columns
-        or category_col not in metadata_df.columns
-    ):
-        print(
-            f"ERROR: Columns '{sku_id_col}' or '{category_col}' not found in metadata DataFrame."
+    # Radar chart
+    ax4 = plt.subplot(2, 2, 4, projection="polar")
+    num_vars = len(feature_data_norm.columns)
+    angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+    angles += angles[:1]
+
+    for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
+        values = row.tolist() + [row.tolist()[0]]
+        cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+        ax4.plot(
+            angles,
+            values,
+            "o-",
+            label=f"C{cluster_id} (n={cluster_size})",
+            color=colors[idx],
         )
-        return
+        ax4.fill(angles, values, alpha=0.1, color=colors[idx])
 
-    df_merged = pd.merge(
-        df_clusters,
-        metadata_df[[sku_id_col, category_col]],
-        left_on="sku_id",
-        right_on=sku_id_col,
+    ax4.set_xticks(angles[:-1])
+    ax4.set_xticklabels(feature_data_norm.columns)
+    ax4.set_title("Radar Chart", fontweight="bold", y=1.08)
+
+    plt.suptitle(
+        f"{mask} Factor Profiles - All Visualizations{title_suffix}",
+        fontsize=16,
+        fontweight="bold",
     )
-
-    if df_merged.empty:
-        print("ERROR: Merge failed. No matching SKUs found.")
-        return
-
-    contingency_table = pd.crosstab(
-        df_merged["cluster"], df_merged[category_col]
-    )
-    contingency_percent = contingency_table.div(
-        contingency_table.sum(axis=1), axis=0
-    )
-
-    ax = contingency_percent.plot(
-        kind="bar", stacked=True, figsize=(12, 7), colormap="viridis"
-    )
-
-    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    plt.title(f"Composition of {category_col} by Cluster", fontsize=16)
-    plt.xlabel("Cluster", fontsize=12)
-    plt.ylabel(f"Proportion of SKUs", fontsize=12)
-    plt.xticks(rotation=0)
-    plt.legend(title=category_col, bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.tight_layout()
     plt.show()
+
+
+def calculate_cluster_profiles(
+    model_dict: Dict[str, Any],
+    mask: str,
+    max_clusters: int = 5,  # Reduced default to 5
+    selection_method: Literal[
+        "size", "variance", "random", "hierarchical"
+    ] = "size",
+) -> Optional[pd.DataFrame]:
+    """
+    Extract and calculate mean feature profiles for clusters.
+    """
+    try:
+        X_raw = np.copy(model_dict["X_raw"])
+        M_raw = model_dict["M_raw"]
+        feature_names = model_dict["feature_names"]
+        assignments_df = model_dict["assignments"]
+
+        # Replace masked values with NaN
+        X_raw[M_raw == 0] = np.nan
+
+        # Average features based on the mask
+        if mask == "Store":
+            avg_features = np.nanmean(X_raw, axis=1)
+            item_names = model_dict["row_names"]
+        elif mask == "SKU":
+            avg_features = np.nanmean(X_raw, axis=0)
+            item_names = model_dict["col_names"]
+        else:
+            logger.error(f"Unknown mask '{mask}'. Use 'Store' or 'SKU'.")
+            return None
+
+        # Create feature DataFrame
+        feature_df = pd.DataFrame(avg_features, columns=feature_names)
+        feature_df["item_name"] = item_names
+
+        # Filter and merge assignments
+        assignments_filtered = assignments_df.query("factor_name == @mask")
+        merged_df = pd.merge(feature_df, assignments_filtered, on="item_name")
+
+        if merged_df.empty:
+            logger.error("Merge failed. No matching 'item_name' found.")
+            return None
+
+        # Calculate cluster means and sizes
+        cluster_means = merged_df.groupby("cluster_id")[feature_names].mean()
+        cluster_sizes = merged_df.groupby("cluster_id").size()
+        cluster_means["cluster_size"] = cluster_sizes
+
+        logger.info(f"Total clusters found: {len(cluster_means)}")
+
+        # FORCE limit clusters if we have too many
+        if len(cluster_means) > max_clusters:
+            if selection_method == "size":
+                # Select clusters with the most members
+                top_clusters = cluster_sizes.nlargest(max_clusters).index
+            elif selection_method == "variance":
+                # Select clusters with highest variance
+                cluster_variance = cluster_means[feature_names].var(axis=1)
+                top_clusters = cluster_variance.nlargest(max_clusters).index
+            elif selection_method == "hierarchical":
+                # Group similar clusters using hierarchical clustering
+                from sklearn.cluster import AgglomerativeClustering
+                from sklearn.preprocessing import StandardScaler
+
+                # Standardize the cluster profiles
+                scaler = StandardScaler()
+                profiles_scaled = scaler.fit_transform(
+                    cluster_means[feature_names]
+                )
+
+                # Apply hierarchical clustering to group similar clusters
+                hierarchical = AgglomerativeClustering(n_clusters=max_clusters)
+                meta_clusters = hierarchical.fit_predict(profiles_scaled)
+
+                # Select one representative from each meta-cluster (largest cluster)
+                top_clusters = []
+                for meta_id in range(max_clusters):
+                    clusters_in_meta = cluster_means.index[
+                        meta_clusters == meta_id
+                    ]
+                    # Pick the largest cluster from this meta-cluster
+                    largest_in_meta = cluster_sizes.loc[
+                        clusters_in_meta
+                    ].idxmax()
+                    top_clusters.append(largest_in_meta)
+
+                top_clusters = pd.Index(top_clusters)
+            else:  # random
+                top_clusters = cluster_means.sample(n=max_clusters).index
+
+            cluster_means = cluster_means.loc[top_clusters]
+            logger.info(
+                f"Reduced to {len(cluster_means)} clusters using {selection_method} method"
+            )
+
+        return cluster_means
+
+    except Exception as e:
+        logger.error(f"Error calculating cluster profiles: {e}")
+        return None
+
+
+def plot_cluster_profiles_smart(
+    model_dict: Dict[str, Any],
+    mask: str,
+    max_clusters: int = 5,  # Much smaller default
+    selection_method: Literal["size", "variance", "hierarchical"] = "size",
+    figsize: tuple = (14, 10),
+):
+    """
+    Smart cluster profile plotting with automatic best visualization selection.
+    """
+    cluster_means = calculate_cluster_profiles(
+        model_dict, mask, max_clusters, selection_method
+    )
+    if cluster_means is None:
+        return
+
+    feature_names = model_dict["feature_names"]
+    feature_data = cluster_means[feature_names]
+
+    # Normalize for better comparison
+    feature_data_norm = (
+        feature_data - feature_data.mean()
+    ) / feature_data.std()
+
+    total_clusters = len(
+        model_dict["assignments"]
+        .query("factor_name == @mask")["cluster_id"]
+        .unique()
+    )
+
+    # Create subplots
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig.suptitle(
+        f"{mask} Factor Profiles: Top {len(feature_data)}/{total_clusters} Clusters (by {selection_method})",
+        fontsize=16,
+        fontweight="bold",
+    )
+
+    # Colors for consistency
+    colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data_norm)))
+
+    # 1. Heatmap (top-left)
+    ax1 = axes[0, 0]
+    im = ax1.imshow(
+        feature_data_norm.values, cmap="RdBu_r", aspect="auto", vmin=-2, vmax=2
+    )
+    ax1.set_xticks(range(len(feature_names)))
+    ax1.set_xticklabels(feature_names, rotation=45, ha="right", fontsize=9)
+    ax1.set_yticks(range(len(feature_data_norm)))
+    ax1.set_yticklabels(
+        [
+            f'C{idx} (n={cluster_means.loc[idx, "cluster_size"]})'
+            for idx in feature_data_norm.index
+        ],
+        fontsize=9,
+    )
+    ax1.set_title("Heatmap", fontweight="bold")
+    plt.colorbar(im, ax=ax1, shrink=0.8)
+
+    # 2. Parallel Coordinates (top-right)
+    ax2 = axes[0, 1]
+    for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
+        cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+        ax2.plot(
+            range(len(row)),
+            row.values,
+            "o-",
+            label=f"C{cluster_id} (n={cluster_size})",
+            color=colors[idx],
+            linewidth=2,
+            markersize=6,
+        )
+    ax2.set_xticks(range(len(feature_names)))
+    ax2.set_xticklabels(feature_names, rotation=45, ha="right", fontsize=9)
+    ax2.set_ylabel("Normalized Values")
+    ax2.set_title("Parallel Coordinates", fontweight="bold")
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
+
+    # 3. Bar Chart (bottom-left)
+    ax3 = axes[1, 0]
+    x_pos = np.arange(len(feature_names))
+    width = 0.8 / len(feature_data_norm)
+
+    for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
+        cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+        ax3.bar(
+            x_pos + idx * width,
+            row.values,
+            width,
+            label=f"C{cluster_id} (n={cluster_size})",
+            color=colors[idx],
+            alpha=0.8,
+        )
+
+    ax3.set_xticks(x_pos + width * (len(feature_data_norm) - 1) / 2)
+    ax3.set_xticklabels(feature_names, rotation=45, ha="right", fontsize=9)
+    ax3.set_ylabel("Normalized Values")
+    ax3.set_title("Grouped Bars", fontweight="bold")
+    ax3.legend(fontsize=8)
+    ax3.grid(True, alpha=0.3, axis="y")
+
+    # 4. Simplified Radar (bottom-right) - Only if ≤ 6 clusters
+    ax4 = axes[1, 1]
+    if len(feature_data_norm) <= 6:
+        ax4.remove()
+        ax4 = fig.add_subplot(2, 2, 4, projection="polar")
+
+        num_vars = len(feature_names)
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        angles += angles[:1]
+
+        for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
+            values = row.tolist() + [row.tolist()[0]]
+            cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+            ax4.plot(
+                angles,
+                values,
+                "o-",
+                label=f"C{cluster_id} (n={cluster_size})",
+                color=colors[idx],
+                linewidth=2,
+                markersize=4,
+            )
+            ax4.fill(angles, values, alpha=0.1, color=colors[idx])
+
+        ax4.set_xticks(angles[:-1])
+        ax4.set_xticklabels(feature_names, fontsize=8)
+        ax4.set_title("Radar Chart", fontweight="bold", y=1.08)
+        ax4.grid(True, alpha=0.3)
+    else:
+        # Too many clusters for radar - show cluster sizes instead
+        cluster_sizes_plot = [
+            cluster_means.loc[idx, "cluster_size"]
+            for idx in feature_data_norm.index
+        ]
+        cluster_labels = [f"Cluster {idx}" for idx in feature_data_norm.index]
+
+        bars = ax4.bar(
+            range(len(cluster_sizes_plot)), cluster_sizes_plot, color=colors
+        )
+        ax4.set_xticks(range(len(cluster_labels)))
+        ax4.set_xticklabels(
+            cluster_labels, rotation=45, ha="right", fontsize=9
+        )
+        ax4.set_ylabel("Cluster Size")
+        ax4.set_title("Cluster Sizes", fontweight="bold")
+        ax4.grid(True, alpha=0.3, axis="y")
+
+    plt.tight_layout()
+    plt.show()
+
+
+# Simple function with very strict limits
+def plot_top_clusters_only(
+    model_dict: Dict[str, Any],
+    mask: str,
+    n_clusters: int = 5,
+    plot_type: str = "heatmap",
+):
+    """
+    Show only the top N clusters by size - guaranteed to limit output.
+    """
+    # Get assignments for this mask
+    assignments_df = model_dict["assignments"]
+    assignments_filtered = assignments_df.query("factor_name == @mask")
+
+    # Count cluster sizes and get top N
+    cluster_sizes = assignments_filtered["cluster_id"].value_counts()
+    top_cluster_ids = cluster_sizes.head(n_clusters).index.tolist()
+
+    print(f"Total clusters for {mask}: {len(cluster_sizes)}")
+    print(f"Showing top {n_clusters} clusters: {top_cluster_ids}")
+    print(f"Cluster sizes: {cluster_sizes.head(n_clusters).to_dict()}")
+
+    # Filter to only these clusters
+    assignments_top = assignments_filtered[
+        assignments_filtered["cluster_id"].isin(top_cluster_ids)
+    ]
+
+    # Create a temporary model dict with filtered assignments
+    temp_model_dict = model_dict.copy()
+    temp_model_dict["assignments"] = assignments_top
+
+    # Now plot with the original function
+    plot_cluster_profiles(
+        temp_model_dict, mask, plot_type=plot_type, max_clusters=n_clusters
+    )
