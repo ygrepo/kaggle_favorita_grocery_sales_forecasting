@@ -19,7 +19,6 @@ from src.BinaryTriFactorizationEstimator import (
     BinaryTriFactorizationMultiFeature,
 )
 from sklearn.decomposition import NMF
-from src.tensor_models import fit_ntf_and_get_factors
 
 import pickle
 

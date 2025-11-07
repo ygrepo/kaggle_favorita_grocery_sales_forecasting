@@ -1,6 +1,6 @@
 import os
 import itertools
-from typing import List, Union, Any, Dict
+from typing import List, Union, Any, Dict, Literal, Optional
 import pandas as pd
 import numpy as np
 import torch
@@ -13,6 +13,8 @@ from tensorly.decomposition import (
 )
 from datetime import datetime
 from typing import Tuple
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.preprocessing import StandardScaler
 
 tl.set_backend("pytorch")
 
@@ -1234,3 +1236,102 @@ def parafac_decomposition(  # Renamed function for clarity
         return None, None
 
     return weights, factors
+
+
+def calculate_cluster_profiles(
+    model_dict: Dict[str, Any],
+    mask: str,
+    max_clusters: int = 5,  # Reduced default to 5
+    selection_method: Literal[
+        "size", "variance", "random", "hierarchical"
+    ] = "size",
+) -> Optional[pd.DataFrame]:
+    """
+    Extract and calculate mean feature profiles for clusters.
+    """
+    try:
+        X_raw = np.copy(model_dict["X_raw"])
+        M_raw = model_dict["M_raw"]
+        feature_names = model_dict["feature_names"]
+        assignments_df = model_dict["assignments"]
+
+        # Replace masked values with NaN
+        X_raw[M_raw == 0] = np.nan
+
+        # Average features based on the mask
+        if mask == "Store":
+            avg_features = np.nanmean(X_raw, axis=1)
+            item_names = model_dict["row_names"]
+        elif mask == "SKU":
+            avg_features = np.nanmean(X_raw, axis=0)
+            item_names = model_dict["col_names"]
+        else:
+            logger.error(f"Unknown mask '{mask}'. Use 'Store' or 'SKU'.")
+            return None
+
+        # Create feature DataFrame
+        feature_df = pd.DataFrame(avg_features, columns=feature_names)
+        feature_df["item_name"] = item_names
+
+        # Filter and merge assignments
+        assignments_filtered = assignments_df.query("factor_name == @mask")
+        merged_df = pd.merge(feature_df, assignments_filtered, on="item_name")
+
+        if merged_df.empty:
+            logger.error("Merge failed. No matching 'item_name' found.")
+            return None
+
+        # Calculate cluster means and sizes
+        cluster_means = merged_df.groupby("cluster_id")[feature_names].mean()
+        cluster_sizes = merged_df.groupby("cluster_id").size()
+        cluster_means["cluster_size"] = cluster_sizes
+
+        logger.info(f"Total clusters found: {len(cluster_means)}")
+
+        # FORCE limit clusters if we have too many
+        if len(cluster_means) > max_clusters:
+            if selection_method == "size":
+                # Select clusters with the most members
+                top_clusters = cluster_sizes.nlargest(max_clusters).index
+            elif selection_method == "variance":
+                # Select clusters with highest variance
+                cluster_variance = cluster_means[feature_names].var(axis=1)
+                top_clusters = cluster_variance.nlargest(max_clusters).index
+            elif selection_method == "hierarchical":
+                # Group similar clusters using hierarchical clustering
+                # Standardize the cluster profiles
+                scaler = StandardScaler()
+                profiles_scaled = scaler.fit_transform(
+                    cluster_means[feature_names]
+                )
+
+                # Apply hierarchical clustering to group similar clusters
+                hierarchical = AgglomerativeClustering(n_clusters=max_clusters)
+                meta_clusters = hierarchical.fit_predict(profiles_scaled)
+
+                # Select one representative from each meta-cluster (largest cluster)
+                top_clusters = []
+                for meta_id in range(max_clusters):
+                    clusters_in_meta = cluster_means.index[
+                        meta_clusters == meta_id
+                    ]
+                    # Pick the largest cluster from this meta-cluster
+                    largest_in_meta = cluster_sizes.loc[
+                        clusters_in_meta
+                    ].idxmax()
+                    top_clusters.append(largest_in_meta)
+
+                top_clusters = pd.Index(top_clusters)
+            else:  # random
+                top_clusters = cluster_means.sample(n=max_clusters).index
+
+            cluster_means = cluster_means.loc[top_clusters]
+            logger.info(
+                f"Reduced to {len(cluster_means)} clusters using {selection_method} method"
+            )
+
+        return cluster_means
+
+    except Exception as e:
+        logger.error(f"Error calculating cluster profiles: {e}")
+        return None
