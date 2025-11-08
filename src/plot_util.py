@@ -2301,70 +2301,150 @@ def plot_reconstruction_metrics(
 
 
 def plot_factor_matrix(
-    factor_matrix, title="Factor Matrix Loadings", x_labels=None, y_labels=None
+    factor_matrix,
+    title="Factor Matrix Loadings",
+    x_labels=None,
+    y_labels=None,
+    max_factors=10,  # New parameter to limit factors
+    top_factors_only=True,  # Show only most important factors
 ):
     """
-    Visualizes a factor matrix using a heatmap.
+    Visualizes a factor matrix using a heatmap with improved readability.
 
     Args:
-        factor_matrix (np.ndarray): The 2D factor matrix (e.g., F_features).
+        factor_matrix (np.ndarray or torch.Tensor): The 2D factor matrix (e.g., F_features).
         title (str): The title for the plot.
-        x_labels (list[str], optional): Labels for the columns (e.g., ["Factor 1", ...]).
-        y_labels (list[str], optional): Labels for the rows (e.g., your 9 feature names).
+        x_labels (list[str], optional): Labels for the columns.
+        y_labels (list[str], optional): Labels for the rows.
+        max_factors (int): Maximum number of factors to display.
+        top_factors_only (bool): If True, select factors with highest variance.
     """
+    # Convert to numpy if it's a tensor
+    if hasattr(factor_matrix, "detach"):  # PyTorch tensor
+        factor_matrix = factor_matrix.detach().cpu().numpy()
+    elif hasattr(factor_matrix, "numpy"):  # Other tensor types
+        factor_matrix = factor_matrix.numpy()
+
     if factor_matrix.ndim != 2:
         raise ValueError(
             f"Factor matrix must be 2D, but got {factor_matrix.ndim} dimensions."
         )
 
-    plt.figure(
-        figsize=(
-            max(8, factor_matrix.shape[1]),
-            max(6, factor_matrix.shape[0] / 2),
-        )
-    )
+    # Select subset of factors if there are too many
+    if factor_matrix.shape[1] > max_factors:
+        if top_factors_only:
+            # Select factors with highest variance (most informative)
+            factor_variances = np.var(factor_matrix, axis=0)
+            top_indices = np.argsort(factor_variances)[-max_factors:]
+            factor_matrix = factor_matrix[:, top_indices]
+            print(
+                f"Showing top {max_factors} factors (by variance) out of {len(top_indices)} selected"
+            )
+        else:
+            # Just take first max_factors
+            original_shape = factor_matrix.shape[1]
+            factor_matrix = factor_matrix[:, :max_factors]
+            top_indices = range(max_factors)
+            print(
+                f"Showing first {max_factors} factors out of {original_shape} total"
+            )
+    else:
+        top_indices = range(factor_matrix.shape[1])
 
-    # Create default labels if none provided
+    # Create labels
     if x_labels is None:
-        x_labels = [f"Factor {i+1}" for i in range(factor_matrix.shape[1])]
+        x_labels = [f"Factor {i+1}" for i in top_indices]
+    else:
+        x_labels = [
+            x_labels[i] if i < len(x_labels) else f"Factor {i+1}"
+            for i in top_indices
+        ]
+
     if y_labels is None:
         y_labels = [f"Row {i+1}" for i in range(factor_matrix.shape[0])]
 
-    # Use a diverging color map to show positive/negative loadings
-    cmap = "vlag"  # (Blue -> White -> Red)
+    # Dynamic figure sizing with better proportions
+    n_factors = factor_matrix.shape[1]
+    n_features = factor_matrix.shape[0]
+
+    fig_width = min(max(6, n_factors * 1.2), 20)  # Cap at 20 inches
+    fig_height = min(max(4, n_features * 0.6), 12)  # Cap at 12 inches
+
+    plt.figure(figsize=(fig_width, fig_height))
+
+    # Adjust annotation based on matrix size
+    show_annot = (
+        n_factors <= 15 and n_features <= 20
+    )  # Only annotate if not too crowded
+    font_size = max(
+        8, min(12, 120 // (n_factors + n_features))
+    )  # Dynamic font size
 
     ax = sns.heatmap(
         factor_matrix,
-        annot=True,
-        fmt=".2f",
-        annot_kws={"fontsize": 10, "fontweight": "bold"},
-        cmap=cmap,
+        annot=show_annot,
+        fmt=".2f" if show_annot else None,
+        annot_kws=(
+            {"fontsize": font_size, "fontweight": "bold"}
+            if show_annot
+            else None
+        ),
+        cmap="RdBu_r",  # Better color map for readability
         xticklabels=x_labels,
         yticklabels=y_labels,
-        center=0,  # Center color map at zero
-        cbar_kws={"label": "Loadings"},
+        center=0,
+        cbar_kws={"label": "Loadings", "shrink": 0.8},
+        linewidths=(
+            0.5 if n_factors <= 20 else 0
+        ),  # Add gridlines for smaller matrices
     )
 
+    # Improved formatting
     ax.set_title(title, fontsize=16, pad=20, fontweight="bold")
     plt.xlabel("Factor Components", fontsize=12, fontweight="bold")
-    plt.ylabel("Original Dimensions", fontsize=12, fontweight="bold")
-    ax.set_xticklabels(ax.get_xticklabels(), fontweight="bold", rotation=0)
-    ax.set_yticklabels(ax.get_yticklabels(), fontweight="bold")
+    plt.ylabel("Features", fontsize=12, fontweight="bold")
+
+    # Rotate x-labels if there are many factors
+    rotation = 45 if n_factors > 8 else 0
+    ax.set_xticklabels(
+        ax.get_xticklabels(), fontweight="bold", rotation=rotation
+    )
+    ax.set_yticklabels(ax.get_yticklabels(), fontweight="bold", rotation=0)
+
+    # Add summary statistics as text if annotations are hidden
+    if not show_annot:
+        plt.figtext(
+            0.02,
+            0.02,
+            f"Matrix: {factor_matrix.shape[0]}×{factor_matrix.shape[1]} | "
+            f"Range: [{factor_matrix.min():.2f}, {factor_matrix.max():.2f}]",
+            fontsize=10,
+            style="italic",
+        )
 
 
-def plot_feature_factor_interpretation(model_dict, fn=None):
+def plot_feature_factor_interpretation(
+    model_dict, fn=None, max_factors=10, top_factors_only=True
+):
     """
-    Calls your plot_factor_matrix function to visualize the
-    feature factor matrix (F_features) from the model_dict.
+    Visualizes feature factor matrix with improved readability.
 
     Args:
         model_dict (dict): The loaded model dictionary.
+        fn (str, optional): Filename to save the plot.
+        max_factors (int): Maximum number of factors to display.
+        top_factors_only (bool): Whether to select most important factors.
     """
     try:
-        # F_features is factors[2] based on (stores, SKU, FEATURES)
         f_features = model_dict["factors"][2]
         feature_names = model_dict["feature_names"]
-        k_rank = f_features.shape[1]
+
+        # Handle tensor conversion early
+        if hasattr(f_features, "detach"):  # PyTorch tensor
+            total_factors = f_features.shape[1]
+        else:  # NumPy array
+            total_factors = f_features.shape[1]
+
     except KeyError:
         print("ERROR: 'factors' or 'feature_names' not found in model_dict.")
         return
@@ -2372,18 +2452,151 @@ def plot_feature_factor_interpretation(model_dict, fn=None):
         print("ERROR: Feature factor matrix not found at index 2.")
         return
 
-    logger.info("Plotting Feature Factor Loadings...")
+    print(f"Original matrix shape: {f_features.shape}")
+    print(
+        f"Plotting Feature Factor Loadings ({f_features.shape[0]} features × {total_factors} factors)..."
+    )
+
     plot_factor_matrix(
         f_features,
-        title="Feature Factor Loadings",
-        x_labels=[f"Factor {k+1}" for k in range(k_rank)],
+        title=f"Feature Factor Loadings (Top {min(max_factors, total_factors)} factors)",
         y_labels=feature_names,
+        max_factors=max_factors,
+        top_factors_only=top_factors_only,
     )
+
     plt.tight_layout()
     if fn:
-        plt.savefig(fn, dpi=300)
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close()
+
+
+# Create separate plots for factor subsets
+def plot_feature_factors_multiplot(
+    model_dict, fn_prefix=None, factors_per_plot=8
+):
+    """
+    Create multiple smaller plots when you have many factors.
+    """
+    try:
+        f_features = model_dict["factors"][2]
+        feature_names = model_dict["feature_names"]
+        total_factors = f_features.shape[1]
+    except (KeyError, IndexError):
+        print("ERROR: Could not extract factor matrix.")
+        return
+
+    n_plots = (total_factors + factors_per_plot - 1) // factors_per_plot
+
+    for i in range(n_plots):
+        start_idx = i * factors_per_plot
+        end_idx = min((i + 1) * factors_per_plot, total_factors)
+
+        factor_subset = f_features[:, start_idx:end_idx]
+        factor_labels = [f"Factor {j+1}" for j in range(start_idx, end_idx)]
+
+        plot_factor_matrix(
+            factor_subset,
+            title=f"Feature Factors {start_idx+1}-{end_idx}",
+            x_labels=factor_labels,
+            y_labels=feature_names,
+            max_factors=factors_per_plot + 1,  # No additional limiting
+        )
+
+        plt.tight_layout()
+        if fn_prefix:
+            plt.savefig(
+                f"{fn_prefix}_part_{i+1}.png", dpi=300, bbox_inches="tight"
+            )
+        plt.show()
+        plt.close()
+
+
+# def plot_factor_matrix(
+#     factor_matrix, title="Factor Matrix Loadings", x_labels=None, y_labels=None
+# ):
+#     """
+#     Visualizes a factor matrix using a heatmap.
+
+#     Args:
+#         factor_matrix (np.ndarray): The 2D factor matrix (e.g., F_features).
+#         title (str): The title for the plot.
+#         x_labels (list[str], optional): Labels for the columns (e.g., ["Factor 1", ...]).
+#         y_labels (list[str], optional): Labels for the rows (e.g., your 9 feature names).
+#     """
+#     if factor_matrix.ndim != 2:
+#         raise ValueError(
+#             f"Factor matrix must be 2D, but got {factor_matrix.ndim} dimensions."
+#         )
+
+#     plt.figure(
+#         figsize=(
+#             max(8, factor_matrix.shape[1]),
+#             max(6, factor_matrix.shape[0] / 2),
+#         )
+#     )
+
+#     # Create default labels if none provided
+#     if x_labels is None:
+#         x_labels = [f"Factor {i+1}" for i in range(factor_matrix.shape[1])]
+#     if y_labels is None:
+#         y_labels = [f"Row {i+1}" for i in range(factor_matrix.shape[0])]
+
+#     # Use a diverging color map to show positive/negative loadings
+#     cmap = "vlag"  # (Blue -> White -> Red)
+
+#     ax = sns.heatmap(
+#         factor_matrix,
+#         annot=True,
+#         fmt=".2f",
+#         annot_kws={"fontsize": 10, "fontweight": "bold"},
+#         cmap=cmap,
+#         xticklabels=x_labels,
+#         yticklabels=y_labels,
+#         center=0,  # Center color map at zero
+#         cbar_kws={"label": "Loadings"},
+#     )
+
+#     ax.set_title(title, fontsize=16, pad=20, fontweight="bold")
+#     plt.xlabel("Factor Components", fontsize=12, fontweight="bold")
+#     plt.ylabel("Original Dimensions", fontsize=12, fontweight="bold")
+#     ax.set_xticklabels(ax.get_xticklabels(), fontweight="bold", rotation=0)
+#     ax.set_yticklabels(ax.get_yticklabels(), fontweight="bold")
+
+
+# def plot_feature_factor_interpretation(model_dict, fn=None):
+#     """
+#     Calls your plot_factor_matrix function to visualize the
+#     feature factor matrix (F_features) from the model_dict.
+
+#     Args:
+#         model_dict (dict): The loaded model dictionary.
+#     """
+#     try:
+#         # F_features is factors[2] based on (stores, SKU, FEATURES)
+#         f_features = model_dict["factors"][2]
+#         feature_names = model_dict["feature_names"]
+#         k_rank = f_features.shape[1]
+#     except KeyError:
+#         print("ERROR: 'factors' or 'feature_names' not found in model_dict.")
+#         return
+#     except IndexError:
+#         print("ERROR: Feature factor matrix not found at index 2.")
+#         return
+
+#     logger.info("Plotting Feature Factor Loadings...")
+#     plot_factor_matrix(
+#         f_features,
+#         title="Feature Factor Loadings",
+#         x_labels=[f"Factor {k+1}" for k in range(k_rank)],
+#         y_labels=feature_names,
+#     )
+#     plt.tight_layout()
+#     if fn:
+#         plt.savefig(fn, dpi=300)
+#     plt.show()
+#     plt.close()
 
 
 def plot_cluster_combined_profiles(

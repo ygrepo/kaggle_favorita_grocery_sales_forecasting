@@ -10,10 +10,12 @@ echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Default configuration
+METHOD="parafac"
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_imputed_features.parquet"
-OUTPUT_PATH="${OUTPUT_DATA_DIR}/PARAFAC_2014_January_top_53_store_2000_item_growth_rate_clustered.csv"
+DATE=$(date +"%Y%m%d")
+OUTPUT_PATH="${OUTPUT_DATA_DIR}/${DATE}_${METHOD}_2014_January_top_53_store_2000_item_growth_rate_clustered.csv"
 
 #RANK_LIST="10,20,30,40,50,60,70,80,90,100"
 RANK_LIST="50,100,150,200"
@@ -24,7 +26,6 @@ FEATURE_RANKS="2,7,8"
 FEATURES="gr_median,gr_std,gr_iqr,frac_up,frac_sideways,frac_down,up_to_down_ratio,ac_lag1,ac_lag4"
 MAX_ITER=500
 TOL=1e-5
-METHOD="parafac"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

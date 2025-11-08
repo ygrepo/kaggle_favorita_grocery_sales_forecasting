@@ -767,7 +767,6 @@ def fit(
 
     else:
         raise ValueError(f"Invalid method: {method}")
-    # --- End of modified rank block ---
 
     # Log stats (but don't return them)
     if factors:
@@ -789,8 +788,6 @@ def fit(
         logger.error(
             f"Decomposition failed for method {method}, skipping errors."
         )
-        # --> MODIFIED: Return None for all new values <--
-        return None, None, None, None, None, None, None, None, None, None, None
 
     # Calculate and log PVE/RMSE (on the scaled data)
     pve_percent, rmse = errors(X, weights, factors, method=method)
@@ -798,7 +795,7 @@ def fit(
         f"FINAL MODEL PVE (on scaled data): {pve_percent:.2f}%, RMSE: {rmse:.3f}"
     )
 
-    # --> MODIFIED: Return the new scaling factors <--
+    # Return the new scaling factors <--
     return (
         weights,
         factors,
@@ -814,275 +811,6 @@ def fit(
     )
 
 
-# def fit(
-#     method: str,
-#     df: pd.DataFrame,
-#     features: str | list[str],
-#     ranks: tuple[int, int, int] | int | None = None,
-#     n_iter: int = 500,
-#     tol: float = 1e-8,
-# ) -> Tuple[
-#     tl.tensor,
-#     list[tl.tensor],
-#     list,
-#     list,
-#     list,
-#     np.ndarray,
-#     np.ndarray,
-#     np.ndarray,
-#     np.ndarray,
-# ]:
-#     """
-#     Fits a single, final model and returns the model components
-#     (weights, factors) and metadata (names).
-#     """
-#     # Parse features
-#     if isinstance(features, str):
-#         features = [f.strip() for f in features.split(",") if f.strip()]
-#         logger.info(f"Parsed features: {features}")
-
-#     # Build the RAW tensor (contains NaNs)
-#     X_raw, M_raw, row_names, col_names = build_multifeature_X_matrix(
-#         df, features
-#     )
-#     logger.info(f"X shape:{X_raw.shape}")
-#     logger.info(
-#         f"Got {len(row_names)} row names (Stores) and {len(col_names)} col names (SKUs)"
-#     )
-
-#     # Create tensors FIRST
-#     X_mat = tl.tensor(X_raw, device=device, dtype=tl.float32)
-#     M_tensor = tl.tensor(M_raw, device=device, dtype=torch.bool)
-
-#     # Conditionally pre-process the data
-#     I, J, D = X_mat.shape
-#     mus = tl.zeros(D, device=X_mat.device, dtype=X_mat.dtype)
-#     sds = tl.ones(D, device=X_mat.device, dtype=X_mat.dtype)
-#     if method in ["tucker", "parafac"]:
-#         logger.info(
-#             f"Applying z-score (center_scale_signed) for '{method}' model."
-#         )
-#         X, mus, sds = center_scale_signed(X_mat, M_tensor)
-#     elif method == "ntf":
-#         if tl.min(X_mat[~tl.isnan(X_mat)]) < 0:
-#             logger.error(
-#                 "NTF model selected, but raw data contains negative values!"
-#             )
-#             raise ValueError(
-#                 "Data has negative values. NTF is invalid. Use 'parafac' or 'tucker'."
-#             )
-#         logger.info(f"Skipping z-score for non-negative model '{method}'.")
-#         X = X_mat
-#     else:
-#         raise ValueError(f"Invalid method: {method}")
-
-#     logger.info(f"Multifeature mode: reshaping data: ({I}, {J}, {D})")
-
-#     if ranks is None:
-#         rank_tuple = (max(2, I // 4), max(2, J // 4), max(2, D // 4))
-#         logger.info(f"No ranks provided, using defaults: {rank_tuple}")
-#     else:
-#         rank_tuple = ranks
-
-#     # Decompose using the correct tensor 'X'
-#     if method == "tucker":
-#         logger.info(f"Performing Tucker decomposition with rank={rank_tuple}")
-#         weights, factors = tucker_decomposition(X, rank_tuple, n_iter, tol)
-#     elif method == "ntf":
-#         logger.info(f"Performing NTF decomposition with rank={rank_tuple}")
-
-#         weights, factors = nonneg_parafac(X, rank_tuple)
-#     elif method == "parafac":
-#         logger.info(f"Performing PARAFAC decomposition with rank={rank_tuple}")
-#         weights, factors = parafac_decomposition(X, rank_tuple)
-#     else:
-#         raise ValueError(f"Invalid method: {method}")
-
-#     # Log stats (but don't return them)
-#     if factors:
-#         mode_names = ["Store", "SKU", "Feature"]
-#         if method == "tucker":
-#             core_stats = compute_tucker_core_stats(weights)
-#             log_tucker_core_stats(core_stats)
-#         else:
-#             comp_stats = compute_factor_stats(factors, factor_names=mode_names)
-#             log_factor_utilization(
-#                 factors, comp_stats, factor_names=mode_names
-#             )
-
-#         item_stats = compute_item_membership_stats(
-#             factors, factor_names=mode_names
-#         )
-#         log_item_membership_stats(item_stats, factor_names=mode_names)
-#     else:
-#         logger.error(
-#             f"Decomposition failed for method {method}, skipping errors."
-#         )
-#         return None, None, None, None, None, None, None, None, None
-
-#     # Calculate and log PVE/RMSE
-#     pve_percent, rmse = errors(X, weights, factors, method=method)
-#     logger.info(f"FINAL MODEL PVE: {pve_percent:.2f}%, RMSE: {rmse:.3f}")
-
-#     # Return the model components and names
-#     return (
-#         weights,
-#         factors,
-#         row_names,
-#         col_names,
-#         features,
-#         X_raw,
-#         M_raw,
-#         mus,
-#         sds,
-#     )
-
-
-# def compute_reconstruction_metrics(
-#     X: np.ndarray,
-#     weights: tl.tensor,
-#     factors: List[tl.tensor],
-#     method: str,
-#     mus: tl.tensor,
-#     sds: tl.tensor,
-#     *,
-#     M: np.ndarray = None,
-#     max_scatter_points: int = 200_000,
-# ) -> Dict[str, Any]:
-#     """
-#     Computes reconstruction metrics after scaling back to the original data space.
-
-#     Args:
-#         X: The *original* data tensor (numpy, float, with NaNs) (I,J,D)
-#         weights: The core tensor (Tucker) or weights vector (CP/NTF)
-#         factors: List of factor matrices
-#         method: 'tucker', 'parafac', or 'ntf'
-#         mus: The 1D tensor of means (length D) from scaling
-#         sds: The 1D tensor of std devs (length D) from scaling
-#         M: (I,J) boolean mask of observed entries
-#         max_scatter_points: Max points for scatter plot data
-
-#     Returns:
-#         A dictionary containing all computed metrics for plotting.
-#     """
-#     tl.set_backend("pytorch")
-#     logger.info(f"Computing reconstruction metrics for method '{method}'...")
-#     X = np.asarray(X)
-#     assert X.ndim == 3, f"Expected (I,J,D), got {X.shape}"
-#     I, J, D = X.shape
-
-#     # Reconstruct the Z-Scored Tensor ---
-#     logger.info("Reconstructing z-scored tensor...")
-#     try:
-#         if method == "tucker":
-#             X_rec_zscored_torch = tl.tucker_to_tensor((weights, factors))
-#         elif method in ["parafac", "ntf"]:
-#             X_rec_zscored_torch = tl.cp_to_tensor((weights, factors))
-#         else:
-#             raise ValueError(f"Unknown method for reconstruction: {method}")
-#         X_rec_zscored = X_rec_zscored_torch.cpu().numpy()
-#     except Exception as e:
-#         logger.error(f"!!! Reconstruction failed: {e}")
-#         X_rec_zscored = np.full(X.shape, np.nan)
-
-#     if X_rec_zscored.shape != X.shape:
-#         raise ValueError(
-#             f"X_rec_zscored shape {X_rec_zscored.shape} != X shape {X.shape}"
-#         )
-
-#     # Scale Back to Original Data Space
-#     logger.info("Scaling reconstruction back to original data space...")
-#     mus_np = mus.cpu().numpy()  # (D,)
-#     sds_np = sds.cpu().numpy()  # (D,)
-#     # Use broadcasting: (I, J, D) = (I, J, D) * (D,) + (D,)
-#     X_rec_unscaled = (X_rec_zscored * sds_np) + mus_np
-
-#     # Build Masks
-#     if M is not None:
-#         assert M.shape == (I, J), f"M must be (I,J), got {M.shape}"
-#         Md = np.repeat(M[:, :, None], D, axis=2)  # (I,J,D)
-#     else:
-#         Md = ~np.isnan(X)
-
-#     # Get Data for Scatter Plot
-#     x_flat = X[Md]
-#     # IMPORTANT: Use the unscaled reconstruction here
-#     xr_flat = X_rec_unscaled[Md]
-
-#     n = x_flat.size
-#     if n == 0:
-#         logger.warning("Warning: No observed data points found in mask M.")
-#         x_plot, xr_plot = np.array([]), np.array([])
-#     elif n > max_scatter_points:
-#         idx = np.random.RandomState(0).choice(
-#             n, size=max_scatter_points, replace=False
-#         )
-#         x_plot, xr_plot = x_flat[idx], xr_flat[idx]
-#     else:
-#         x_plot, xr_plot = x_flat, xr_flat
-
-#     # Per-feature Metrics (PVE, RMSE)
-#     n_obs_per = np.zeros(D, dtype=int)
-#     rss_per = np.full(D, np.nan)
-#     rmse_per = np.full(D, np.nan)
-#     pve_per = np.full(D, np.nan)
-
-#     for d in range(D):
-#         md = Md[:, :, d]
-#         n_obs = int(md.sum())
-#         n_obs_per[d] = n_obs
-#         if n_obs == 0:
-#             logger.warning(f"Warning: No observed data for feature {d}")
-#             continue
-
-#         xd = X[:, :, d][md]
-#         # IMPORTANT: Use the unscaled reconstruction here
-#         xhd = X_rec_unscaled[:, :, d][md]
-
-#         resid = xd - xhd
-#         rss = float(np.sum(resid * resid))
-#         rss_per[d] = rss
-#         rmse_per[d] = float(np.sqrt(rss / n_obs))
-#         mu = float(xd.mean())
-#         tss = float(np.sum((xd - mu) ** 2))
-#         pve_per[d] = (
-#             (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
-#         )
-#         print(
-#             f"Feature {d}: n_obs={n_obs}, rss={rss}, tss={tss}, pve={pve_per[d]}"
-#         )
-
-#     # Get Rank String
-#     try:
-#         if method == "tucker":
-#             rank_str = f"({factors[0].shape[1]}, {factors[1].shape[1]}, {factors[2].shape[1]})"
-#         else:
-#             rank_str = f"({factors[0].shape[1]})"
-#     except Exception:
-#         rank_str = "(unknown rank)"
-
-#     # Package results
-#     metrics = {
-#         "x_plot": x_plot,
-#         "xr_plot": xr_plot,
-#         "n_obs_per": n_obs_per,
-#         "rss_per": rss_per,
-#         "rmse_per": rmse_per,
-#         "pve_per": pve_per,
-#         "D": D,
-#         "rank_str": rank_str,
-#     }
-#     return metrics
-
-# import numpy as np
-# import tensorly as tl
-# from typing import List, Dict, Any
-
-# --- (Assuming logger is configured) ---
-# import logging
-# logger = logging.getLogger(__name__)
-
-
 def compute_reconstruction_metrics(
     X: np.ndarray,
     weights: tl.tensor,
@@ -1090,8 +818,8 @@ def compute_reconstruction_metrics(
     method: str,
     mus: tl.tensor,
     sds: tl.tensor,
-    mins: tl.tensor,  # <-- ADDED
-    ranges: tl.tensor,  # <-- ADDED
+    mins: tl.tensor,
+    ranges: tl.tensor,
     *,
     M: np.ndarray = None,
     max_scatter_points: int = 200_000,
