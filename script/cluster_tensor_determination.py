@@ -201,10 +201,10 @@ def main():
         logger.info(f"Factor names: {factor_names}")
         threshold = args.threshold
         logger.info(f"Threshold: {threshold}")
-        # assignments = get_threshold_k_assignments(
-        #     factors, factor_names, threshold=threshold
-        # )
-        assignments = get_top_k_assignments(factors, factor_names, k=3)
+        assignments = get_threshold_k_assignments(
+            factors, factor_names, threshold=threshold
+        )
+        # assignments = get_top_k_assignments(factors, factor_names, k=3)
 
         output_assignments = {
             "assignments": assignments,
