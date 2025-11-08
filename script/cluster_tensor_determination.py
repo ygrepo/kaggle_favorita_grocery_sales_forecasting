@@ -134,7 +134,6 @@ def main():
         # Log configuration
         logger.info("Starting data clustering with configuration:")
         logger.info(f"  Method: {args.method}")
-        logger.info(f"  Method: {args.method}")
         logger.info(f"  Ranks: {args.ranks}")
         logger.info(f"  Threshold: {args.threshold}")
         logger.info(f"  Factor names: {args.factor_names}")
@@ -185,6 +184,8 @@ def main():
             M_raw,
             mus,
             sds,
+            mins,
+            ranges,
         ) = fit(
             args.method,
             df,
@@ -232,6 +233,8 @@ def main():
             "ranks": rank_ints,
             "mus": mus,
             "sds": sds,
+            "mins": mins,
+            "ranges": ranges,
             "assignments": assignment_df,
         }
         model_fn = Path(args.model_fn).resolve()
