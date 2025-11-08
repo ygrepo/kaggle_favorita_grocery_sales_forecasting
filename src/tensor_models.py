@@ -732,7 +732,7 @@ def compute_reconstruction_metrics(
     assert X.ndim == 3, f"Expected (I,J,D), got {X.shape}"
     I, J, D = X.shape
 
-    # --- 1. Reconstruct the Z-Scored Tensor ---
+    # Reconstruct the Z-Scored Tensor ---
     logger.info("Reconstructing z-scored tensor...")
     try:
         if method == "tucker":
@@ -751,21 +751,21 @@ def compute_reconstruction_metrics(
             f"X_rec_zscored shape {X_rec_zscored.shape} != X shape {X.shape}"
         )
 
-    # --- 2. Scale Back to Original Data Space ---
+    # Scale Back to Original Data Space
     logger.info("Scaling reconstruction back to original data space...")
     mus_np = mus.cpu().numpy()  # (D,)
     sds_np = sds.cpu().numpy()  # (D,)
     # Use broadcasting: (I, J, D) = (I, J, D) * (D,) + (D,)
     X_rec_unscaled = (X_rec_zscored * sds_np) + mus_np
 
-    # --- 3. Build Masks ---
+    # Build Masks
     if M is not None:
         assert M.shape == (I, J), f"M must be (I,J), got {M.shape}"
         Md = np.repeat(M[:, :, None], D, axis=2)  # (I,J,D)
     else:
         Md = ~np.isnan(X)
 
-    # --- 4. Get Data for Scatter Plot ---
+    # Get Data for Scatter Plot
     x_flat = X[Md]
     # IMPORTANT: Use the unscaled reconstruction here
     xr_flat = X_rec_unscaled[Md]
@@ -782,7 +782,7 @@ def compute_reconstruction_metrics(
     else:
         x_plot, xr_plot = x_flat, xr_flat
 
-    # --- 5. Per-feature Metrics (PVE, RMSE) ---
+    # Per-feature Metrics (PVE, RMSE)
     n_obs_per = np.zeros(D, dtype=int)
     rss_per = np.full(D, np.nan)
     rmse_per = np.full(D, np.nan)
@@ -810,13 +810,16 @@ def compute_reconstruction_metrics(
             (1.0 - rss / max(tss, 1e-12)) * 100.0 if tss > 0 else np.nan
         )
 
-    # --- 6. Get Rank String ---
+    # Get Rank String
     try:
-        rank_str = tuple(f.shape[1] for f in factors)
+        if method == "tucker":
+            rank_str = f"({factors[0].shape[1]}, {factors[1].shape[1]}, {factors[2].shape[1]})"
+        else:
+            rank_str = f"({factors[0].shape[1]})"
     except Exception:
         rank_str = "(unknown rank)"
 
-    # --- 7. Package results ---
+    # Package results
     metrics = {
         "x_plot": x_plot,
         "xr_plot": xr_plot,
