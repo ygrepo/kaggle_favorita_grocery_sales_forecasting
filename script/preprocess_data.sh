@@ -38,9 +38,9 @@ START_DATE="2014-01-01"
 END_DATE="2014-01-31"
 ITEM_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.csv"
 STORE_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_stores.csv"
-# GROUP_STORE_COLUMN="store"
-# GROUP_ITEM_COLUMN="item"
-# VALUE_COLUMN="unit_sales"
+GROUP_STORE_COLUMN="store"
+GROUP_ITEM_COLUMN="item"
+VALUE_COLUMN="unit_sales"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
