@@ -11,13 +11,13 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/data"
-DATA_FN="${DATA_DIR}/20250707_train.csv"
+DATA_FN="${DATA_DIR}/train.csv"
 WEIGHTS_FN="${DATA_DIR}/items.csv"
 
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 mkdir -p "$OUTPUT_DATA_DIR"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/train_2014_2015_top_53_store_2000_item.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item.parquet"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/preprocess_$(date +"%Y%m%d_%H%M%S").log"
@@ -36,11 +36,11 @@ NROWS=0
 START_DATE="2014-01-01"
 #END_DATE="2015-12-31"
 END_DATE="2014-01-31"
-ITEM_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.csv"
-STORE_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_stores.csv"
-GROUP_STORE_COLUMN="store"
-GROUP_ITEM_COLUMN="item"
-VALUE_COLUMN="unit_sales"
+# ITEM_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item.csv"
+# STORE_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_stores.csv"
+# GROUP_STORE_COLUMN="store"
+# GROUP_ITEM_COLUMN="item"
+# VALUE_COLUMN="unit_sales"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

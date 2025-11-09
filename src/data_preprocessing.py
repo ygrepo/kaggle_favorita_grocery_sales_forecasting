@@ -1,7 +1,6 @@
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import logging
 from src.utils import get_logger, save_csv_or_parquet
 
 logger = get_logger(__name__)
@@ -41,7 +40,10 @@ def top_values_with_percentage(df, group_column, value_column, n=5):
     Returns:
         pd.DataFrame: A DataFrame containing the top N values and their percentages for each group.
     """
-    grouped = df.groupby(group_column)[value_column].value_counts(normalize=True) * 100
+    grouped = (
+        df.groupby(group_column)[value_column].value_counts(normalize=True)
+        * 100
+    )
     grouped = grouped.rename("percentage").reset_index()
     top_n = (
         grouped.groupby(group_column)
@@ -65,7 +67,10 @@ def value_counts_with_percentage(df, column_name, top_n=10):
     counts = df[column_name].value_counts()
     percentages = df[column_name].value_counts(normalize=True) * 100
     df = pd.DataFrame(
-        {column_name + "_count": counts, column_name + "_percentage": percentages}
+        {
+            column_name + "_count": counts,
+            column_name + "_percentage": percentages,
+        }
     )
     return df.sort_values(column_name, ascending=False).head(top_n)
 
@@ -78,14 +83,14 @@ def count_percent(series, n=3):
 
 
 def select_extreme_and_median_neighbors(
-    df,
-    n_col="unit_sales",
-    group_column="store_nbr",
-    M=0,
-    m=0,
-    med=0,
+    df: pd.DataFrame,
+    n_col: str = "unit_sales",
+    group_column: str = "store",
+    M: int = 0,
+    m: int = 0,
+    med: int = 0,
     fn: Path = None,
-):
+) -> pd.DataFrame:
     """
     Returns M highest, m lowest, and 2*med around the median total sales groups.
 
@@ -100,14 +105,20 @@ def select_extreme_and_median_neighbors(
     Returns:
         pd.DataFrame: Combined DataFrame of selected groups.
     """
-    df = df.copy()
-    logger.info(f"Selected {len(df)} groups")
+    import numpy as np  # Add this import
+
+    logger.info(f"Processing {df[group_column].nunique} ")  # Fixed log message
+
     grouped = (
-        df.groupby(group_column).agg({n_col: "sum"}).rename(columns={n_col: "total"})
+        df.groupby(group_column)
+        .agg({n_col: "sum"})
+        .rename(columns={n_col: "total"})
     )
     sorted_grouped = grouped.sort_values("total")
+    logger.info(f"Found {len(grouped)} unique groups")
 
     if M == 0 and m == 0 and med == 0:
+        logger.info("No selection criteria specified, returning all groups")
         return sorted_grouped
 
     # Get extremes
@@ -117,6 +128,7 @@ def select_extreme_and_median_neighbors(
         logger.info(f"Selected {len(bottom_m)} bottom groups")
     else:
         bottom_m = pd.DataFrame()
+
     if M > 0:
         logger.info(f"Selecting {M} top groups")
         top_M = sorted_grouped.tail(M)
@@ -130,12 +142,20 @@ def select_extreme_and_median_neighbors(
         median_val = grouped["total"].median()
 
         # Compute absolute difference to median
-        grouped["dist_to_median"] = np.abs(grouped["total"] - median_val)
+        grouped_with_dist = grouped.copy()
+        grouped_with_dist["dist_to_median"] = np.abs(
+            grouped_with_dist["total"] - median_val
+        )
 
-        # Get 2*med rows closest to the median (excluding exact duplicates)
+        # Get indices to exclude
+        exclude_indices = pd.Index([]).union(bottom_m.index).union(top_M.index)
+
+        # Get 2*med rows closest to the median (excluding extremes)
+        available_for_median = grouped_with_dist.drop(
+            index=exclude_indices, errors="ignore"
+        )
         median_neighbors = (
-            grouped.sort_values("dist_to_median")
-            .drop(index=bottom_m.index.union(top_M.index), errors="ignore")
+            available_for_median.sort_values("dist_to_median")
             .head(2 * med)
             .drop(columns="dist_to_median")
         )
@@ -144,16 +164,16 @@ def select_extreme_and_median_neighbors(
         median_neighbors = pd.DataFrame()
 
     # Set indices for each group
-    top_idx = set(top_M.index)
-    bottom_idx = set(bottom_m.index)
-    med_idx = set(median_neighbors.index)
+    top_idx = set(top_M.index) if len(top_M) > 0 else set()
+    bottom_idx = set(bottom_m.index) if len(bottom_m) > 0 else set()
+    med_idx = (
+        set(median_neighbors.index) if len(median_neighbors) > 0 else set()
+    )
 
-    # Intersections
+    # Intersections (for debugging)
     top_and_bottom = top_idx & bottom_idx
     top_and_med = top_idx & med_idx
     bottom_and_med = bottom_idx & med_idx
-
-    # Union of all indices
     all_indices = top_idx | bottom_idx | med_idx
 
     logger.info(f"Top ∩ Bottom: {len(top_and_bottom)}")
@@ -162,24 +182,29 @@ def select_extreme_and_median_neighbors(
     logger.info(f"Total unique groups: {len(all_indices)}")
 
     # Combine and remove duplicates
-    result = pd.concat([bottom_m, median_neighbors, top_M])
+    result = pd.concat(
+        [bottom_m, median_neighbors, top_M], ignore_index=False
+    ).drop_duplicates()
+
     if fn:
         logger.info(f"Saving selected groups to {fn}")
         result.to_csv(fn, index=True)
+
+    logger.info(f"Returning {len(result)} groups")
     return result
 
 
 def prepare_data(
     df: pd.DataFrame,
-    group_store_column="store",
-    group_item_column="item",
-    value_column="unit_sales",
-    store_top_n=0,
-    store_med_n=0,
-    store_bottom_n=0,
-    item_top_n=0,
-    item_med_n=0,
-    item_bottom_n=0,
+    group_store_column: str = "store",
+    group_item_column: str = "item",
+    value_column: str = "unit_sales",
+    store_top_n: int = 0,
+    store_med_n: int = 0,
+    store_bottom_n: int = 0,
+    item_top_n: int = 0,
+    item_med_n: int = 0,
+    item_bottom_n: int = 0,
     item_fn: Path = None,
     store_fn: Path = None,
     fn: Path = None,
@@ -277,15 +302,6 @@ def prepare_data(
     df.sort_values(["date", "store_item"], inplace=True)
     df.reset_index(drop=True, inplace=True)
 
-    # Fill missing unit_sales with NaN
-    # missing_mask = df[value_column].isna()
-    # num_missing = missing_mask.sum()
-    # df.loc[missing_mask, value_column] = 0
-
-    # # Logging
-    # logger.info(
-    #     f"Filled {num_missing} missing (store, item, date) rows with unit_sales = 0"
-    # )
     logger.info(f"Final dataset shape: {df.shape}")
     logger.info(f"Unique stores: {df['store'].nunique()}")
     logger.info(f"Unique items: {df['item'].nunique()}")

@@ -20,7 +20,10 @@ import numpy as np
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-from src.data_preprocessing import prepare_data
+from src.data_preprocessing import (
+    prepare_data,
+    select_extreme_and_median_neighbors,
+)
 from src.utils import setup_logging, get_logger
 
 logger = get_logger(__name__)
@@ -34,13 +37,13 @@ def parse_args():
     parser.add_argument(
         "--data_fn",
         type=str,
-        default="",
+        default="data/train.csv",
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
         "--weights_fn",
         type=str,
-        default="",
+        default="data/items.csv",
         help="Path to weights file (relative to project root)",
     )
     parser.add_argument(
@@ -192,7 +195,10 @@ def load_data(
             )
         else:
             df = pd.read_csv(
-                data_fn, dtype=dtype_dict, low_memory=False, parse_dates=["date"]
+                data_fn,
+                dtype=dtype_dict,
+                low_memory=False,
+                parse_dates=["date"],
             )
         initial_stores = df["store"].unique().tolist()
         initial_items = df["item"].unique().tolist()
@@ -249,7 +255,9 @@ def load_weights(
             dtype=dtype_dict,
             low_memory=False,
         )
-        df.rename(columns={"item_nbr": "item", "perishable": "weight"}, inplace=True)
+        df.rename(
+            columns={"item_nbr": "item", "perishable": "weight"}, inplace=True
+        )
         df = df[["item", "weight"]]
         df["weight"] = df["weight"].fillna(1)
 
@@ -300,40 +308,66 @@ def main():
         logger.info(f"  Value column: {args.value_column}")
 
         # Load and preprocess data
-        df = load_data(
-            data_fn,
-            nrows=args.nrows,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            fn=None,
+        store_df = pd.read_csv(data_fn, low_memory=False)
+        store_df.rename(
+            columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True
         )
-        # store_item = "44_1503844"
-        # logger.info(f"Selected store_item: {store_item}")
-        # df = df[df["store_item"] == store_item]
-        # df.to_csv("./output/data/20250711_train_44_1503844.csv", index=False)
+        store_df.drop(["id", "onpromotion"], axis=1, inplace=True)
+        store_df["date"] = pd.to_datetime(store_df["date"])
+        store_df[
+            (store_df["date"] >= "2013-01-01")
+            & (store_df["date"] <= "2014-12-31")
+        ]
 
-        # Merge with weights
-        w_df = load_weights(weights_fn)
-        w_df = w_df[["item", "weight"]]
-        df = pd.merge(df, w_df, on=["item"], how="left")
-        df["weight"] = df["weight"].fillna(1)
-
-        # Create features
-        df = prepare_data(
-            df,
-            group_store_column=args.group_store_column,
-            group_item_column=args.group_item_column,
-            value_column=args.value_column,
-            store_top_n=args.store_top_n,
-            store_med_n=args.store_med_n,
-            store_bottom_n=args.store_bottom_n,
-            item_top_n=args.item_top_n,
-            item_med_n=args.item_med_n,
-            item_bottom_n=args.item_bottom_n,
-            item_fn=item_fn,
-            store_fn=store_fn,
-            fn=output_fn,
+        store_df = select_extreme_and_median_neighbors(
+            store_df,
+            n_col="unit_sales",
+            group_column="store",
+            M=args.item_top_n,
+            m=args.item_bottom_n,
+            med=args.item_med_n,
+            fn=item_fn,
         )
+        df = pd.read_csv("../data/transactions.csv")
+        df.rename(columns={"store_nbr": "store"}, inplace=True)
+        df["date"] = pd.to_datetime(df["date"])
+        store_df = df.merge(store_df, on=["store", "date"], how="left")
+
+        df = pd.read_csv("../data/stores.csv")
+        df.rename(columns={"store_nbr": "store"}, inplace=True)
+        df.drop(["city", "state"], axis=1, inplace=True)
+        type_encoded = pd.get_dummies(
+            df["type"], prefix="type", drop_first=True
+        ).astype(int)
+        df = pd.concat([df.drop("type", axis=1), type_encoded], axis=1)
+        store_df = store_df.merge(df, on=["store"], how="left")
+
+        # df["store_item"] = (
+        #     df["store"].astype(str) + "_" + df["item"].astype(str)
+        # )
+
+        # # Merge with weights
+        # w_df = load_weights(weights_fn)
+        # w_df = w_df[["item", "weight"]]
+        # df = pd.merge(df, w_df, on=["item"], how="left")
+        # df["weight"] = df["weight"].fillna(1)
+
+        # # Create features
+        # df = prepare_data(
+        #     df,
+        #     group_store_column=args.group_store_column,
+        #     group_item_column=args.group_item_column,
+        #     value_column=args.value_column,
+        #     store_top_n=args.store_top_n,
+        #     store_med_n=args.store_med_n,
+        #     store_bottom_n=args.store_bottom_n,
+        #     item_top_n=args.item_top_n,
+        #     item_med_n=args.item_med_n,
+        #     item_bottom_n=args.item_bottom_n,
+        #     item_fn=item_fn,
+        #     store_fn=store_fn,
+        #     fn=output_fn,
+        # )
 
         logger.info("Data preprocessing completed successfully")
     except Exception as e:
