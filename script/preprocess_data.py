@@ -181,8 +181,9 @@ def main():
             m=args.store_bottom_n,
             med=args.store_med_n,
         )
-        logger.info(f"Stores: {len(ids)}")
         data_df = data_df[data_df["store"].isin(ids)]
+        logger.info(f"Stores: {len(ids)}")
+        logger.info(f"Items: {data_df['item'].nunique()}")
         ids = select_extreme_and_median_neighbors(
             data_df,
             n_col="unit_sales",
@@ -214,6 +215,13 @@ def main():
         df.rename(columns={"item_nbr": "item"}, inplace=True)
         df = df[["item", "perishable"]]
         data_df = data_df.merge(df, on=["item"], how="left")
+
+        data_df["store_item"] = (
+            data_df["store"].astype(str) + "_" + data_df["item"].astype(str)
+        )
+        data_df.sort_values(["date", "store_item"], inplace=True)
+        data_df.reset_index(drop=True, inplace=True)
+
         save_csv_or_parquet(data_df, output_fn)
         logger.info("Data preprocessing completed successfully")
     except Exception as e:
