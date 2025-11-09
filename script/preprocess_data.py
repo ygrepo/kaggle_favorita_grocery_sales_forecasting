@@ -41,16 +41,16 @@ def parse_args():
         help="Path to training data file (relative to project root)",
     )
     parser.add_argument(
-        "--weights_fn",
+        "--item_fn",
         type=str,
         default="data/items.csv",
-        help="Path to weights file (relative to project root)",
+        help="Path to item file (relative to project root)",
     )
     parser.add_argument(
-        "--filtered_data_fn",
+        "--store_fn",
         type=str,
-        default="",
-        help="Path to filtered data file (relative to project root)",
+        default="data/stores.csv",
+        help="Path to store file (relative to project root)",
     )
     parser.add_argument(
         "--log_fn",
@@ -90,12 +90,6 @@ def parse_args():
         help="Number of bottom stores to return",
     )
     parser.add_argument(
-        "--store_fn",
-        type=str,
-        default="",
-        help="Path to store file (relative to project root)",
-    )
-    parser.add_argument(
         "--item_top_n",
         type=int,
         default=0,
@@ -131,110 +125,86 @@ def parse_args():
         default="",
         help="Date to cap on",
     )
-    parser.add_argument(
-        "--item_fn",
-        type=str,
-        default="",
-        help="Path to item file (relative to project root)",
-    )
-    parser.add_argument(
-        "--group_store_column",
-        type=str,
-        default="store",
-        help="Column to group by",
-    )
-    parser.add_argument(
-        "--group_item_column",
-        type=str,
-        default="item",
-        help="Column to group by",
-    )
-    parser.add_argument(
-        "--value_column",
-        type=str,
-        default="unit_sales",
-        help="Column to calculate percentages from",
-    )
     return parser.parse_args()
 
 
-def load_data(
-    data_fn: Path,
-    nrows: int = 0,
-    start_date: str = "",
-    end_date: str = "",
-    fn: Path = None,
-) -> pd.DataFrame:
-    """Load and preprocess training data.
+# def load_data(
+#     data_fn: Path,
+#     nrows: int = 0,
+#     start_date: str = "",
+#     end_date: str = "",
+#     fn: Path = None,
+# ) -> pd.DataFrame:
+#     """Load and preprocess training data.
 
-    Args:
-        data_fn: Path to the training data file
+#     Args:
+#         data_fn: Path to the training data file
 
-    Returns:
-        Preprocessed DataFrame
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Loading data from {data_fn}")
+#     Returns:
+#         Preprocessed DataFrame
+#     """
+#     logger = logging.getLogger(__name__)
+#     logger.info(f"Loading data from {data_fn}")
 
-    try:
-        dtype_dict = {
-            "id": np.uint32,
-            "store_item": str,
-            "store": np.uint8,
-            "item": np.uint32,
-            "unit_sales": np.float32,
-        }
-        if nrows > 0:
-            logger.info(f"Loading {nrows} rows")
-            df = pd.read_csv(
-                data_fn,
-                dtype=dtype_dict,
-                low_memory=False,
-                nrows=nrows,
-                parse_dates=["date"],
-            )
-        else:
-            df = pd.read_csv(
-                data_fn,
-                dtype=dtype_dict,
-                low_memory=False,
-                parse_dates=["date"],
-            )
-        initial_stores = df["store"].unique().tolist()
-        initial_items = df["item"].unique().tolist()
-        if start_date:
-            logger.info(f"Filtering data for start date {start_date}")
-            logger.info(f"Before start date filtering: {df.shape}")
-            df = df[df["date"] >= start_date]
-            logger.info(f"After start date filtering: {df.shape}")
-        if end_date:
-            logger.info(f"Filtering data for end date {end_date}")
-            logger.info(f"Before end date filtering: {df.shape}")
-            df = df[df["date"] <= end_date]
-            logger.info(f"After end date filtering: {df.shape}")
-        cols = ["date", "store_item", "store", "item", "unit_sales"] + [
-            c
-            for c in df.columns
-            if c not in ("date", "store_item", "store", "item", "unit_sales")
-        ]
-        df = df[cols]
-        df["date"] = pd.to_datetime(df["date"])
-        intersect_stores = np.intersect1d(initial_stores, df["store"].unique())
-        intersect_items = np.intersect1d(initial_items, df["item"].unique())
-        logger.info(f"# intersect stores: {len(intersect_stores)}")
-        logger.info(f"# intersect items: {len(intersect_items)}")
-        missing_stores = np.setdiff1d(initial_stores, df["store"].unique())
-        missing_items = np.setdiff1d(initial_items, df["item"].unique())
-        logger.info(f"# missing stores: {len(missing_stores)}")
-        logger.info(f"# missing items: {len(missing_items)}")
-        if fn:
-            logger.info(f"Saving data to {fn}")
-            df.to_csv(fn, index=False)
-        logger.info(f"Loaded data with shape {df.shape}")
-        return df
-    except Exception as e:
-        logger.error(f"Error loading data: {e}")
-        raise
+#     try:
+#         dtype_dict = {
+#             "id": np.uint32,
+#             "store_item": str,
+#             "store": np.uint8,
+#             "item": np.uint32,
+#             "unit_sales": np.float32,
+#         }
+#         if nrows > 0:
+#             logger.info(f"Loading {nrows} rows")
+#             df = pd.read_csv(
+#                 data_fn,
+#                 dtype=dtype_dict,
+#                 low_memory=False,
+#                 nrows=nrows,
+#                 parse_dates=["date"],
+#             )
+#         else:
+#             df = pd.read_csv(
+#                 data_fn,
+#                 dtype=dtype_dict,
+#                 low_memory=False,
+#                 parse_dates=["date"],
+#             )
+#         initial_stores = df["store"].unique().tolist()
+#         initial_items = df["item"].unique().tolist()
+#         if start_date:
+#             logger.info(f"Filtering data for start date {start_date}")
+#             logger.info(f"Before start date filtering: {df.shape}")
+#             df = df[df["date"] >= start_date]
+#             logger.info(f"After start date filtering: {df.shape}")
+#         if end_date:
+#             logger.info(f"Filtering data for end date {end_date}")
+#             logger.info(f"Before end date filtering: {df.shape}")
+#             df = df[df["date"] <= end_date]
+#             logger.info(f"After end date filtering: {df.shape}")
+#         cols = ["date", "store_item", "store", "item", "unit_sales"] + [
+#             c
+#             for c in df.columns
+#             if c not in ("date", "store_item", "store", "item", "unit_sales")
+#         ]
+#         df = df[cols]
+#         df["date"] = pd.to_datetime(df["date"])
+#         intersect_stores = np.intersect1d(initial_stores, df["store"].unique())
+#         intersect_items = np.intersect1d(initial_items, df["item"].unique())
+#         logger.info(f"# intersect stores: {len(intersect_stores)}")
+#         logger.info(f"# intersect items: {len(intersect_items)}")
+#         missing_stores = np.setdiff1d(initial_stores, df["store"].unique())
+#         missing_items = np.setdiff1d(initial_items, df["item"].unique())
+#         logger.info(f"# missing stores: {len(missing_stores)}")
+#         logger.info(f"# missing items: {len(missing_items)}")
+#         if fn:
+#             logger.info(f"Saving data to {fn}")
+#             df.to_csv(fn, index=False)
+#         logger.info(f"Loaded data with shape {df.shape}")
+#         return df
+#     except Exception as e:
+#         logger.error(f"Error loading data: {e}")
+#         raise
 
 
 def load_weights(
@@ -294,7 +264,6 @@ def main():
         logger.info(f"  Start date: {args.start_date}")
         logger.info(f"  End date: {args.end_date}")
         logger.info(f"  Output fn: {output_fn}")
-        # logger.info(f"  Filtered data fn: {filtered_data_fn}")
         logger.info(f"  Store top n: {args.store_top_n}")
         logger.info(f"  Store med n: {args.store_med_n}")
         logger.info(f"  Store bottom n: {args.store_bottom_n}")
@@ -303,9 +272,6 @@ def main():
         logger.info(f"  Item med n: {args.item_med_n}")
         logger.info(f"  Item bottom n: {args.item_bottom_n}")
         logger.info(f"  Item fn: {item_fn}")
-        logger.info(f"  Group store column: {args.group_store_column}")
-        logger.info(f"  Group item column: {args.group_item_column}")
-        logger.info(f"  Value column: {args.value_column}")
 
         # Load and preprocess data
         store_df = pd.read_csv(data_fn, low_memory=False)
@@ -315,10 +281,10 @@ def main():
         store_df.drop(["id", "onpromotion"], axis=1, inplace=True)
         store_df["date"] = pd.to_datetime(store_df["date"])
         store_df[
-            (store_df["date"] >= "2013-01-01")
-            & (store_df["date"] <= "2014-12-31")
+            (store_df["date"] >= args.start_date)
+            & (store_df["date"] <= args.end_date)
         ]
-
+        logger.info(f"Stores: {store_df['store'].nunique()}")
         store_df = select_extreme_and_median_neighbors(
             store_df,
             n_col="unit_sales",
@@ -328,6 +294,7 @@ def main():
             med=args.item_med_n,
             fn=item_fn,
         )
+        logger.info(f"Stores: {store_df['store'].nunique()}")
         df = pd.read_csv("../data/transactions.csv")
         df.rename(columns={"store_nbr": "store"}, inplace=True)
         df["date"] = pd.to_datetime(df["date"])
@@ -340,7 +307,9 @@ def main():
             df["type"], prefix="type", drop_first=True
         ).astype(int)
         df = pd.concat([df.drop("type", axis=1), type_encoded], axis=1)
+        logger.info(f"Initial Stores: {df['store'].nunique()}")
         store_df = store_df.merge(df, on=["store"], how="left")
+        logger.info(f"Stores: {store_df['store'].nunique()}")
 
         # df["store_item"] = (
         #     df["store"].astype(str) + "_" + df["item"].astype(str)
