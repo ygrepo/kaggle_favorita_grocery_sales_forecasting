@@ -24,7 +24,7 @@ from src.data_preprocessing import (
     prepare_data,
     select_extreme_and_median_neighbors,
 )
-from src.utils import setup_logging, get_logger
+from src.utils import setup_logging, get_logger, save_csv_or_parquet
 
 logger = get_logger(__name__)
 
@@ -128,115 +128,6 @@ def parse_args():
     return parser.parse_args()
 
 
-# def load_data(
-#     data_fn: Path,
-#     nrows: int = 0,
-#     start_date: str = "",
-#     end_date: str = "",
-#     fn: Path = None,
-# ) -> pd.DataFrame:
-#     """Load and preprocess training data.
-
-#     Args:
-#         data_fn: Path to the training data file
-
-#     Returns:
-#         Preprocessed DataFrame
-#     """
-#     logger = logging.getLogger(__name__)
-#     logger.info(f"Loading data from {data_fn}")
-
-#     try:
-#         dtype_dict = {
-#             "id": np.uint32,
-#             "store_item": str,
-#             "store": np.uint8,
-#             "item": np.uint32,
-#             "unit_sales": np.float32,
-#         }
-#         if nrows > 0:
-#             logger.info(f"Loading {nrows} rows")
-#             df = pd.read_csv(
-#                 data_fn,
-#                 dtype=dtype_dict,
-#                 low_memory=False,
-#                 nrows=nrows,
-#                 parse_dates=["date"],
-#             )
-#         else:
-#             df = pd.read_csv(
-#                 data_fn,
-#                 dtype=dtype_dict,
-#                 low_memory=False,
-#                 parse_dates=["date"],
-#             )
-#         initial_stores = df["store"].unique().tolist()
-#         initial_items = df["item"].unique().tolist()
-#         if start_date:
-#             logger.info(f"Filtering data for start date {start_date}")
-#             logger.info(f"Before start date filtering: {df.shape}")
-#             df = df[df["date"] >= start_date]
-#             logger.info(f"After start date filtering: {df.shape}")
-#         if end_date:
-#             logger.info(f"Filtering data for end date {end_date}")
-#             logger.info(f"Before end date filtering: {df.shape}")
-#             df = df[df["date"] <= end_date]
-#             logger.info(f"After end date filtering: {df.shape}")
-#         cols = ["date", "store_item", "store", "item", "unit_sales"] + [
-#             c
-#             for c in df.columns
-#             if c not in ("date", "store_item", "store", "item", "unit_sales")
-#         ]
-#         df = df[cols]
-#         df["date"] = pd.to_datetime(df["date"])
-#         intersect_stores = np.intersect1d(initial_stores, df["store"].unique())
-#         intersect_items = np.intersect1d(initial_items, df["item"].unique())
-#         logger.info(f"# intersect stores: {len(intersect_stores)}")
-#         logger.info(f"# intersect items: {len(intersect_items)}")
-#         missing_stores = np.setdiff1d(initial_stores, df["store"].unique())
-#         missing_items = np.setdiff1d(initial_items, df["item"].unique())
-#         logger.info(f"# missing stores: {len(missing_stores)}")
-#         logger.info(f"# missing items: {len(missing_items)}")
-#         if fn:
-#             logger.info(f"Saving data to {fn}")
-#             df.to_csv(fn, index=False)
-#         logger.info(f"Loaded data with shape {df.shape}")
-#         return df
-#     except Exception as e:
-#         logger.error(f"Error loading data: {e}")
-#         raise
-
-
-def load_weights(
-    weights_fn: Path,
-) -> pd.DataFrame:
-    logger = logging.getLogger(__name__)
-    logger.info(f"Loading weights from {weights_fn}")
-
-    try:
-        dtype_dict = {
-            "item_nbr": np.uint32,
-            "family": str,
-            "class": str,
-            "perishable": np.float32,
-        }
-        df = pd.read_csv(
-            weights_fn,
-            dtype=dtype_dict,
-            low_memory=False,
-        )
-        df.rename(
-            columns={"item_nbr": "item", "perishable": "weight"}, inplace=True
-        )
-        df = df[["item", "weight"]]
-        df["weight"] = df["weight"].fillna(1)
-
-        return df
-    except Exception as e:
-        logger.error(f"Error loading weights: {e}")
-        raise
-
-
 def main():
     """Main training function."""
     # Parse command line arguments
@@ -300,14 +191,15 @@ def main():
             m=args.item_bottom_n,
             med=args.item_med_n,
         )
+
         logger.info(f"Items: {len(ids)}")
         data_df = data_df[data_df["item"].isin(ids)]
-        df = pd.read_csv("../data/transactions.csv")
+        df = pd.read_csv("./data/transactions.csv")
         df.rename(columns={"store_nbr": "store"}, inplace=True)
         df["date"] = pd.to_datetime(df["date"])
         data_df = data_df.merge(df, on=["store", "date"], how="left")
 
-        df = pd.read_csv("../data/stores.csv")
+        df = pd.read_csv("./data/stores.csv")
         df.rename(columns={"store_nbr": "store"}, inplace=True)
         df.drop(["city", "state"], axis=1, inplace=True)
         type_encoded = pd.get_dummies(
@@ -318,44 +210,11 @@ def main():
         data_df = data_df.merge(df, on=["store"], how="left")
         logger.info(f"Stores: {data_df['store'].nunique()}")
         logger.info(f"Items: {data_df['item'].nunique()}")
-        df = pd.read_csv("../data/items.csv")
+        df = pd.read_csv("./data/items.csv")
         df.rename(columns={"item_nbr": "item"}, inplace=True)
         df = df[["item", "perishable"]]
         data_df = data_df.merge(df, on=["item"], how="left")
-
-        # Merge with weights
-        # w_df = load_weights(weights_fn)
-        # w_df = w_df[["item", "weight"]]
-        # df = pd.merge(df, w_df, on=["item"], how="left")
-        # df["weight"] = df["weight"].fillna(1)
-
-        # df["store_item"] = (
-        #     df["store"].astype(str) + "_" + df["item"].astype(str)
-        # )
-
-        # # Merge with weights
-        # w_df = load_weights(weights_fn)
-        # w_df = w_df[["item", "weight"]]
-        # df = pd.merge(df, w_df, on=["item"], how="left")
-        # df["weight"] = df["weight"].fillna(1)
-
-        # # Create features
-        # df = prepare_data(
-        #     df,
-        #     group_store_column=args.group_store_column,
-        #     group_item_column=args.group_item_column,
-        #     value_column=args.value_column,
-        #     store_top_n=args.store_top_n,
-        #     store_med_n=args.store_med_n,
-        #     store_bottom_n=args.store_bottom_n,
-        #     item_top_n=args.item_top_n,
-        #     item_med_n=args.item_med_n,
-        #     item_bottom_n=args.item_bottom_n,
-        #     item_fn=item_fn,
-        #     store_fn=store_fn,
-        #     fn=output_fn,
-        # )
-
+        save_csv_or_parquet(data_df, output_fn)
         logger.info("Data preprocessing completed successfully")
     except Exception as e:
         logger.error(f"Error creating data preprocessing features: {e}")
