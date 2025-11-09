@@ -215,10 +215,10 @@ def main():
         df.rename(columns={"item_nbr": "item"}, inplace=True)
         df = df[["item", "perishable"]]
         data_df = data_df.merge(df, on=["item"], how="left")
-
-        data_df["store_item"] = (
+        store_item_values = (
             data_df["store"].astype(str) + "_" + data_df["item"].astype(str)
         )
+        data_df.insert(1, "store_item", store_item_values)
         data_df.sort_values(["date", "store_item"], inplace=True)
         data_df.reset_index(drop=True, inplace=True)
 
