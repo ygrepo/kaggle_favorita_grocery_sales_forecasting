@@ -89,8 +89,7 @@ def select_extreme_and_median_neighbors(
     M: int = 0,
     m: int = 0,
     med: int = 0,
-    fn: Path = None,
-) -> pd.DataFrame:
+) -> np.ndarray:
     """
     Returns M highest, m lowest, and 2*med around the median total sales groups.
 
@@ -100,98 +99,83 @@ def select_extreme_and_median_neighbors(
         group_column (str): Column to group by (e.g., 'store_nbr').
         M (int): Number of top (max) groups to return.
         m (int): Number of bottom (min) groups to return.
-        med (int): Number of groups to return on each side of the median.
+        med (int): Number of groups to return on each side of the median
+                     (total of 2*med closest groups will be selected).
 
     Returns:
-        pd.DataFrame: Combined DataFrame of selected groups.
+        np.ndarray: Array of selected group identifiers.
     """
-    import numpy as np  # Add this import
-
-    logger.info(f"Processing {df[group_column].nunique} ")  # Fixed log message
+    # logger.info(f"Processing {df[group_column].nunique()} unique groups")
 
     grouped = (
         df.groupby(group_column)
         .agg({n_col: "sum"})
         .rename(columns={n_col: "total"})
+        .reset_index()
     )
     sorted_grouped = grouped.sort_values("total")
-    logger.info(f"Found {len(grouped)} unique groups")
+    # logger.info(f"Found {len(grouped)} unique groups")
 
     if M == 0 and m == 0 and med == 0:
-        logger.info("No selection criteria specified, returning all groups")
-        return sorted_grouped
+        # logger.info("No selection criteria specified, returning all groups")
+        idxs = sorted_grouped[group_column].values
+        # np.unique is not needed here, 'values' is already unique
+        # logger.info(f"Selected {len(idxs)} groups")
+        return idxs
 
     # Get extremes
     if m > 0:
-        logger.info(f"Selecting {m} bottom groups")
+        # logger.info(f"Selecting {m} bottom groups")
         bottom_m = sorted_grouped.head(m)
-        logger.info(f"Selected {len(bottom_m)} bottom groups")
+        bottom_records = bottom_m[group_column].values
+        # logger.info(f"Selected {len(bottom_records)} bottom groups")
     else:
-        bottom_m = pd.DataFrame()
+        bottom_records = np.array([])
 
     if M > 0:
-        logger.info(f"Selecting {M} top groups")
+        # logger.info(f"Selecting {M} top groups")
         top_M = sorted_grouped.tail(M)
-        logger.info(f"Selected {len(top_M)} top groups")
+        top_records = top_M[group_column].values
+        # logger.info(f"Selected {len(top_records)} top groups")
     else:
-        top_M = pd.DataFrame()
+        top_records = np.array([])
 
-    # Find median-centered indices
+    # Find median-centered groups
     if med > 0:
-        logger.info(f"Selecting {2*med} median groups")
+        # logger.info(f"Selecting {2*med} median groups")
         median_val = grouped["total"].median()
 
-        # Compute absolute difference to median
         grouped_with_dist = grouped.copy()
         grouped_with_dist["dist_to_median"] = np.abs(
             grouped_with_dist["total"] - median_val
         )
 
-        # Get indices to exclude
-        exclude_indices = pd.Index([]).union(bottom_m.index).union(top_M.index)
+        # Get groups to exclude (already selected as extremes)
+        exclude_groups = np.concatenate([bottom_records, top_records])
 
-        # Get 2*med rows closest to the median (excluding extremes)
-        available_for_median = grouped_with_dist.drop(
-            index=exclude_indices, errors="ignore"
+        # Filter out already selected groups
+        available_for_median = grouped_with_dist[
+            ~grouped_with_dist[group_column].isin(exclude_groups)
+        ]
+
+        # **REFINEMENT 1: Use nsmallest for better performance**
+        median_neighbors = available_for_median.nsmallest(
+            2 * med, "dist_to_median"
         )
-        median_neighbors = (
-            available_for_median.sort_values("dist_to_median")
-            .head(2 * med)
-            .drop(columns="dist_to_median")
-        )
-        logger.info(f"Selected {len(median_neighbors)} median groups")
+
+        # **REFINEMENT 2: Remove redundant np.unique**
+        med_records = median_neighbors[group_column].values
+        # logger.info(f"Selected {len(med_records)} median groups")
     else:
-        median_neighbors = pd.DataFrame()
+        med_records = np.array([])
 
-    # Set indices for each group
-    top_idx = set(top_M.index) if len(top_M) > 0 else set()
-    bottom_idx = set(bottom_m.index) if len(bottom_m) > 0 else set()
-    med_idx = (
-        set(median_neighbors.index) if len(median_neighbors) > 0 else set()
+    all_records = np.concatenate(
+        [top_records, med_records, bottom_records], axis=0
     )
-
-    # Intersections (for debugging)
-    top_and_bottom = top_idx & bottom_idx
-    top_and_med = top_idx & med_idx
-    bottom_and_med = bottom_idx & med_idx
-    all_indices = top_idx | bottom_idx | med_idx
-
-    logger.info(f"Top ∩ Bottom: {len(top_and_bottom)}")
-    logger.info(f"Top ∩ Median: {len(top_and_med)}")
-    logger.info(f"Bottom ∩ Median: {len(bottom_and_med)}")
-    logger.info(f"Total unique groups: {len(all_indices)}")
-
-    # Combine and remove duplicates
-    result = pd.concat(
-        [bottom_m, median_neighbors, top_M], ignore_index=False
-    ).drop_duplicates()
-
-    if fn:
-        logger.info(f"Saving selected groups to {fn}")
-        result.to_csv(fn, index=True)
-
-    logger.info(f"Returning {len(result)} groups")
-    return result
+    # Final unique call is still good defensive programming
+    all_records = np.unique(all_records)
+    # logger.info(f"Total unique groups: {len(all_records)}")
+    return all_records
 
 
 def prepare_data(

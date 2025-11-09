@@ -53,19 +53,6 @@ def parse_args():
         help="Path to store file (relative to project root)",
     )
     parser.add_argument(
-        "--log_fn",
-        type=str,
-        default="",
-        help="Path to save script outputs (relative to project root)",
-    )
-    parser.add_argument(
-        "--log_level",
-        type=str,
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level",
-    )
-    parser.add_argument(
         "--output_fn",
         type=str,
         default="",
@@ -124,6 +111,19 @@ def parse_args():
         type=str,
         default="",
         help="Date to cap on",
+    )
+    parser.add_argument(
+        "--log_fn",
+        type=str,
+        default="",
+        help="Path to save script outputs (relative to project root)",
+    )
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level",
     )
     return parser.parse_args()
 
@@ -271,31 +271,41 @@ def main():
         logger.info(f"  Item fn: {item_fn}")
 
         # Load and preprocess data
-        store_df = pd.read_csv(data_fn, low_memory=False)
-        store_df.rename(
+        data_df = pd.read_csv(data_fn, low_memory=False)
+        data_df.rename(
             columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True
         )
-        store_df.drop(["id", "onpromotion"], axis=1, inplace=True)
-        store_df["date"] = pd.to_datetime(store_df["date"])
-        store_df[
-            (store_df["date"] >= args.start_date)
-            & (store_df["date"] <= args.end_date)
+        data_df.drop(["id", "onpromotion"], axis=1, inplace=True)
+        data_df["date"] = pd.to_datetime(data_df["date"])
+        data_df = data_df[
+            (data_df["date"] >= args.start_date)
+            & (data_df["date"] <= args.end_date)
         ]
-        logger.info(f"Stores: {store_df['store'].nunique()}")
-        store_df = select_extreme_and_median_neighbors(
-            store_df,
+        logger.info(f"Stores: {data_df['store'].nunique()}")
+        ids = select_extreme_and_median_neighbors(
+            data_df,
             n_col="unit_sales",
             group_column="store",
+            M=args.store_top_n,
+            m=args.store_bottom_n,
+            med=args.store_med_n,
+        )
+        logger.info(f"Stores: {len(ids)}")
+        data_df = data_df[data_df["store"].isin(ids)]
+        ids = select_extreme_and_median_neighbors(
+            data_df,
+            n_col="unit_sales",
+            group_column="item",
             M=args.item_top_n,
             m=args.item_bottom_n,
             med=args.item_med_n,
-            fn=item_fn,
         )
-        logger.info(f"Stores: {store_df['store'].nunique()}")
+        logger.info(f"Items: {len(ids)}")
+        data_df = data_df[data_df["item"].isin(ids)]
         df = pd.read_csv("../data/transactions.csv")
         df.rename(columns={"store_nbr": "store"}, inplace=True)
         df["date"] = pd.to_datetime(df["date"])
-        store_df = df.merge(store_df, on=["store", "date"], how="left")
+        data_df = data_df.merge(df, on=["store", "date"], how="left")
 
         df = pd.read_csv("../data/stores.csv")
         df.rename(columns={"store_nbr": "store"}, inplace=True)
@@ -305,8 +315,19 @@ def main():
         ).astype(int)
         df = pd.concat([df.drop("type", axis=1), type_encoded], axis=1)
         logger.info(f"Initial Stores: {df['store'].nunique()}")
-        store_df = store_df.merge(df, on=["store"], how="left")
-        logger.info(f"Stores: {store_df['store'].nunique()}")
+        data_df = data_df.merge(df, on=["store"], how="left")
+        logger.info(f"Stores: {data_df['store'].nunique()}")
+        logger.info(f"Items: {data_df['item'].nunique()}")
+        df = pd.read_csv("../data/items.csv")
+        df.rename(columns={"item_nbr": "item"}, inplace=True)
+        df = df[["item", "perishable"]]
+        data_df = data_df.merge(df, on=["item"], how="left")
+
+        # Merge with weights
+        # w_df = load_weights(weights_fn)
+        # w_df = w_df[["item", "weight"]]
+        # df = pd.merge(df, w_df, on=["item"], how="left")
+        # df["weight"] = df["weight"].fillna(1)
 
         # df["store_item"] = (
         #     df["store"].astype(str) + "_" + df["item"].astype(str)
