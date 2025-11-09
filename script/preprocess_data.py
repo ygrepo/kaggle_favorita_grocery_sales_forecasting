@@ -250,14 +250,11 @@ def main():
     output_fn = Path(args.output_fn).resolve()
     item_fn = Path(args.item_fn).resolve()
     store_fn = Path(args.store_fn).resolve()
-    # filtered_data_fn = Path(args.filtered_data_fn).resolve()
-    weights_fn = Path(args.weights_fn).resolve()
 
     try:
         # Log configuration
         logger.info("Starting data preprocessing with configuration:")
         logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Weights fn: {weights_fn}")
         logger.info(f"  Log fn: {args.log_fn}")
         logger.info(f"  Log level: {args.log_level}")
         logger.info(f"  Nrows: {args.nrows}")
