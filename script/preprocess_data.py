@@ -8,7 +8,6 @@ This script handles the complete training pipeline including:
 """
 
 import sys
-import logging
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +20,6 @@ import numpy as np
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from src.data_preprocessing import (
-    prepare_data,
     select_extreme_and_median_neighbors,
 )
 from src.utils import setup_logging, get_logger, save_csv_or_parquet
