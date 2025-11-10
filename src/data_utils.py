@@ -441,7 +441,7 @@ def create_cyclical_features(
     ].transform(lambda s: s.ewm(span=window_size, adjust=False).mean())
 
     # ---- ARIMA per store_item (walk-forward) ----
-    logger.info("Adding ARIMA(0,0,1) per store_item")
+    logger.info("Unit Sales: adding ARIMA(0,0,1) per store_item")
     df["unit_sales_arima"] = df.groupby("store_item", group_keys=False)[
         "unit_sales"
     ].apply(
@@ -450,6 +450,7 @@ def create_cyclical_features(
         )
     )
 
+    logger.info("Growth Rate: adding ARIMA(0,0,1) per store_item")
     df["growth_rate_arima"] = df.groupby("store_item", group_keys=False)[
         "growth_rate"
     ].apply(

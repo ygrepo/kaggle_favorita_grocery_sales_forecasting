@@ -164,7 +164,7 @@ def main():
         data_df.rename(
             columns={"store_nbr": "store", "item_nbr": "item"}, inplace=True
         )
-        data_df.drop(["id", "onpromotion"], axis=1, inplace=True)
+        data_df.drop(["id"], axis=1, inplace=True)
         data_df["date"] = pd.to_datetime(data_df["date"])
         data_df = data_df[
             (data_df["date"] >= args.start_date)
@@ -211,7 +211,7 @@ def main():
         logger.info(f"Items: {data_df['item'].nunique()}")
         df = pd.read_csv("./data/items.csv")
         df.rename(columns={"item_nbr": "item"}, inplace=True)
-        df = df[["item", "perishable"]]
+        df = df[["item", "family", "class", "perishable"]]
         data_df = data_df.merge(df, on=["item"], how="left")
         store_item_values = (
             data_df["store"].astype(str) + "_" + data_df["item"].astype(str)
