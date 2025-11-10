@@ -13,8 +13,8 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_medians.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_medians_cyc_features.parquet"
+DATA_FN="${DATA_DIR}/2013_2014_store_2000_item.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features.parquet"
 
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -23,7 +23,7 @@ LOG_FILE="${LOG_DIR}/${TIMESTAMP}_create_cyc_features.log"
 LOG_LEVEL="INFO"
 
 
-WINDOW_SIZE=7
+WINDOW_SIZE=1
 
 
 # Parse command line arguments

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Training script for the Favorita Grocery Sales Forecasting model.
+Create cyclical features script for the Favorita Grocery Sales Forecasting model.
 
-This script handles the complete training pipeline including:
+This script handles the complete create cyclical features pipeline including:
 - Data loading and preprocessing
 - Logging
 """

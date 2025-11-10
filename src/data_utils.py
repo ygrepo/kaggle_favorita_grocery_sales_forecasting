@@ -371,12 +371,9 @@ def create_cyclical_features(
             ),
             "day": np.where(days >= 15, 15, 1),
         }
-    ) + pd.to_timedelta(
-        np.where(days >= 15, 0, 0), unit="D"
-    )  # day already set
-    last_pay = last_pay.where(
-        days >= 15, last_pay + pd.offsets.MonthEnd(0)
-    )  # turn day=1 into prev month-end
+    )
+    # Convert day=1 to previous month-end
+    last_pay = last_pay.where(days >= 15, last_pay + pd.offsets.MonthEnd(0))
 
     # next pay: month-end if day>=15 else 15th
     month_end_day = (dates + pd.offsets.MonthEnd(0)).dt.day
@@ -459,52 +456,6 @@ def create_cyclical_features(
         lambda s: arima001_forecast(
             s, min_history=7, enforce_stationarity=True
         )
-    )
-
-    # ---- Block-level ARIMA (aggregate by date -> ARIMA -> merge back) ----
-    logger.info("Adding ARIMA(0,0,1) per block_id")
-    block_daily = (
-        df.groupby(["block_id", "date"], as_index=False)
-        .agg(unit_sales_block=("unit_sales", "sum"))
-        .sort_values(["block_id", "date"], kind="mergesort")
-    )
-
-    block_daily["growth_rate_block"] = (
-        block_daily.sort_values(["block_id", "date"])
-        .groupby("block_id")["unit_sales_block"]
-        .pct_change()
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0.0)  # first day (and div-by-zero) -> 0
-    )
-
-    block_daily["bid_unit_sales_arima"] = block_daily.groupby(
-        "block_id", group_keys=False
-    )["unit_sales_block"].apply(
-        lambda s: arima001_forecast(
-            s, min_history=7, enforce_stationarity=True
-        )
-    )
-    block_daily["bid_growth_rate_arima"] = block_daily.groupby(
-        "block_id", group_keys=False
-    )["growth_rate_block"].apply(
-        lambda s: arima001_forecast(
-            s, min_history=7, enforce_stationarity=True
-        )
-    )
-
-    df = df.merge(
-        block_daily[
-            [
-                "block_id",
-                "date",
-                "unit_sales_block",
-                "bid_unit_sales_arima",
-                "growth_rate_block",
-                "bid_growth_rate_arima",
-            ]
-        ],
-        on=["block_id", "date"],
-        how="left",
     )
 
     save_csv_or_parquet(df, output_path)
