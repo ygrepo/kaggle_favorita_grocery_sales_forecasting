@@ -221,6 +221,13 @@ def main():
         data_df.insert(1, "store_item", store_item_values)
         data_df.sort_values(["date", "store_item"], inplace=True)
         data_df.reset_index(drop=True, inplace=True)
+        data_df["growth_rate"] = (
+            data_df.sort_values(["date", "store_item"])
+            .groupby(["store_item"])["unit_sales"]
+            .pct_change()
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
 
         save_csv_or_parquet(data_df, output_fn)
         logger.info("Data preprocessing completed successfully")
