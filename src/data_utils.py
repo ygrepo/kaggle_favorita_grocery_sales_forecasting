@@ -440,24 +440,24 @@ def create_cyclical_features(
         "growth_rate"
     ].transform(lambda s: s.ewm(span=window_size, adjust=False).mean())
 
-    # ---- ARIMA per store_item (walk-forward) ----
-    logger.info("Unit Sales: adding ARIMA(0,0,1) per store_item")
-    df["unit_sales_arima"] = df.groupby("store_item", group_keys=False)[
-        "unit_sales"
-    ].apply(
-        lambda s: arima001_forecast(
-            s, min_history=7, enforce_stationarity=True
-        )
-    )
+    # # ---- ARIMA per store_item (walk-forward) ----
+    # logger.info("Unit Sales: adding ARIMA(0,0,1) per store_item")
+    # df["unit_sales_arima"] = df.groupby("store_item", group_keys=False)[
+    #     "unit_sales"
+    # ].apply(
+    #     lambda s: arima001_forecast(
+    #         s, min_history=7, enforce_stationarity=True
+    #     )
+    # )
 
-    logger.info("Growth Rate: adding ARIMA(0,0,1) per store_item")
-    df["growth_rate_arima"] = df.groupby("store_item", group_keys=False)[
-        "growth_rate"
-    ].apply(
-        lambda s: arima001_forecast(
-            s, min_history=7, enforce_stationarity=True
-        )
-    )
+    # logger.info("Growth Rate: adding ARIMA(0,0,1) per store_item")
+    # df["growth_rate_arima"] = df.groupby("store_item", group_keys=False)[
+    #     "growth_rate"
+    # ].apply(
+    #     lambda s: arima001_forecast(
+    #         s, min_history=7, enforce_stationarity=True
+    #     )
+    # )
 
     save_csv_or_parquet(df, output_path)
     return df
