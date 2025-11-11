@@ -17,6 +17,7 @@ METRICS_FN="${PROJECT_ROOT}/output/data/${DATE}_2013_2014_store_2000_item_cyc_fe
 TIME_COL="date"
 TARGET_COL="unit_sales"
 GROUP_COLS="store item"
+SPLIT_POINT=0.8
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
