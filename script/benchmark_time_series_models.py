@@ -197,6 +197,9 @@ def calculate_metrics(
 ):
     """Calculate metrics with error handling."""
     try:
+        logger.info(f"train: {train}")
+        logger.info(f"val: {val}")
+        logger.info(f"forecast: {forecast}")
         return {
             "rmse": rmse(val, forecast),
             "rmsse": rmsse(val, forecast, train_series=train),
