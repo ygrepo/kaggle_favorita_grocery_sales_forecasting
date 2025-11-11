@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 from darts import TimeSeries
 from darts.models import AutoARIMA, ExponentialSmoothing, Theta
-from darts.metrics import rmse, rmsse, mae, mase, mape, ope
+from darts.metrics import rmse, rmsse, mae, mase, mape, ope, smape
 from darts.models.forecasting.forecasting_model import LocalForecastingModel
 from darts.utils.utils import SeasonalityMode
 from tqdm import tqdm
@@ -205,7 +205,7 @@ def calculate_metrics(
             # "rmsse": rmsse(val, forecast, train_series=train, m=1),
             "mae": mae(val, forecast),
             # "mase": mase(val, forecast, train_series=train, m=1),
-            "mape": mape(val, forecast),
+            "smape": smape(val, forecast),
             "ope": ope(val, forecast),
         }
     except Exception as e:
@@ -216,7 +216,7 @@ def calculate_metrics(
             # "rmsse": np.nan,
             "mae": mae(val, forecast),
             # "mase": np.nan,
-            "mape": np.nan,
+            "smape": np.nan,
             "ope": np.nan,
         }
 
@@ -254,7 +254,7 @@ def eval_model(
                     # "RMSSE": metrics["rmsse"],
                     "MAE": metrics["mae"],
                     # "MASE": metrics["mase"],
-                    "MAPE": metrics["mape"],
+                    "SMAPE": metrics["smape"],
                     "OPE": metrics["ope"],
                 }
             ]
@@ -278,7 +278,7 @@ def eval_model(
                     # "RMSSE": np.nan,
                     "MAE": np.nan,
                     # "MASE": np.nan,
-                    "MAPE": np.nan,
+                    "SMAPE": np.nan,
                     "OPE": np.nan,
                 }
             ]
@@ -329,7 +329,7 @@ def main():
                 # "RMSSE",
                 "MAE",
                 # "MASE",
-                "MAPE",
+                "SMAPE",
                 "OPE",
             ]
         )
