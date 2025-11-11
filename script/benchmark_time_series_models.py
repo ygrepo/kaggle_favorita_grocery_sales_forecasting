@@ -93,12 +93,6 @@ def prepare_store_item_series(
     ts_df = series_df[["date", "growth_rate"]].copy()
     ts_df = ts_df.set_index("date")
 
-    # # Handle duplicates by taking mean
-    # ts_df = ts_df.groupby(ts_df.index).mean()
-
-    # Fill missing values
-    # ts_df = ts_df.fillna(method="ffill").fillna(0)
-
     return ts_df
 
 
@@ -116,7 +110,9 @@ def process_store_item_combination(
 
     try:
         # Convert to Darts TimeSeries
-        ts = TimeSeries.from_dataframe(ts_df)
+        ts = TimeSeries.from_dataframe(
+            ts_df, fill_missing_dates=True, freq="D"
+        )
 
         # Split data
         train_ts, val_ts = ts.split_before(split_point)
@@ -136,7 +132,13 @@ def process_store_item_combination(
 
         for model_name, model_class in models:
             metrics_df = eval_model(
-                model_name, model_class, train_ts, val_ts, metrics_df
+                model_name,
+                model_class,
+                store,
+                item,
+                train_ts,
+                val_ts,
+                metrics_df,
             )
 
         return metrics_df
@@ -176,16 +178,22 @@ def calculate_metrics(
 def eval_model(
     modelType: str,
     model: LocalForecastingModel,
+    store: int,
+    item: int,
     train: TimeSeries,
     val: TimeSeries,
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Evaluate a model with error handling."""
     try:
-        logger.info(f"Training {modelType} model...")
+        logger.info(
+            f"Training {modelType} model, store {store}, item {item}..."
+        )
         model.fit(train)
 
-        logger.info(f"Generating forecast with {modelType}...")
+        logger.info(
+            f"Generating forecast with {modelType}, store {store}, item {item}..."
+        )
         forecast = model.predict(len(val))
 
         metrics = calculate_metrics(val, forecast)
@@ -194,6 +202,8 @@ def eval_model(
             [
                 {
                     "Model": modelType,
+                    "Store": store,
+                    "Item": item,
                     "RMSE": metrics["rmse"],
                     "RMSSE": metrics["rmsse"],
                     "MAE": metrics["mae"],
@@ -205,7 +215,9 @@ def eval_model(
         )
 
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-        logger.info(f"{modelType} completed successfully")
+        logger.info(
+            f"{modelType} completed successfully, store {store}, item {item}"
+        )
 
     except Exception as e:
         logger.error(f"Error with {modelType}: {e}")
@@ -214,6 +226,8 @@ def eval_model(
             [
                 {
                     "Model": modelType,
+                    "Store": store,
+                    "Item": item,
                     "RMSE": np.nan,
                     "RMSSE": np.nan,
                     "MAE": np.nan,
@@ -253,11 +267,17 @@ def main():
         # Load raw data
         logger.info("Loading raw data...")
         df = load_raw_data(data_fn)
+        # Get unique store-item pairs
+        logger.info("Finding unique store-item combinations...")
+        unique_combinations = df[["store", "item"]].drop_duplicates()
+
         # Initialize metrics dataframe
         logger.info("Running models...")
         metrics_df = pd.DataFrame(
             columns=[
                 "Model",
+                "Store",
+                "Item",
                 "RMSE",
                 "RMSSE",
                 "MAE",
@@ -267,7 +287,9 @@ def main():
             ]
         )
 
-        for idx, row in tqdm(df.iterrows(), total=len(df)):
+        for idx, row in tqdm(
+            unique_combinations.iterrows(), total=len(unique_combinations)
+        ):
             store = row["store"]
             item = row["item"]
 
