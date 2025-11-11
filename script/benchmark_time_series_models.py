@@ -100,6 +100,7 @@ def prepare_store_item_series(
     ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
     ts_df = ts_df.set_index("date")
     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
+    ts_df.fillna(0, inplace=True)
 
     return ts_df
 
@@ -148,8 +149,6 @@ def process_store_item_combination(
             f"Validation: Non-missing count for store {store}, item {item}: {non_missing_count}"
         )
 
-        train_ts = train_ts.fillna(value=0)
-        val_ts = val_ts.fillna(value=0)
         # Test models
         models = [
             ("ExponentialSmoothing", ExponentialSmoothing()),
