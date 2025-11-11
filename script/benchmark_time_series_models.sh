@@ -14,6 +14,10 @@ DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parq
 DATE=$(date +"%Y%m%d")
 METRICS_FN="${PROJECT_ROOT}/output/data/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
 
+TIME_COL="date"
+TARGET_COL="unit_sales"
+GROUP_COLS="store item"
+
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
