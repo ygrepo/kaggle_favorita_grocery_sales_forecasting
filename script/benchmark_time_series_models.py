@@ -16,6 +16,7 @@ from darts import TimeSeries
 from darts.models import AutoARIMA, ExponentialSmoothing, Theta
 from darts.metrics import rmse, rmsse, mae, mase, mape, ope
 from darts.models.forecasting.forecasting_model import LocalForecastingModel
+from darts.utils.utils import SeasonalityMode
 from tqdm import tqdm
 
 
@@ -152,7 +153,7 @@ def process_store_item_combination(
         models = [
             ("ExponentialSmoothing", ExponentialSmoothing()),
             ("AutoARIMA", AutoARIMA()),
-            ("Theta", Theta()),
+            ("Theta", Theta(season_mode=SeasonalityMode.ADDITIVE)),
         ]
 
         ts = TimeSeries.from_dataframe(
