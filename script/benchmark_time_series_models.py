@@ -129,9 +129,13 @@ def process_store_item_combination(
                 f"No validation data for store {store}, item {item}"
             )
             return metrics_df
-        if len(train_ts) < min_train_data_points:
+
+        # Get the count of *actual* data points, ignoring NaNs
+        actual_data_points = train_ts.n_non_missing_values()
+
+        if actual_data_points < min_train_data_points:
             logger.warning(
-                f"Training series too short ({len(train_ts)} < {min_train_data_points}) for store {store}, item {item}. Skipping."
+                f"Training series has insufficient data ({actual_data_points} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
             return metrics_df
 
