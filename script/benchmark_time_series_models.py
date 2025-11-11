@@ -100,7 +100,6 @@ def prepare_store_item_series(
     ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
     ts_df = ts_df.set_index("date")
     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
-    ts_df.fillna(0, inplace=True)
 
     return ts_df
 
@@ -155,6 +154,13 @@ def process_store_item_combination(
             ("AutoARIMA", AutoARIMA()),
             ("Theta", Theta()),
         ]
+
+        ts = TimeSeries.from_dataframe(
+            ts_df, fill_missing_dates=True, freq="D", fillna_value=0
+        )
+
+        # Split the filled series
+        train_ts, val_ts = ts.split_before(split_point)
 
         for model_name, model in models:
             metrics_df = eval_model(
