@@ -125,15 +125,15 @@ def process_store_item_combination(
 
         # Test models
         models = [
-            ("ExponentialSmoothing", ExponentialSmoothing),
-            ("AutoARIMA", AutoARIMA),
-            ("Theta", Theta),
+            ("ExponentialSmoothing", ExponentialSmoothing()),
+            ("AutoARIMA", AutoARIMA()),
+            ("Theta", Theta()),
         ]
 
-        for model_name, model_class in models:
+        for model_name, model in models:
             metrics_df = eval_model(
                 model_name,
-                model_class,
+                model,
                 store,
                 item,
                 train_ts,
