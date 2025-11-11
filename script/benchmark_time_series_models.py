@@ -97,6 +97,7 @@ def prepare_store_item_series(
 
     # Create time series DataFrame
     ts_df = series_df[["date", "growth_rate"]].copy()
+    ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
     ts_df = ts_df.set_index("date")
     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
 
