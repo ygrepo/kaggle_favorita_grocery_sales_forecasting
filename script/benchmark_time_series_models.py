@@ -275,6 +275,7 @@ def main():
         logger.info(f"  Metrics fn: {output_metrics_fn}")
         logger.info(f"  Log fn: {log_fn}")
         logger.info(f"  Split point: {args.split_point}")
+        logger.info(f"  Min train data points: {args.min_train_data_points}")
 
         # Load raw data
         logger.info("Loading raw data...")
@@ -306,7 +307,12 @@ def main():
             item = row["item"]
 
             metrics_df = process_store_item_combination(
-                df, store, item, args.split_point, metrics_df
+                df,
+                store,
+                item,
+                args.split_point,
+                args.min_train_data_points,
+                metrics_df,
             )
 
         logger.info(f"Saving results to {output_metrics_fn}")
