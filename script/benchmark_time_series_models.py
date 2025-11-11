@@ -131,8 +131,10 @@ def process_store_item_combination(
             return metrics_df
 
         # Get the count of *actual* data points, ignoring NaNs
-        all_values = train_ts.values()
-        non_missing_count = all_values.size - np.isnan(all_values).sum()
+        non_missing_count = train_ts.to_series().count(skipna=True)
+        logger.info(
+            f"Non-missing count for store {store}, item {item}: {non_missing_count}"
+        )
 
         if non_missing_count < min_train_data_points:
             logger.warning(
