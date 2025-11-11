@@ -136,7 +136,7 @@ def process_store_item_combination(
 
         if non_missing_count < min_train_data_points:
             logger.warning(
-                f"Training series has insufficient data ({actual_data_points} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
+                f"Training series has insufficient data ({non_missing_count} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
             return metrics_df
 
