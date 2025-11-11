@@ -55,7 +55,7 @@ def parse_args():
     )
     parser.add_argument(
         "--log_fn",
-        type=str,
+        type=Path,
         default="",
         help="Path to save script outputs (relative to project root)",
     )
@@ -121,7 +121,7 @@ def main():
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
     ouput_metrics_fn = Path(args.metrics_fn).resolve()
-    log_fn = Path(args.log_fn).resolve()
+    log_fn = args.log_fn.resolve()
 
     # Set up logging
     logger = setup_logging(log_fn, args.log_level)
