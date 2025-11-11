@@ -148,6 +148,8 @@ def process_store_item_combination(
             f"Validation: Non-missing count for store {store}, item {item}: {non_missing_count}"
         )
 
+        train_ts = train_ts.fillna(value=0)
+        val_ts = val_ts.fillna(value=0)
         # Test models
         models = [
             ("ExponentialSmoothing", ExponentialSmoothing()),
