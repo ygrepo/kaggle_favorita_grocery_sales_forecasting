@@ -26,6 +26,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --metrics_fn) METRICS_FN="$2"; shift 2 ;;
+    --split_point) SPLIT_POINT="$2"; shift 2 ;;
+    --time_col) TIME_COL="$2"; shift 2 ;;
+    --target_col) TARGET_COL="$2"; shift 2 ;;
+    --group_cols) GROUP_COLS="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -52,6 +56,10 @@ echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/benchmark_time_series_models.py" \
   --data_fn "$DATA_FN" \
   --metrics_fn "$METRICS_FN" \
+  --split_point "$SPLIT_POINT" \
+  --time_col "$TIME_COL" \
+  --target_col "$TARGET_COL" \
+  --group_cols "$GROUP_COLS" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" 
 
