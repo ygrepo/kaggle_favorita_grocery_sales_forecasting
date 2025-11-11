@@ -117,8 +117,29 @@ def process_store_item_combination(
 
     # Prepare time series
     ts_df = prepare_store_item_series(df, store, item)
+    if ts_df.empty:
+        return metrics_df
 
     try:
+        train_data_for_std = ts_df.iloc[: int(len(ts_df) * split_point)]
+        non_missing_count = train_data_for_std["growth_rate"].count()
+        logger.info(
+            f"training: Non-missing count for store {store}, item {item}: {non_missing_count}"
+        )
+        if non_missing_count < min_train_data_points:
+            logger.warning(
+                f"Training series has insufficient data ({non_missing_count} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
+            )
+            return metrics_df
+
+        # Check variance
+        train_std = train_data_for_std["growth_rate"].std()
+        if train_std == 0 or np.isnan(train_std):
+            logger.warning(
+                f"Training series has zero variance for store {store}, item {item}. Skipping."
+            )
+            return metrics_df
+
         # Convert to Darts TimeSeries
         ts = TimeSeries.from_dataframe(
             ts_df, fill_missing_dates=True, freq="D"
@@ -197,9 +218,9 @@ def calculate_metrics(
 ):
     """Calculate metrics with error handling."""
     try:
-        # logger.info(f"train: {train}")
-        # logger.info(f"val: {val}")
-        # logger.info(f"forecast: {forecast}")
+        logger.info(f"train: {train}")
+        logger.info(f"val: {val}")
+        logger.info(f"forecast: {forecast}")
         return {
             "rmse": rmse(val, forecast),
             "rmsse": rmsse(val, forecast, train_series=train, m=1),
