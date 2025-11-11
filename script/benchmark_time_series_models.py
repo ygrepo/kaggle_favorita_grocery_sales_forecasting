@@ -202,9 +202,9 @@ def calculate_metrics(
         # logger.info(f"forecast: {forecast}")
         return {
             "rmse": rmse(val, forecast),
-            "rmsse": rmsse(val, forecast, train_series=train, m=1),
+            # "rmsse": rmsse(val, forecast, train_series=train, m=1),
             "mae": mae(val, forecast),
-            "mase": mase(val, forecast, train_series=train, m=1),
+            # "mase": mase(val, forecast, train_series=train, m=1),
             "mape": mape(val, forecast),
             "ope": ope(val, forecast),
         }
@@ -213,9 +213,9 @@ def calculate_metrics(
         # Return basic metrics only
         return {
             "rmse": rmse(val, forecast),
+            # "rmsse": np.nan,
             "mae": mae(val, forecast),
-            "rmsse": np.nan,
-            "mase": np.nan,
+            # "mase": np.nan,
             "mape": np.nan,
             "ope": np.nan,
         }
@@ -251,9 +251,9 @@ def eval_model(
                     "Store": store,
                     "Item": item,
                     "RMSE": metrics["rmse"],
-                    "RMSSE": metrics["rmsse"],
+                    # "RMSSE": metrics["rmsse"],
                     "MAE": metrics["mae"],
-                    "MASE": metrics["mase"],
+                    # "MASE": metrics["mase"],
                     "MAPE": metrics["mape"],
                     "OPE": metrics["ope"],
                 }
@@ -275,9 +275,9 @@ def eval_model(
                     "Store": store,
                     "Item": item,
                     "RMSE": np.nan,
-                    "RMSSE": np.nan,
+                    # "RMSSE": np.nan,
                     "MAE": np.nan,
-                    "MASE": np.nan,
+                    # "MASE": np.nan,
                     "MAPE": np.nan,
                     "OPE": np.nan,
                 }
@@ -326,9 +326,9 @@ def main():
                 "Store",
                 "Item",
                 "RMSE",
-                "RMSSE",
+                # "RMSSE",
                 "MAE",
-                "MASE",
+                # "MASE",
                 "MAPE",
                 "OPE",
             ]
