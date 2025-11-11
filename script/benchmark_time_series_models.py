@@ -161,6 +161,7 @@ def process_store_item_combination(
 
 
 def calculate_metrics(
+    train: TimeSeries,
     val: TimeSeries,
     forecast: TimeSeries,
 ):
@@ -168,9 +169,9 @@ def calculate_metrics(
     try:
         return {
             "rmse": rmse(val, forecast),
-            "rmsse": rmsse(val, forecast),
+            "rmsse": rmsse(val, forecast, train_series=train),
             "mae": mae(val, forecast),
-            "mase": mase(val, forecast),
+            "mase": mase(val, forecast, train_series=train),
             "mape": mape(val, forecast),
             "ope": ope(val, forecast),
         }
@@ -208,7 +209,7 @@ def eval_model(
         )
         forecast = model.predict(len(val))
 
-        metrics = calculate_metrics(val, forecast)
+        metrics = calculate_metrics(train, val, forecast)
 
         new_row = pd.DataFrame(
             [
