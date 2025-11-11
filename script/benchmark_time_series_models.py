@@ -211,6 +211,42 @@ def process_store_item_combination(
         return metrics_df
 
 
+def calculate_rmsse(
+    train_vals: np.ndarray,
+    val_vals: np.ndarray,
+    fcst_vals: np.ndarray,
+    epsilon: float = np.finfo(float).eps,
+) -> float:
+    """Calculates RMSSE manually using numpy."""
+    # Numerator: RMSE of the forecast
+    rmse_forecast = np.sqrt(np.mean(np.square(val_vals - fcst_vals)))
+
+    # Denominator: RMSE of the 1-step naive forecast in-sample
+    # This is the other part that fails in Darts
+    naive_train_sq_errors = np.square(train_vals[1:] - train_vals[:-1])
+    rmse_naive = np.sqrt(np.mean(naive_train_sq_errors))
+
+    return rmse_forecast / (rmse_naive + epsilon)
+
+
+def calculate_mase(
+    train_vals: np.ndarray,
+    val_vals: np.ndarray,
+    fcst_vals: np.ndarray,
+    epsilon: float = np.finfo(float).eps,
+) -> float:
+    """Calculates MASE manually using numpy."""
+    # Numerator: MAE of the forecast
+    mae_forecast = np.mean(np.abs(val_vals - fcst_vals))
+
+    # Denominator: MAE of the 1-step naive forecast in-sample
+    # This is the part that fails in Darts
+    naive_train_errors = np.abs(train_vals[1:] - train_vals[:-1])
+    mae_naive = np.mean(naive_train_errors)
+
+    return mae_forecast / (mae_naive + epsilon)
+
+
 def calculate_metrics(
     train: TimeSeries,
     val: TimeSeries,
@@ -218,14 +254,18 @@ def calculate_metrics(
 ):
     """Calculate metrics with error handling."""
     try:
-        logger.info(f"train: {train}")
-        logger.info(f"val: {val}")
-        logger.info(f"forecast: {forecast}")
+        # logger.info(f"train: {train}")
+        # logger.info(f"val: {val}")
+        # logger.info(f"forecast: {forecast}")
         return {
             "rmse": rmse(val, forecast),
-            "rmsse": rmsse(val, forecast, train_series=train, m=1),
+            "rmsse": calculate_rmsse(
+                train.values(), val.values(), forecast.values()
+            ),
             "mae": mae(val, forecast),
-            "mase": mase(val, forecast, train_series=train, m=1),
+            "mase": calculate_mase(
+                train.values(), val.values(), forecast.values()
+            ),
             "smape": smape(val, forecast),
             "ope": ope(val, forecast),
         }
