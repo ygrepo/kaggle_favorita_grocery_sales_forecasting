@@ -131,9 +131,10 @@ def process_store_item_combination(
             return metrics_df
 
         # Get the count of *actual* data points, ignoring NaNs
-        actual_data_points = train_ts.n_non_missing_values()
+        all_values = train_ts.values()
+        non_missing_count = all_values.size - np.isnan(all_values).sum()
 
-        if actual_data_points < min_train_data_points:
+        if non_missing_count < min_train_data_points:
             logger.warning(
                 f"Training series has insufficient data ({actual_data_points} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
