@@ -54,10 +54,10 @@ def parse_args():
         help="Proportion of data to use for training",
     )
     parser.add_argument(
-        "--log_dir",
+        "--log_fn",
         type=str,
-        default="../output/logs",
-        help="Directory to save script outputs (relative to project root)",
+        default="",
+        help="Path to save script outputs (relative to project root)",
     )
     parser.add_argument(
         "--log_level",
@@ -121,18 +121,18 @@ def main():
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
     ouput_metrics_fn = Path(args.metrics_fn).resolve()
-    log_dir = Path(args.log_dir).resolve()
+    log_fn = Path(args.log_fn).resolve()
 
     # Set up logging
-    logger = setup_logging(log_dir, args.log_level)
-    logger.info(f"Log dir: {log_dir}")
+    logger = setup_logging(log_fn, args.log_level)
+    logger.info(f"Log fn: {log_fn}")
 
     try:
         # Log configuration
         logger.info("Starting creating data loaders with configuration:")
         logger.info(f"  Data fn: {data_fn}")
         logger.info(f"  Metrics fn: {ouput_metrics_fn}")
-        logger.info(f"  Log dir: {log_dir}")
+        logger.info(f"  Log fn: {log_fn}")
         logger.info(f"  Split point: {args.split_point}")
         df = load_raw_data(data_fn)
         df = TimeSeries.from_dataframe(df)

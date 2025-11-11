@@ -48,7 +48,7 @@ echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 python "${SCRIPT_DIR}/benchmark_time_series_models.py" \
   --data_fn "$DATA_FN" \
   --metrics_fn "$METRICS_FN" \
-  --log_dir "$LOG_DIR" \
+  --log_fn "$LOG_DIR" \
   --log_level "$LOG_LEVEL" \
    2>&1 | tee -a "$LOG_FILE"
 
