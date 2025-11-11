@@ -135,7 +135,7 @@ def process_store_item_combination(
         # Get the count of *actual* data points, ignoring NaNs
         non_missing_count = train_ts.to_series().count()
         logger.info(
-            f"Non-missing count for store {store}, item {item}: {non_missing_count}"
+            f"training: Non-missing count for store {store}, item {item}: {non_missing_count}"
         )
 
         if non_missing_count < min_train_data_points:
@@ -143,6 +143,10 @@ def process_store_item_combination(
                 f"Training series has insufficient data ({non_missing_count} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
             return metrics_df
+        non_missing_count = val_ts.to_series().count()
+        logger.info(
+            f"Validation: Non-missing count for store {store}, item {item}: {non_missing_count}"
+        )
 
         # Test models
         models = [
