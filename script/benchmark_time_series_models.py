@@ -56,6 +56,12 @@ def parse_args():
         help="Proportion of data to use for training",
     )
     parser.add_argument(
+        "--min_train_data_points",
+        type=int,
+        default=15,
+        help="Minimum number of data points to train on",
+    )
+    parser.add_argument(
         "--log_fn",
         type=Path,
         default="",
@@ -101,6 +107,7 @@ def process_store_item_combination(
     store: int,
     item: int,
     split_point: float,
+    min_train_data_points: int,
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Process a single store-item combination."""
@@ -120,6 +127,11 @@ def process_store_item_combination(
         if len(val_ts) == 0:
             logger.warning(
                 f"No validation data for store {store}, item {item}"
+            )
+            return metrics_df
+        if len(train_ts) < min_train_data_points:
+            logger.warning(
+                f"Training series too short ({len(train_ts)} < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
             return metrics_df
 

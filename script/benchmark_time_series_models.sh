@@ -14,6 +14,7 @@ DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parq
 DATE=$(date +"%Y%m%d")
 METRICS_FN="${PROJECT_ROOT}/output/data/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
 SPLIT_POINT=0.8
+MIN_TRAIN_DATA_POINTS=15
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --metrics_fn) METRICS_FN="$2"; shift 2 ;;
     --split_point) SPLIT_POINT="$2"; shift 2 ;;
+    --min_train_data_points) MIN_TRAIN_DATA_POINTS="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -51,6 +53,7 @@ python "${SCRIPT_DIR}/benchmark_time_series_models.py" \
   --data_fn "$DATA_FN" \
   --metrics_fn "$METRICS_FN" \
   --split_point "$SPLIT_POINT" \
+  --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" 
 
