@@ -11,23 +11,16 @@ import sys
 import argparse
 from pathlib import Path
 import pandas as pd
-import numpy as np
-from darts import TimeSeries
-from darts.metrics import rmse, rmsse, mae, mase, mape, ope, smape
-from tqdm import tqdm
 from darts import TimeSeries, concatenate
-from darts.dataprocessing.transformers import MissingValuesFiller, Scaler
-from darts.datasets import EnergyDataset
-from darts.metrics import r2_score
+from tqdm import tqdm
 from darts.models import NBEATSModel
 from darts.utils.callbacks import TFMProgressBar
+
 from torchmetrics import SymmetricMeanAbsolutePercentageError
-
-import optuna
 import torch
-from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import Callback, EarlyStopping
-
+import multiprocessing
+from functools import partial
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -55,32 +48,130 @@ class PatchedPruningCallback(
     pass
 
 
-def generate_torch_kwargs(working_dir: Path) -> dict:
-    # throughout training we'll monitor the validation loss for both pruning and early stopping
-    pruner = PatchedPruningCallback(trial, monitor="val_loss")
+# Change the function signature to accept gpu_id
+def generate_torch_kwargs(working_dir: Path, gpu_id: int) -> dict:
+    # throughout training we'll monitor the validation loss for early stopping
     early_stopper = EarlyStopping(
-        "val_loss", min_delta=0.001, patience=3, verbose=True
+        "val_SymmetricMeanAbsolutePercentageError",
+        min_delta=0.001,
+        patience=3,
+        verbose=True,
     )
     callbacks = [
-        pruner,
         early_stopper,
         TFMProgressBar(enable_train_bar_only=True),
     ]
-    # detect if a GPU is available
+
     if torch.cuda.is_available():
         num_workers = 2
+        accelerator = "gpu"
+        devices = [gpu_id]
+        logger.debug(f"Worker using GPU: {gpu_id}")
     else:
         num_workers = 0
+        accelerator = "auto"  # fallback to 'cpu' or 'auto'
+        devices = "auto"
+        logger.debug(f"Worker using GPU: {gpu_id}")
 
     # run torch models on CPU, and disable progress bars for all model stages except training.
     return {
         "pl_trainer_kwargs": {
-            "accelerator": "auto",
+            "accelerator": accelerator,
+            "devices": devices,  # This will now be [0], or [1], etc.
             "callbacks": callbacks,
             "work_dir": working_dir,
             "num_workers": num_workers,
         }
     }
+
+
+def process_store_item(task_data, df, args):
+    """
+    Worker function to process a single store-item combination on a specific GPU.
+    """
+    store, item, gpu_id = task_data
+
+    try:
+        # Prepare time series
+        ts_df = prepare_store_item_series(df, store, item)
+        if ts_df.empty:
+            logger.warning(f"No data for store {store}, item {item}")
+            return None  # Signal to skip
+
+        ts, train_ts, val_ts = get_train_val_data(
+            ts_df,
+            store,
+            item,
+            args.split_point,
+            args.min_train_data_points,
+        )
+
+        model_name = args.model
+        model_dir = args.model_dir.resolve() / f"{model_name}_{store}_{item}"
+
+        # Pass the assigned gpu_id to the kwargs generator
+        model_kwargs = generate_torch_kwargs(model_dir, gpu_id)
+        smape_metric = SymmetricMeanAbsolutePercentageError()
+
+        model = NBEATSModel(
+            input_chunk_length=30,
+            output_chunk_length=1,
+            generic_architecture=True,
+            num_stacks=10,
+            num_blocks=1,
+            num_layers=4,
+            layer_widths=512,
+            n_epochs=100,
+            nr_epochs_val_period=1,
+            batch_size=800,
+            random_state=42,
+            model_name=model_name,
+            save_checkpoints=True,
+            force_reset=True,
+            metrics=smape_metric,
+            **model_kwargs,
+        )
+
+        # Train your model
+        model.fit(train_ts)
+        model = NBEATSModel.load_from_checkpoint(
+            model_name=model_name, best=True
+        )
+        forecast = model.historical_forecasts(
+            ts,
+            start=val_ts.start_time(),
+            forecast_horizon=7,
+            stride=7,
+            last_points_only=False,
+            retrain=False,
+            verbose=False,  # Set to False to avoid flooding logs
+        )
+        forecast = concatenate(forecast)
+
+        metrics = calculate_metrics(train_ts, val_ts, forecast)
+
+        # Return the result as a dictionary
+        return {
+            "Model": model_name,
+            "Store": store,
+            "Item": item,
+            "RMSE": metrics["rmse"],
+            "RMSSE": metrics["rmsse"],
+            "MAE": metrics["mae"],
+            "MASE": metrics["mase"],
+            "SMAPE": metrics["smape"],
+            "OPE": metrics["ope"],
+        }
+
+    except Exception as e:
+        # Log errors from inside the worker
+        logger.error(
+            f"!! ERROR processing (store {store}, item {item}) on GPU {gpu_id}: {e}"
+        )
+        import traceback
+
+        logger.error(traceback.format_exc())
+        return None  # Signal failure
 
 
 def parse_args():
@@ -105,6 +196,12 @@ def parse_args():
         type=str,
         default="NBEATS",
         help="Model to train",
+    )
+    parser.add_argument(
+        "--gpu",
+        type=int,
+        default=0,
+        help="The specific GPU ID to use for this script instance.",
     )
     parser.add_argument(
         "--metrics_fn",
@@ -184,83 +281,143 @@ def main():
             ]
         )
 
-        for _, row in tqdm(
-            unique_combinations.iterrows(), total=len(unique_combinations)
-        ):
-            store = row["store"]
-            item = row["item"]
-            # Prepare time series
-            ts_df = prepare_store_item_series(df, store, item)
-            if ts_df.empty:
-                logger.warning(f"No data for store {store}, item {item}")
-                continue
+        # --- START: NEW MULTIPROCESSING LOGIC ---
 
-            ts, train_ts, val_ts = get_train_val_data(
-                ts_df,
-                store,
-                item,
-                args.split_point,
-                args.min_train_data_points,
-            )
+        # Determine number of GPUs to use
+        num_gpus = torch.cuda.device_count()
+        if num_gpus == 0:
+            logger.warning("No GPUs found! Running sequentially on CPU.")
+            num_gpus = 1  # We'll run 1 worker process on the CPU
 
-            # "Look at 30 days, predict the next 1 day."
-            model_name = args.model
-            model_dir = (
-                args.model_dir.resolve() / f"{model_name}_{store}_{item}"
-            )
-            model = NBEATSModel(
-                input_chunk_length=30,
-                output_chunk_length=1,
-                generic_architecture=True,
-                num_stacks=10,
-                num_blocks=1,
-                num_layers=4,
-                layer_widths=512,
-                n_epochs=100,
-                nr_epochs_val_period=1,
-                batch_size=800,
-                random_state=42,
-                model_name=model_name,
-                save_checkpoints=True,
-                force_reset=True,
-                **generate_torch_kwargs(model_dir),
-            )
+        logger.info(f"Found {num_gpus} GPUs. Creating task list...")
 
-            # Train your model on the 584-day training set
-            model.fit(train_ts)
-            model = NBEATSModel.load_from_checkpoint(
-                model_name=model_name, best=True
-            )
-            forecast = model.historical_forecasts(
-                ts,
-                start=val_ts.start_time(),
-                forecast_horizon=7,
-                stride=7,
-                last_points_only=False,
-                retrain=False,
-                verbose=True,
-            )
-            forecast = concatenate(forecast)
+        # Create a list of tasks. Each task is a tuple: (store, item, gpu_id)
+        # We assign a-gpu_id in a round-robin fashion.
+        tasks = []
+        for i, row in enumerate(unique_combinations.itertuples(index=False)):
+            tasks.append((row.store, row.item, i % num_gpus))
 
-            metrics = calculate_metrics(train_ts, val_ts, forecast)
+        logger.info(
+            f"Distributing {len(tasks)} tasks across {num_gpus} workers."
+        )
 
-            new_row = pd.DataFrame(
-                [
-                    {
-                        "Model": model_name,
-                        "Store": store,
-                        "Item": item,
-                        "RMSE": metrics["rmse"],
-                        "RMSSE": metrics["rmsse"],
-                        "MAE": metrics["mae"],
-                        "MASE": metrics["mase"],
-                        "SMAPE": metrics["smape"],
-                        "OPE": metrics["ope"],
-                    }
+        # We must use 'spawn' for safety with CUDA
+        multiprocessing.set_start_method("spawn", force=True)
+
+        # Use functools.partial to "bake in" the static df and args
+        # The pool will only send the changing 'task_data' to the worker
+        worker_func = partial(process_store_item, df=df, args=args)
+
+        results = []
+
+        # Create the pool and run the tasks
+        with multiprocessing.Pool(processes=num_gpus) as pool:
+            # Use pool.imap_unordered for efficiency and tqdm for progress
+            for result in tqdm(
+                pool.imap_unordered(worker_func, tasks), total=len(tasks)
+            ):
+                if result is not None:  # Collect non-error results
+                    results.append(result)
+
+        logger.info("All tasks complete. Consolidating results...")
+
+        if not results:
+            logger.warning(
+                "No results were generated. Check worker logs for errors."
+            )
+            metrics_df = pd.DataFrame(
+                columns=[
+                    "Model",
+                    "Store",
+                    "Item",
+                    "RMSE",
+                    "RMSSE",
+                    "MAE",
+                    "MASE",
+                    "SMAPE",
+                    "OPE",
                 ]
             )
+        else:
+            metrics_df = pd.DataFrame(results)
 
-            metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+        # for _, row in tqdm(
+        #     unique_combinations.iterrows(), total=len(unique_combinations)
+        # ):
+        #     store = row["store"]
+        #     item = row["item"]
+        #     # Prepare time series
+        #     ts_df = prepare_store_item_series(df, store, item)
+        #     if ts_df.empty:
+        #         logger.warning(f"No data for store {store}, item {item}")
+        #         continue
+
+        #     ts, train_ts, val_ts = get_train_val_data(
+        #         ts_df,
+        #         store,
+        #         item,
+        #         args.split_point,
+        #         args.min_train_data_points,
+        #     )
+
+        #     # "Look at 30 days, predict the next 1 day."
+        #     model_name = args.model
+        #     model_dir = (
+        #         args.model_dir.resolve() / f"{model_name}_{store}_{item}"
+        #     )
+        #     model = NBEATSModel(
+        #         input_chunk_length=30,
+        #         output_chunk_length=1,
+        #         generic_architecture=True,
+        #         num_stacks=10,
+        #         num_blocks=1,
+        #         num_layers=4,
+        #         layer_widths=512,
+        #         n_epochs=100,
+        #         nr_epochs_val_period=1,
+        #         batch_size=800,
+        #         random_state=42,
+        #         model_name=model_name,
+        #         save_checkpoints=True,
+        #         force_reset=True,
+        #         **generate_torch_kwargs(model_dir),
+        #     )
+
+        #     # Train your model on the 584-day training set
+        #     model.fit(train_ts)
+        #     model = NBEATSModel.load_from_checkpoint(
+        #         model_name=model_name, best=True
+        #     )
+        #     forecast = model.historical_forecasts(
+        #         ts,
+        #         start=val_ts.start_time(),
+        #         forecast_horizon=7,
+        #         stride=7,
+        #         last_points_only=False,
+        #         retrain=False,
+        #         verbose=True,
+        #     )
+        #     forecast = concatenate(forecast)
+
+        #     metrics = calculate_metrics(train_ts, val_ts, forecast)
+
+        #     new_row = pd.DataFrame(
+        #         [
+        #             {
+        #                 "Model": model_name,
+        #                 "Store": store,
+        #                 "Item": item,
+        #                 "RMSE": metrics["rmse"],
+        #                 "RMSSE": metrics["rmsse"],
+        #                 "MAE": metrics["mae"],
+        #                 "MASE": metrics["mase"],
+        #                 "SMAPE": metrics["smape"],
+        #                 "OPE": metrics["ope"],
+        #             }
+        #         ]
+        #     )
+
+        #     metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
         logger.info(f"Saving results to {output_metrics_fn}")
         save_csv_or_parquet(metrics_df, output_metrics_fn)
