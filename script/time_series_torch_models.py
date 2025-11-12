@@ -17,6 +17,7 @@ from darts.models import NBEATSModel
 from darts.utils.callbacks import TFMProgressBar
 
 from torchmetrics import SymmetricMeanAbsolutePercentageError
+import torchmetrics
 import torch
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 import multiprocessing
@@ -43,7 +44,9 @@ logger = get_logger(__name__)
 
 
 # Change the function signature to accept gpu_id
-def generate_torch_kwargs(working_dir: Path, gpu_id: int) -> dict:
+def generate_torch_kwargs(
+    working_dir: Path, gpu_id: int, metrics: torchmetrics.Metric
+) -> dict:
     # throughout training we'll monitor the validation loss for early stopping
     early_stopper = EarlyStopping(
         "val_SymmetricMeanAbsolutePercentageError",
@@ -75,6 +78,7 @@ def generate_torch_kwargs(working_dir: Path, gpu_id: int) -> dict:
             "callbacks": callbacks,
             "work_dir": working_dir,
             "num_workers": num_workers,
+            "torch_metrics": metrics,
         }
     }
 
@@ -104,8 +108,8 @@ def process_store_item(task_data, df, args):
         model_dir = args.model_dir.resolve() / f"{model_name}_{store}_{item}"
 
         # Pass the assigned gpu_id to the kwargs generator
-        model_kwargs = generate_torch_kwargs(model_dir, gpu_id)
         smape_metric = SymmetricMeanAbsolutePercentageError()
+        model_kwargs = generate_torch_kwargs(model_dir, gpu_id, smape_metric)
 
         model = NBEATSModel(
             input_chunk_length=30,
@@ -122,7 +126,6 @@ def process_store_item(task_data, df, args):
             model_name=model_name,
             save_checkpoints=True,
             force_reset=True,
-            metrics=smape_metric,
             **model_kwargs,
         )
 
