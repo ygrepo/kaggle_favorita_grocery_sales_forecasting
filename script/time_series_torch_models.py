@@ -46,10 +46,11 @@ logger = get_logger(__name__)
 def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
     # throughout training we'll monitor the validation loss for early stopping
     early_stopper = EarlyStopping(
-        "val_smape",
+        "train_smape",
         min_delta=0.001,
         patience=3,
         verbose=True,
+        mode="min",  # SMAPE should be minimized
     )
     callbacks = [
         early_stopper,
