@@ -29,6 +29,7 @@ from src.utils import (
     save_csv_or_parquet,
 )
 from src.data_utils import load_raw_data
+from src.time_series_utils import get_train_val_data
 
 logger = get_logger(__name__)
 
@@ -114,6 +115,8 @@ def process_store_item_combination(
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Process a single store-item combination."""
+
+    logger.info(f"Processing store {store}, item {item}")
 
     # Prepare time series
     ts_df = prepare_store_item_series(df, store, item)
@@ -395,7 +398,7 @@ def main():
             ]
         )
 
-        for idx, row in tqdm(
+        for _, row in tqdm(
             unique_combinations.iterrows(), total=len(unique_combinations)
         ):
             store = row["store"]
