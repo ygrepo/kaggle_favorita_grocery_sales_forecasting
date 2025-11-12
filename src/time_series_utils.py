@@ -5,6 +5,7 @@ import numpy as np
 from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import LocalForecastingModel
 from darts.metrics import rmse, rmsse, mae, mase, mape, ope, smape
+from typing import Optional
 
 
 # Add project root to path to allow importing from src
@@ -50,8 +51,8 @@ def get_train_val_data(
     item: int,
     split_point: float,
     min_train_data_points: int,
-) -> tuple[TimeSeries, TimeSeries, TimeSeries] | [None, None, None]:
-
+) -> Optional[tuple[TimeSeries, TimeSeries, TimeSeries]]:
+    """Split data into training and validation sets."""
     try:
         train_data_for_std = df.iloc[: int(len(df) * split_point)]
         non_missing_count = train_data_for_std["growth_rate"].count()

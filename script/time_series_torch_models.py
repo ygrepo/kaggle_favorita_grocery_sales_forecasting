@@ -76,7 +76,7 @@ def generate_torch_kwargs(working_dir: Path) -> dict:
     return {
         "pl_trainer_kwargs": {
             "accelerator": "auto",
-            "callbacks": [TFMProgressBar(enable_train_bar_only=True)],
+            "callbacks": callbacks,
             "work_dir": working_dir,
             "num_workers": num_workers,
         }
