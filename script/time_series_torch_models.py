@@ -131,9 +131,6 @@ def process_store_item(task_data, df, args):
 
         # Train your model
         model.fit(train_ts)
-        model = NBEATSModel.load_from_checkpoint(
-            model_name=model_name, best=True
-        )
         forecast = model.historical_forecasts(
             ts,
             start=val_ts.start_time(),
