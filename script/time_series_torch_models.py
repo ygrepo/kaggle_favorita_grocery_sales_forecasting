@@ -43,7 +43,7 @@ logger = get_logger(__name__)
 
 
 # Change the function signature to accept gpu_id
-def generate_torch_kwargs(gpu_id: int) -> dict:
+def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
     # throughout training we'll monitor the validation loss for early stopping
     early_stopper = EarlyStopping(
         "val_smape",
@@ -108,8 +108,7 @@ def process_store_item(task_data, df, args):
         model_dir = args.model_dir.resolve() / f"{model_name}_{store}_{item}"
 
         # Pass the assigned gpu_id to the kwargs generator
-        smape_metric = SymmetricMeanAbsolutePercentageError()
-        model_kwargs = generate_torch_kwargs(model_dir, gpu_id, smape_metric)
+        model_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
         model = NBEATSModel(
             input_chunk_length=30,
@@ -337,84 +336,6 @@ def main():
             )
         else:
             metrics_df = pd.DataFrame(results)
-
-        # for _, row in tqdm(
-        #     unique_combinations.iterrows(), total=len(unique_combinations)
-        # ):
-        #     store = row["store"]
-        #     item = row["item"]
-        #     # Prepare time series
-        #     ts_df = prepare_store_item_series(df, store, item)
-        #     if ts_df.empty:
-        #         logger.warning(f"No data for store {store}, item {item}")
-        #         continue
-
-        #     ts, train_ts, val_ts = get_train_val_data(
-        #         ts_df,
-        #         store,
-        #         item,
-        #         args.split_point,
-        #         args.min_train_data_points,
-        #     )
-
-        #     # "Look at 30 days, predict the next 1 day."
-        #     model_name = args.model
-        #     model_dir = (
-        #         args.model_dir.resolve() / f"{model_name}_{store}_{item}"
-        #     )
-        #     model = NBEATSModel(
-        #         input_chunk_length=30,
-        #         output_chunk_length=1,
-        #         generic_architecture=True,
-        #         num_stacks=10,
-        #         num_blocks=1,
-        #         num_layers=4,
-        #         layer_widths=512,
-        #         n_epochs=100,
-        #         nr_epochs_val_period=1,
-        #         batch_size=800,
-        #         random_state=42,
-        #         model_name=model_name,
-        #         save_checkpoints=True,
-        #         force_reset=True,
-        #         **generate_torch_kwargs(model_dir),
-        #     )
-
-        #     # Train your model on the 584-day training set
-        #     model.fit(train_ts)
-        #     model = NBEATSModel.load_from_checkpoint(
-        #         model_name=model_name, best=True
-        #     )
-        #     forecast = model.historical_forecasts(
-        #         ts,
-        #         start=val_ts.start_time(),
-        #         forecast_horizon=7,
-        #         stride=7,
-        #         last_points_only=False,
-        #         retrain=False,
-        #         verbose=True,
-        #     )
-        #     forecast = concatenate(forecast)
-
-        #     metrics = calculate_metrics(train_ts, val_ts, forecast)
-
-        #     new_row = pd.DataFrame(
-        #         [
-        #             {
-        #                 "Model": model_name,
-        #                 "Store": store,
-        #                 "Item": item,
-        #                 "RMSE": metrics["rmse"],
-        #                 "RMSSE": metrics["rmsse"],
-        #                 "MAE": metrics["mae"],
-        #                 "MASE": metrics["mase"],
-        #                 "SMAPE": metrics["smape"],
-        #                 "OPE": metrics["ope"],
-        #             }
-        #         ]
-        #     )
-
-        #     metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
         logger.info(f"Saving results to {output_metrics_fn}")
         save_csv_or_parquet(metrics_df, output_metrics_fn)
