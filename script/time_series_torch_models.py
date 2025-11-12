@@ -48,7 +48,7 @@ def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
     early_stopper = EarlyStopping(
         "train_smape",
         min_delta=0.001,
-        patience=3,
+        patience=6,
         verbose=True,
         mode="min",  # SMAPE should be minimized
     )
