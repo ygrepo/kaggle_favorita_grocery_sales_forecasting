@@ -42,12 +42,6 @@ from src.time_series_utils import (
 logger = get_logger(__name__)
 
 
-class PatchedPruningCallback(
-    optuna.integration.PyTorchLightningPruningCallback, Callback
-):
-    pass
-
-
 # Change the function signature to accept gpu_id
 def generate_torch_kwargs(working_dir: Path, gpu_id: int) -> dict:
     # throughout training we'll monitor the validation loss for early stopping
