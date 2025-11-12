@@ -76,7 +76,7 @@ def generate_torch_kwargs(
             "accelerator": accelerator,
             "devices": devices,  # This will now be [0], or [1], etc.
             "callbacks": callbacks,
-            "work_dir": working_dir,
+            "default_root_dir": str(working_dir), 
             "num_workers": num_workers,
             "torch_metrics": metrics,
         }
