@@ -16,8 +16,7 @@ from tqdm import tqdm
 from darts.models import NBEATSModel
 from darts.utils.callbacks import TFMProgressBar
 
-from torchmetrics import SymmetricMeanAbsolutePercentageError
-import torchmetrics
+from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
 import torch
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 import multiprocessing
@@ -44,12 +43,10 @@ logger = get_logger(__name__)
 
 
 # Change the function signature to accept gpu_id
-def generate_torch_kwargs(
-    working_dir: Path, gpu_id: int, metrics: torchmetrics.Metric
-) -> dict:
+def generate_torch_kwargs(gpu_id: int) -> dict:
     # throughout training we'll monitor the validation loss for early stopping
     early_stopper = EarlyStopping(
-        "val_SymmetricMeanAbsolutePercentageError",
+        "val_smape",
         min_delta=0.001,
         patience=3,
         verbose=True,
@@ -60,15 +57,19 @@ def generate_torch_kwargs(
     ]
 
     if torch.cuda.is_available():
-        num_workers = 2
         accelerator = "gpu"
         devices = [gpu_id]
         logger.debug(f"Worker using GPU: {gpu_id}")
     else:
-        num_workers = 0
         accelerator = "auto"  # fallback to 'cpu' or 'auto'
         devices = "auto"
         logger.debug(f"Worker using GPU: {gpu_id}")
+
+    metrics = MetricCollection(
+        {
+            "smape": SymmetricMeanAbsolutePercentageError(),
+        }
+    )
 
     # run torch models on CPU, and disable progress bars for all model stages except training.
     return {
@@ -76,10 +77,9 @@ def generate_torch_kwargs(
             "accelerator": accelerator,
             "devices": devices,  # This will now be [0], or [1], etc.
             "callbacks": callbacks,
-            "default_root_dir": str(working_dir), 
-            "num_workers": num_workers,
-            "torch_metrics": metrics,
-        }
+            "default_root_dir": str(working_dir),
+        },
+        "torch_metrics": metrics,
     }
 
 
