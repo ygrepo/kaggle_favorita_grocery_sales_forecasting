@@ -56,6 +56,10 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
+# Unset the restriction to see both GPUs
+unset CUDA_VISIBLE_DEVICES
+# OR set it to both
+export CUDA_VISIBLE_DEVICES=0,1
 
 python "${SCRIPT_DIR}/time_series_torch_models.py" \
   --data_fn "$DATA_FN" \
