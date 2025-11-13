@@ -140,13 +140,51 @@ def calculate_rmsse(
     epsilon: float = np.finfo(float).eps,
 ) -> float:
     """Calculates RMSSE manually using numpy."""
+    # Input validation
+    if train_vals is None or val_vals is None or fcst_vals is None:
+        return np.nan
+
+    # Flatten arrays to ensure 1D (handles (n,1) shapes)
+    train_vals = np.asarray(train_vals).flatten()
+    val_vals = np.asarray(val_vals).flatten()
+    fcst_vals = np.asarray(fcst_vals).flatten()
+
+    # Check for empty arrays
+    if len(train_vals) == 0 or len(val_vals) == 0 or len(fcst_vals) == 0:
+        return np.nan
+
+    # Ensure forecast and validation have same length
+    min_len = min(len(val_vals), len(fcst_vals))
+    if min_len == 0:
+        return np.nan
+
+    val_vals = val_vals[:min_len]
+    fcst_vals = fcst_vals[:min_len]
+
+    # Need at least 2 training points for naive forecast
+    if len(train_vals) < 2:
+        return np.nan
+
+    # Check for NaN values
+    if (
+        np.any(np.isnan(train_vals))
+        or np.any(np.isnan(val_vals))
+        or np.any(np.isnan(fcst_vals))
+    ):
+        logger.warning("NaN values found in input arrays")
+        return np.nan
+
     # Numerator: RMSE of the forecast
-    rmse_forecast = np.sqrt(np.mean(np.square(val_vals - fcst_vals)))
+    forecast_errors = val_vals - fcst_vals
+    rmse_forecast = np.sqrt(np.mean(np.square(forecast_errors)))
 
     # Denominator: RMSE of the 1-step naive forecast in-sample
-    # This is the other part that fails in Darts
     naive_train_sq_errors = np.square(train_vals[1:] - train_vals[:-1])
     rmse_naive = np.sqrt(np.mean(naive_train_sq_errors))
+
+    # Avoid division by zero
+    if rmse_naive == 0:
+        return np.inf if rmse_forecast > 0 else np.nan
 
     return rmse_forecast / (rmse_naive + epsilon)
 
@@ -158,11 +196,23 @@ def calculate_mase(
     epsilon: float = np.finfo(float).eps,
 ) -> float:
     """Calculates MASE manually using numpy."""
+    # Flatten arrays to ensure 1D
+    train_vals = train_vals.flatten()
+    val_vals = val_vals.flatten()
+    fcst_vals = fcst_vals.flatten()
+
+    # Ensure forecast and validation have same length
+    min_len = min(len(val_vals), len(fcst_vals))
+    val_vals = val_vals[:min_len]
+    fcst_vals = fcst_vals[:min_len]
+
     # Numerator: MAE of the forecast
     mae_forecast = np.mean(np.abs(val_vals - fcst_vals))
 
     # Denominator: MAE of the 1-step naive forecast in-sample
-    # This is the part that fails in Darts
+    if len(train_vals) < 2:
+        return np.nan
+
     naive_train_errors = np.abs(train_vals[1:] - train_vals[:-1])
     mae_naive = np.mean(naive_train_errors)
 
@@ -174,33 +224,74 @@ def calculate_metrics(
     val: TimeSeries,
     forecast: TimeSeries,
 ):
-    """Calculate metrics with error handling."""
+    """Calculate metrics with comprehensive error handling."""
     try:
-        # logger.info(f"train: {train}")
-        # logger.info(f"val: {val}")
-        # logger.info(f"forecast: {forecast}")
-        return {
-            "rmse": rmse(val, forecast),
-            "rmsse": calculate_rmsse(
-                train.values(), val.values(), forecast.values()
-            ),
-            "mae": mae(val, forecast),
-            "mase": calculate_mase(
-                train.values(), val.values(), forecast.values()
-            ),
-            "smape": smape(val, forecast),
-            "ope": ope(val, forecast),
-        }
+        # Align series first to handle length mismatches
+        common_start = max(val.start_time(), forecast.start_time())
+        common_end = min(val.end_time(), forecast.end_time())
+
+        val_aligned = val.slice(common_start, common_end)
+        forecast_aligned = forecast.slice(common_start, common_end)
+
+        if len(val_aligned) == 0 or len(forecast_aligned) == 0:
+            logger.warning(
+                "No overlapping data between validation and forecast"
+            )
+            return {
+                k: np.nan
+                for k in ["rmse", "rmsse", "mae", "mase", "smape", "ope"]
+            }
+
+        # Calculate basic metrics with error handling
+        metrics = {}
+
+        try:
+            metrics["rmse"] = rmse(val_aligned, forecast_aligned)
+        except Exception as e:
+            logger.warning(f"RMSE calculation failed: {e}")
+            metrics["rmse"] = np.nan
+
+        try:
+            metrics["mae"] = mae(val_aligned, forecast_aligned)
+        except Exception as e:
+            logger.warning(f"MAE calculation failed: {e}")
+            metrics["mae"] = np.nan
+
+        try:
+            metrics["smape"] = smape(val_aligned, forecast_aligned)
+        except Exception as e:
+            logger.warning(f"SMAPE calculation failed: {e}")
+            metrics["smape"] = np.nan
+
+        try:
+            metrics["ope"] = ope(val_aligned, forecast_aligned)
+        except Exception as e:
+            logger.warning(f"OPE calculation failed: {e}")
+            metrics["ope"] = np.nan
+
+        # Calculate custom metrics
+        try:
+            metrics["rmsse"] = calculate_rmsse(
+                train.values(), val_aligned.values(), forecast_aligned.values()
+            )
+        except Exception as e:
+            logger.warning(f"RMSSE calculation failed: {e}")
+            metrics["rmsse"] = np.nan
+
+        try:
+            metrics["mase"] = calculate_mase(
+                train.values(), val_aligned.values(), forecast_aligned.values()
+            )
+        except Exception as e:
+            logger.warning(f"MASE calculation failed: {e}")
+            metrics["mase"] = np.nan
+
+        return metrics
+
     except Exception as e:
-        logger.warning(f"Error calculating some metrics: {e}")
-        # Return basic metrics only
+        logger.error(f"Error in calculate_metrics: {e}")
         return {
-            "rmse": rmse(val, forecast),
-            "rmsse": np.nan,
-            "mae": mae(val, forecast),
-            "mase": np.nan,
-            "smape": np.nan,
-            "ope": np.nan,
+            k: np.nan for k in ["rmse", "rmsse", "mae", "mase", "smape", "ope"]
         }
 
 

@@ -131,6 +131,14 @@ def process_store_item(task_data, df, args):
 
         # Train your model
         model.fit(train_ts)
+
+        # Log some info about the data
+        logger.debug(f"Store {store}, Item {item}:")
+        logger.debug(f"  Train length: {len(train_ts)}")
+        logger.debug(f"  Val length: {len(val_ts)}")
+        logger.debug(f"  Val start: {val_ts.start_time()}")
+        logger.debug(f"  Val end: {val_ts.end_time()}")
+
         forecast = model.historical_forecasts(
             ts,
             start=val_ts.start_time(),
@@ -143,6 +151,16 @@ def process_store_item(task_data, df, args):
         forecast = concatenate(forecast)
 
         metrics = calculate_metrics(train_ts, val_ts, forecast)
+
+        logger.debug(f"  Forecast length: {len(forecast)}")
+        logger.debug(f"  Forecast start: {forecast.start_time()}")
+        logger.debug(f"  Forecast end: {forecast.end_time()}")
+
+        # Check for alignment issues
+        if len(forecast) != len(val_ts):
+            logger.warning(
+                f"Length mismatch: forecast={len(forecast)}, val={len(val_ts)}"
+            )
 
         # Return the result as a dictionary
         return {
