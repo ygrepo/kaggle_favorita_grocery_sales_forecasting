@@ -785,7 +785,7 @@ def build_growth_features_for_clustering(
     imputer = SimpleImputer(strategy="median")
     X_imp = imputer.fit_transform(X)
 
-    # Put back into a DataFrame and cast for BTNMF
+    # Put back into a DataFrame
     imputed_feats = pd.DataFrame(
         X_imp, index=feats_kept.index, columns=num_cols
     ).astype("float32")

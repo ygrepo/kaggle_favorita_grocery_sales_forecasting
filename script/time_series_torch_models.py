@@ -261,19 +261,10 @@ def main():
     logger = setup_logging(log_fn, args.log_level)
     logger.info(f"Log fn: {log_fn}")
 
-    logger.info(f"CUDA available: {torch.cuda.is_available()}")
-    logger.info(f"CUDA device count: {torch.cuda.device_count()}")
-
     # List all visible devices
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-
-    # Check environment variables
-    import os
-
-    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "Not set")
-    logger.info(f"CUDA_VISIBLE_DEVICES: {cuda_visible}")
 
     try:
         # Log configuration
