@@ -14,7 +14,8 @@ DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parq
 DATE=$(date +"%Y%m%d")
 MODEL_DIR="${PROJECT_ROOT}/output/models"
 mkdir -p "$MODEL_DIR"
-MODEL="NBEATS"
+#MODEL="NBEATS"
+MODEL="TFT"
 METRICS_DIR="${PROJECT_ROOT}/output/metrics/${MODEL}"
 mkdir -p "$METRICS_DIR"
 METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
