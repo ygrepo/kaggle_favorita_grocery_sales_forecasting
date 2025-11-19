@@ -255,7 +255,7 @@ def process_store_item(
             logger.info(
                 f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
             )
-            model.fit(train_ts, dataloader_kwargs={"num_workers": 4})
+            model.fit(train_ts, dataloader_kwargs={"num_workers": 2})
 
             forecast = model.predict(len(val_ts))
             metrics = calculate_metrics(train_ts, val_ts, forecast)
