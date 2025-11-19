@@ -292,6 +292,7 @@ def main():
         # Get unique store-item pairs
         logger.info("Finding unique store-item combinations...")
         unique_combinations = df[["store", "item"]].drop_duplicates()
+        unique_combinations = unique_combinations.head(10)
         logger.info(f"Found {len(unique_combinations)} unique combinations")
 
         # Prepare metrics collection
