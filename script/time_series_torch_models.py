@@ -270,9 +270,9 @@ def main():
         logger.warning("No GPUs detected — running on CPU")
 
     df = load_raw_data(args.data_fn)
-
+    logger.info(df.head)
     unique_combinations = df[["store", "item"]].drop_duplicates()
-
+    unique_combinations = unique_combinations.head(10)
     results = []
 
     for idx, row in tqdm(
