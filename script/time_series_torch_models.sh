@@ -3,6 +3,11 @@
 # Set strict error handling
 set -euo pipefail
 
+export OMP_NUM_THREADS=32
+export MKL_NUM_THREADS=32
+export NUMEXPR_NUM_THREADS=32
+
+
 # Get the directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -26,8 +31,9 @@ METRICS_FN=""
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 N=10
-N_EPOCHS=15
+N_EPOCHS=10
 BATCH_SIZE=8192
+NUM_WORKERS=8
 
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -48,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --N) N="$2"; shift 2 ;;
     --n_epochs) N_EPOCHS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
+    --num_workers) NUM_WORKERS="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -131,7 +138,8 @@ python "${SCRIPT_DIR}/time_series_torch_models.py" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \
   --n_epochs "$N_EPOCHS" \
-  --batch_size "$BATCH_SIZE"
+  --batch_size "$BATCH_SIZE" \
+  --num_workers "$NUM_WORKERS"
 
 EXIT_CODE=${PIPESTATUS[0]}
 

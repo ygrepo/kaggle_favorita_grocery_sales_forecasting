@@ -140,6 +140,12 @@ def parse_args():
         help="Limit to first N combinations",
     )
     parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8,
+        help="Number of workers for data loading",
+    )
+    parser.add_argument(
         "--log_fn",
         type=Path,
         default="",
@@ -191,6 +197,7 @@ def process_store_item_combination(
     item: int,
     split_point: float,
     min_train_data_points: int,
+    num_workers: int,
     metrics_df: pd.DataFrame,
     model_types: List[ModelType],
 ) -> pd.DataFrame:
@@ -278,6 +285,7 @@ def process_store_item_combination(
                 item,
                 train_ts,
                 val_ts,
+                num_workers,
                 metrics_df,
             )
 
@@ -357,6 +365,7 @@ def eval_model(
     item: int,
     train: TimeSeries,
     val: TimeSeries,
+    num_workers: int,
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Evaluate a model with error handling."""
@@ -365,7 +374,7 @@ def eval_model(
         logger.info(
             f"Training {model_name} model, store {store}, item {item}..."
         )
-        model.fit(train)
+        model.fit(train, dataloader_kwargs={"num_workers": num_workers})
 
         logger.info(
             f"Generating forecast with {model_name}, store {store}, item {item}..."
@@ -447,6 +456,7 @@ def main():
         logger.info(f"  Split point: {args.split_point}")
         logger.info(f"  Min train data points: {args.min_train_data_points}")
         logger.info(f"  N: {args.N}")
+        logger.info(f"  Num workers: {args.num_workers}")
         # Load raw data
         logger.info("Loading raw data...")
         df = load_raw_data(data_fn)
@@ -485,6 +495,7 @@ def main():
                 item,
                 args.split_point,
                 args.min_train_data_points,
+                args.num_workers,
                 metrics_df,
                 model_types,
             )

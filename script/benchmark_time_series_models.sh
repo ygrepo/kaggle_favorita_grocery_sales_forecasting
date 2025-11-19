@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+export OMP_NUM_THREADS=32
+export MKL_NUM_THREADS=32
+export NUMEXPR_NUM_THREADS=32
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Project root: $PROJECT_ROOT"
@@ -17,7 +21,8 @@ METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_metric
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 MODELS="EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN"
-N=0
+N=10
+NUM_WORKERS=8
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
@@ -29,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --min_train_data_points) MIN_TRAIN_DATA_POINTS="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
     --N) N="$2"; shift 2 ;;
+    --num_workers) NUM_WORKERS="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -48,6 +54,7 @@ echo "Split point: $SPLIT_POINT" | tee -a "$LOG_FILE"
 echo "Min train data points: $MIN_TRAIN_DATA_POINTS" | tee -a "$LOG_FILE"
 echo "Models: $MODELS" | tee -a "$LOG_FILE"
 echo "N: $N" | tee -a "$LOG_FILE"
+echo "Num workers: $NUM_WORKERS" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 
 set +e
@@ -58,6 +65,7 @@ python "${SCRIPT_DIR}/benchmark_time_series_models.py" \
   --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \
   --models "$MODELS" \
   --N "$N" \
+  --num_workers "$NUM_WORKERS" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL"
 

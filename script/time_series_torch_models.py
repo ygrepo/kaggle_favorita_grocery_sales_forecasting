@@ -33,6 +33,9 @@ import torch
 from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
 from pytorch_lightning.callbacks import EarlyStopping
 
+torch.set_num_threads(32)
+torch.set_num_interop_threads(16)
+
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -131,7 +134,7 @@ def create_model(
         n_epochs=n_epochs,
         batch_size=batch_size,
         random_state=42,
-        save_checkpoints=True,
+        save_checkpoints=False,
         force_reset=True,
         **torch_kwargs,
     )
@@ -255,7 +258,9 @@ def process_store_item(
             logger.info(
                 f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
             )
-            model.fit(train_ts, dataloader_kwargs={"num_workers": 2})
+            model.fit(
+                train_ts, dataloader_kwargs={"num_workers": args.num_workers}
+            )
 
             forecast = model.predict(len(val_ts))
             metrics = calculate_metrics(train_ts, val_ts, forecast)
@@ -302,6 +307,9 @@ def parse_args():
     )
     parser.add_argument(
         "--batch_size", type=int, default=800, help="Override batch_size"
+    )
+    parser.add_argument(
+        "--num_workers", type=int, default=8, help="Override num_workers"
     )
     parser.add_argument("--gpu", type=int, default=-1)
     parser.add_argument("--metrics_fn", type=Path, default="")
