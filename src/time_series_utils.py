@@ -27,7 +27,7 @@ def prepare_store_item_series(
 
     # Filter data for specific store-item combination
     mask = (df["store"] == store) & (df["item"] == item)
-    series_df = df[mask].copy()
+    series_df = df[mask]
 
     if len(series_df) == 0:
         logger.warning(f"No data for store {store}, item {item}")

@@ -119,7 +119,7 @@ def process_store_item(task_data, df, args):
             num_blocks=1,
             num_layers=4,
             layer_widths=512,
-            n_epochs=100,
+            n_epochs=10,
             nr_epochs_val_period=1,
             batch_size=800,
             random_state=42,
@@ -139,15 +139,17 @@ def process_store_item(task_data, df, args):
         logger.debug(f"  Val start: {val_ts.start_time()}")
         logger.debug(f"  Val end: {val_ts.end_time()}")
 
-        forecast = model.historical_forecasts(
-            ts,
-            start=val_ts.start_time(),
-            forecast_horizon=7,
-            stride=7,
-            last_points_only=False,
-            retrain=False,
-            verbose=False,  # Set to False to avoid flooding logs
-        )
+        forecast = model.predict(len(val_ts))
+
+        # forecast = model.historical_forecasts(
+        #     ts,
+        #     start=val_ts.start_time(),
+        #     forecast_horizon=7,
+        #     stride=7,
+        #     last_points_only=False,
+        #     retrain=False,
+        #     verbose=False,  # Set to False to avoid flooding logs
+        # )
         forecast = concatenate(forecast)
 
         metrics = calculate_metrics(train_ts, val_ts, forecast)
@@ -284,6 +286,7 @@ def main():
         # Get unique store-item pairs
         logger.info("Finding unique store-item combinations...")
         unique_combinations = df[["store", "item"]].drop_duplicates()
+        logger.info(f"Found {len(unique_combinations)} unique combinations")
         # Initialize metrics dataframe
         logger.info("Running models...")
         metrics_df = pd.DataFrame(
