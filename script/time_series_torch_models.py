@@ -199,11 +199,9 @@ def create_model(
     # TiDE Model (MLP-based global model)
     # -------------------------
     elif model_type == ModelType.TIDE:
+        # only pass known-good kwargs for your Darts version
         return TiDEModel(
             hidden_size=64,
-            num_layers=2,
-            temporal_encoder_layers=1,
-            brnn_hidden_dim=64,  # BRNN encoder inside TiDE
             dropout=0.1,
             **base,
         )
