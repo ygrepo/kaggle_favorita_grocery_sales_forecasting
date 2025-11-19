@@ -117,6 +117,7 @@ def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
 
 def create_model(
     model_type: ModelType,
+    batch_size: int,
     torch_kwargs: Dict,
     n_epochs: int,
 ) -> ForecastingModel:
@@ -128,7 +129,7 @@ def create_model(
         input_chunk_length=30,
         output_chunk_length=1,
         n_epochs=n_epochs,
-        batch_size=800,
+        batch_size=batch_size,
         random_state=42,
         save_checkpoints=True,
         force_reset=True,
@@ -247,12 +248,14 @@ def process_store_item(
             model_dir.mkdir(parents=True, exist_ok=True)
             torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
-            model = create_model(mtype, torch_kwargs, args.n_epochs)
+            model = create_model(
+                mtype, args.batch_size, torch_kwargs, args.n_epochs
+            )
 
             logger.info(
                 f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
             )
-            model.fit(train_ts)
+            model.fit(train_ts, dataloader_kwargs={"num_workers": 4})
 
             forecast = model.predict(len(val_ts))
             metrics = calculate_metrics(train_ts, val_ts, forecast)
@@ -296,6 +299,9 @@ def parse_args():
         type=str,
         default="NBEATS",
         help="Comma-separated model list: 'NBEATS,TFT,TSMIXER'",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=800, help="Override batch_size"
     )
     parser.add_argument("--gpu", type=int, default=-1)
     parser.add_argument("--metrics_fn", type=Path, default="")

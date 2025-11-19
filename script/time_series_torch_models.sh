@@ -27,6 +27,7 @@ SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 N=0
 N_EPOCHS=15
+BATCH_SIZE=8192
 
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --min_train_data_points) MIN_TRAIN_DATA_POINTS="$2"; shift 2 ;;
     --N) N="$2"; shift 2 ;;
     --n_epochs) N_EPOCHS="$2"; shift 2 ;;
+    --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -97,6 +99,7 @@ echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
 echo "Models: $MODELS" | tee -a "$LOG_FILE"
+echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Model dir (parent): $MODEL_DIR" | tee -a "$LOG_FILE"
 echo "N epochs: $N_EPOCHS" | tee -a "$LOG_FILE"
 echo "N: $N" | tee -a "$LOG_FILE"
@@ -127,7 +130,8 @@ python "${SCRIPT_DIR}/time_series_torch_models.py" \
   --N "$N" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \
-  --n_epochs "$N_EPOCHS"
+  --n_epochs "$N_EPOCHS" \
+  --batch_size "$BATCH_SIZE"
 
 EXIT_CODE=${PIPESTATUS[0]}
 
