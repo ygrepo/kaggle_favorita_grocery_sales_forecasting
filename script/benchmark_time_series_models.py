@@ -446,7 +446,7 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
         logger.info(f"  Split point: {args.split_point}")
         logger.info(f"  Min train data points: {args.min_train_data_points}")
-
+        logger.info(f"  N: {args.N}")
         # Load raw data
         logger.info("Loading raw data...")
         df = load_raw_data(data_fn)
