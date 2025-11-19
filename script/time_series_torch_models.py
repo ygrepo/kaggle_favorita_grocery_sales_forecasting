@@ -12,15 +12,13 @@ from pathlib import Path
 from enum import Enum
 from typing import Dict, Optional, List
 
-try:
-    import traceback
-except ImportError:
-    pass
+
+import traceback
 
 import pandas as pd
 from tqdm import tqdm
 
-from darts.models import NBEATSModel, TFTModel, TSMixerModel
+from darts.models import NBEATSModel, TFTModel, TSMixerModel, ForecastingModel
 from darts.utils.callbacks import TFMProgressBar
 
 import torch
@@ -109,7 +107,7 @@ def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
 def create_model(
     model_type: ModelType,
     torch_kwargs: Dict,
-) -> NBEATSModel:
+) -> ForecastingModel:
     """
     Factory to create a Darts model instance.
     """
@@ -185,8 +183,11 @@ def process_store_item(
         # train each model requested
         for mtype in model_types:
             model_dir = (
-                args.model_dir.resolve() / f"{mtype.value}_{store}_{item}"
+                args.model_dir.resolve()
+                / mtype.value
+                / f"store_{store}_item_{item}"
             )
+            model_dir.mkdir(parents=True, exist_ok=True)
             torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
             model = create_model(mtype, torch_kwargs)
@@ -253,10 +254,10 @@ def main():
 
     # Parse model list
     model_types = parse_models_arg(args.models)
-    logger.info(f"Training models: {[m.value for m in model_types]}")
 
     # Setup logging
     logger = setup_logging(args.log_fn, args.log_level)
+    logger.info(f"Training models: {[m.value for m in model_types]}")
 
     # GPUs
     if torch.cuda.is_available():

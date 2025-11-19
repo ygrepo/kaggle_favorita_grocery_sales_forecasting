@@ -12,21 +12,26 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parquet"
 DATE=$(date +"%Y%m%d")
+
 MODEL_DIR="${PROJECT_ROOT}/output/models"
 mkdir -p "$MODEL_DIR"
-#MODEL="NBEATS"
-#MODEL="TFT"
+
+# Multiple models by default
 MODELS="NBEATS,TFT,TSMIXER"
-METRICS_DIR="${PROJECT_ROOT}/output/metrics/${MODEL}"
-mkdir -p "$METRICS_DIR"
-METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
+
+# Metrics defaults (will be finalized *after* arg parsing)
+METRICS_DIR=""
+METRICS_FN=""
+
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
+# ------------------------------
 # Parse command line arguments
+# ------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
@@ -42,26 +47,68 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Create output directories if they don't exist
+# ------------------------------
+# Finalize directories now that args are parsed
+# ------------------------------
+
+# Ensure base model/log dirs exist (MODEL_DIR may have been overridden)
+mkdir -p "$MODEL_DIR"
 mkdir -p "$LOG_DIR"
-# Set up log file with timestamp
+
+# Normalize models name for use in paths: "NBEATS,TFT" → "NBEATS_TFT"
+MODELS_SAFE_NAME=$(echo "$MODELS" | tr ',' '_')
+
+# If metrics_dir wasn't explicitly set, derive it from MODELS
+if [[ -z "$METRICS_DIR" ]]; then
+  METRICS_DIR="${PROJECT_ROOT}/output/metrics/${MODELS_SAFE_NAME}"
+fi
+mkdir -p "$METRICS_DIR"
+
+# If metrics_fn wasn't explicitly set, derive it from METRICS_DIR
+if [[ -z "$METRICS_FN" ]]; then
+  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
+fi
+
+# Create separate MODEL_DIRS for each model type
+IFS=',' read -ra MODEL_LIST <<< "$MODELS"
+for MODEL_NAME in "${MODEL_LIST[@]}"; do
+    MODEL_NAME_TRIMMED=$(echo "$MODEL_NAME" | xargs)  # trim spaces
+    MODEL_SUBDIR="${MODEL_DIR}/${MODEL_NAME_TRIMMED}"
+    mkdir -p "$MODEL_SUBDIR"
+    echo "Created model subdirectory: $MODEL_SUBDIR"
+done
+
+# ------------------------------
+# Logging setup
+# ------------------------------
+
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}_benchmark_time_series_models.log"
 
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
-
-# Run the script
-set +e  # Disable exit on error to handle the error message
 echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
 echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
+echo "Models: $MODELS" | tee -a "$LOG_FILE"
+echo "Model dir (parent): $MODEL_DIR" | tee -a "$LOG_FILE"
+echo "Metrics dir: $METRICS_DIR" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
-# Unset the restriction to see both GPUs
+
+# ------------------------------
+# GPU setup
+# ------------------------------
+
+# Explicitly expose GPUs 0 and 1
 unset CUDA_VISIBLE_DEVICES
-# OR set it to both
 export CUDA_VISIBLE_DEVICES=0,1
+
+# ------------------------------
+# Run Python script
+# ------------------------------
+
+set +e  # allow error handling below
 
 python "${SCRIPT_DIR}/time_series_torch_models.py" \
   --data_fn "$DATA_FN" \
@@ -71,9 +118,8 @@ python "${SCRIPT_DIR}/time_series_torch_models.py" \
   --split_point "$SPLIT_POINT" \
   --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \
   --log_fn "$LOG_FILE" \
-  --log_level "$LOG_LEVEL" 
+  --log_level "$LOG_LEVEL"
 
-# Check the exit status of the Python script
 EXIT_CODE=${PIPESTATUS[0]}
 
 if [ $EXIT_CODE -eq 0 ]; then
