@@ -187,9 +187,10 @@ def create_model(
     # -------------------------
     elif model_type == ModelType.TCN:
         return TCNModel(
-            hidden_size=32,  # Each layer size
-            kernel_size=3,  # Temporal receptive field
-            num_filters=64,
+            kernel_size=3,  # receptive field
+            num_filters=64,  # number of convolutional filters (capacity)
+            dilation_base=2,  # exponential dilation growth
+            weight_norm=True,  # stable training
             dropout=0.1,
             **base,
         )
