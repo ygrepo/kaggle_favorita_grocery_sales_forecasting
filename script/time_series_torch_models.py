@@ -275,9 +275,15 @@ def main():
     unique_combinations = unique_combinations.head(10)
     results = []
 
-    for _, row in tqdm(
-        unique_combinations.iterrows(), total=len(unique_combinations)
+    for idx, (store, item) in tqdm(
+        enumerate(
+            unique_combinations[["store", "item"]].itertuples(
+                index=False, name=None
+            )
+        ),
+        total=len(unique_combinations),
     ):
+
         # GPU assignment
         if num_gpus == 0:
             gpu_id = None
