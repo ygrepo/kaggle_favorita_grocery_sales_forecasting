@@ -292,9 +292,7 @@ def main():
         else:
             gpu_id = idx % num_gpus  # round-robin GPUs
 
-        rows = process_store_item(
-            row.store, row.item, gpu_id, df, args, model_types
-        )
+        rows = process_store_item(store, item, gpu_id, df, args, model_types)
         results.extend(rows)
 
     metrics_df = pd.DataFrame(results)
