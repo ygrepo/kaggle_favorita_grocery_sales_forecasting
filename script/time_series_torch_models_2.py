@@ -11,44 +11,42 @@ import sys
 import argparse
 from pathlib import Path
 import pandas as pd
+from darts import TimeSeries, concatenate
 from tqdm import tqdm
-
-from darts import TimeSeries
 from darts.models import NBEATSModel
 from darts.utils.callbacks import TFMProgressBar
 
-import torch
 from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
-from pytorch_lightning.callbacks import EarlyStopping
+import torch
+from pytorch_lightning.callbacks import Callback, EarlyStopping
+import multiprocessing
+from functools import partial
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
 from src.utils import (
     setup_logging,
     get_logger,
     save_csv_or_parquet,
 )
 from src.data_utils import load_raw_data
+from src.time_series_utils import get_train_val_data
 from src.time_series_utils import (
     prepare_store_item_series,
     get_train_val_data,
     calculate_metrics,
+    eval_model,
 )
 
 logger = get_logger(__name__)
 
 
+# Change the function signature to accept gpu_id
 def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
-    """
-    Build pl_trainer_kwargs and torch_metrics for Darts' TorchForecastingModel.
-
-    Note: we set a specific GPU device per (store, item) via `devices=[gpu_id]`.
-    """
-    # Early stopping; you may want to change monitor to "val_loss" if needed.
+    # throughout training we'll monitor the validation loss for early stopping
     early_stopper = EarlyStopping(
-        monitor="train_smape",
+        "train_smape",
         min_delta=0.001,
         patience=6,
         verbose=True,
@@ -59,14 +57,14 @@ def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
         TFMProgressBar(enable_train_bar_only=True),
     ]
 
-    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+    if torch.cuda.is_available():
         accelerator = "gpu"
         devices = [gpu_id]
-        logger.debug(f"Using GPU {gpu_id} for this model.")
+        logger.debug(f"Worker using GPU: {gpu_id}")
     else:
         accelerator = "auto"  # fallback to 'cpu' or 'auto'
         devices = "auto"
-        logger.debug("No CUDA device detected; using CPU/auto.")
+        logger.debug(f"Worker using GPU: {gpu_id}")
 
     metrics = MetricCollection(
         {
@@ -74,10 +72,11 @@ def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
         }
     )
 
+    # run torch models on CPU, and disable progress bars for all model stages except training.
     return {
         "pl_trainer_kwargs": {
             "accelerator": accelerator,
-            "devices": devices,
+            "devices": devices,  # This will now be [0], or [1], etc.
             "callbacks": callbacks,
             "default_root_dir": str(working_dir),
         },
@@ -85,18 +84,18 @@ def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
     }
 
 
-def process_store_item(
-    store: int, item: int, gpu_id: int, df: pd.DataFrame, args
-):
+def process_store_item(task_data, df, args):
     """
-    Process a single (store, item) pair on a given GPU *sequentially*.
+    Worker function to process a single store-item combination on a specific GPU.
     """
+    store, item, gpu_id = task_data
+
     try:
         # Prepare time series
         ts_df = prepare_store_item_series(df, store, item)
         if ts_df.empty:
             logger.warning(f"No data for store {store}, item {item}")
-            return None
+            return None  # Signal to skip
 
         ts, train_ts, val_ts = get_train_val_data(
             ts_df,
@@ -106,16 +105,10 @@ def process_store_item(
             args.min_train_data_points,
         )
 
-        if train_ts is None or val_ts is None or len(val_ts) == 0:
-            logger.warning(
-                f"Skipping (store {store}, item {item}) due to insufficient data."
-            )
-            return None
-
         model_name = args.model
         model_dir = args.model_dir.resolve() / f"{model_name}_{store}_{item}"
 
-        # Build trainer kwargs targeting the chosen GPU
+        # Pass the assigned gpu_id to the kwargs generator
         model_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
         model = NBEATSModel(
@@ -137,9 +130,6 @@ def process_store_item(
         )
 
         # Train your model
-        logger.info(
-            f"Fitting NBEATS for store {store}, item {item} on GPU {gpu_id}..."
-        )
         model.fit(train_ts)
 
         # Log some info about the data
@@ -149,8 +139,18 @@ def process_store_item(
         logger.debug(f"  Val start: {val_ts.start_time()}")
         logger.debug(f"  Val end: {val_ts.end_time()}")
 
-        # One-shot forecast over the validation window
         forecast = model.predict(len(val_ts))
+
+        # forecast = model.historical_forecasts(
+        #     ts,
+        #     start=val_ts.start_time(),
+        #     forecast_horizon=7,
+        #     stride=7,
+        #     last_points_only=False,
+        #     retrain=False,
+        #     verbose=False,  # Set to False to avoid flooding logs
+        # )
+        # forecast = concatenate(forecast)
 
         metrics = calculate_metrics(train_ts, val_ts, forecast)
 
@@ -161,8 +161,7 @@ def process_store_item(
         # Check for alignment issues
         if len(forecast) != len(val_ts):
             logger.warning(
-                f"Length mismatch for (store {store}, item {item}): "
-                f"forecast={len(forecast)}, val={len(val_ts)}"
+                f"Length mismatch: forecast={len(forecast)}, val={len(val_ts)}"
             )
 
         # Return the result as a dictionary
@@ -179,13 +178,14 @@ def process_store_item(
         }
 
     except Exception as e:
+        # Log errors from inside the worker
         logger.error(
-            f"ERROR processing (store {store}, item {item}) on GPU {gpu_id}: {e}"
+            f"!! ERROR processing (store {store}, item {item}) on GPU {gpu_id}: {e}"
         )
         import traceback
 
         logger.error(traceback.format_exc())
-        return None
+        return None  # Signal failure
 
 
 def parse_args():
@@ -215,16 +215,13 @@ def parse_args():
         "--gpu",
         type=int,
         default=0,
-        help=(
-            "Optional: If set, force all models onto this single GPU ID. "
-            "If left as 0 and multiple GPUs are available, GPUs are used in round-robin."
-        ),
+        help="The specific GPU ID to use for this script instance.",
     )
     parser.add_argument(
         "--metrics_fn",
         type=Path,
         default="",
-        help="Path to metrics output file (relative to project root)",
+        help="Path to data file (relative to project root)",
     )
     parser.add_argument(
         "--split_point",
@@ -256,6 +253,7 @@ def parse_args():
 
 def main():
     """Main training function."""
+    # Parse command line arguments
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
     output_metrics_fn = Path(args.metrics_fn).resolve()
@@ -266,15 +264,12 @@ def main():
     logger.info(f"Log fn: {log_fn}")
 
     # List all visible devices
-    num_gpus = 0
     if torch.cuda.is_available():
-        num_gpus = torch.cuda.device_count()
-        for i in range(num_gpus):
+        for i in range(torch.cuda.device_count()):
             logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    else:
-        logger.warning("No GPUs found! Models will run on CPU/auto.")
 
     try:
+        # Log configuration
         logger.info(
             "Starting time series model benchmarking with configuration:"
         )
@@ -288,54 +283,67 @@ def main():
         # Load raw data
         logger.info("Loading raw data...")
         df = load_raw_data(data_fn)
-
         # Get unique store-item pairs
         logger.info("Finding unique store-item combinations...")
         unique_combinations = df[["store", "item"]].drop_duplicates()
         logger.info(f"Found {len(unique_combinations)} unique combinations")
+        # Initialize metrics dataframe
+        logger.info("Running models...")
+        metrics_df = pd.DataFrame(
+            columns=[
+                "Model",
+                "Store",
+                "Item",
+                "RMSE",
+                "MAE",
+                "SMAPE",
+                "OPE",
+            ]
+        )
 
-        # Prepare metrics collection
-        results = []
+        # --- START: NEW MULTIPROCESSING LOGIC ---
 
+        # Determine number of GPUs to use
+        num_gpus = torch.cuda.device_count()
         if num_gpus == 0:
-            # CPU-only: just iterate sequentially
-            logger.info("Running sequentially on CPU/auto.")
-            gpu_ids = [None] * len(
-                unique_combinations
-            )  # not used, but kept for API
-        else:
-            logger.info(
-                f"Using {num_gpus} GPU(s). Assigning (store, item) to GPUs in round-robin."
-            )
+            logger.warning("No GPUs found! Running sequentially on CPU.")
+            num_gpus = 1  # We'll run 1 worker process on the CPU
 
-        # Sequential loop, GPU chosen per (store, item)
-        for idx, row in tqdm(
-            enumerate(unique_combinations.itertuples(index=False)),
-            total=len(unique_combinations),
-        ):
-            store = row.store
-            item = row.item
+        logger.info(f"Found {num_gpus} GPUs. Creating task list...")
 
-            if num_gpus == 0:
-                gpu_id = 0  # ignored in generate_torch_kwargs (will fall back to auto/CPU)
-            else:
-                # If args.gpu is set explicitly, use that for all; else round-robin
-                if args.gpu is not None and args.gpu >= 0:
-                    gpu_id = args.gpu
-                else:
-                    gpu_id = idx % num_gpus
-
-            res = process_store_item(store, item, gpu_id, df, args)
-            if res is not None:
-                results.append(res)
+        # Create a list of tasks. Each task is a tuple: (store, item, gpu_id)
+        # We assign a-gpu_id in a round-robin fashion.
+        tasks = []
+        for i, row in enumerate(unique_combinations.itertuples(index=False)):
+            tasks.append((row.store, row.item, i % num_gpus))
 
         logger.info(
-            "All (store, item) combinations processed. Consolidating results..."
+            f"Distributing {len(tasks)} tasks across {num_gpus} workers."
         )
+
+        # We must use 'spawn' for safety with CUDA
+        multiprocessing.set_start_method("spawn", force=True)
+
+        # Use functools.partial to "bake in" the static df and args
+        # The pool will only send the changing 'task_data' to the worker
+        worker_func = partial(process_store_item, df=df, args=args)
+
+        results = []
+
+        # Create the pool and run the tasks
+        with multiprocessing.Pool(processes=num_gpus) as pool:
+            # Use pool.imap_unordered for efficiency and tqdm for progress
+            for result in tqdm(
+                pool.imap_unordered(worker_func, tasks), total=len(tasks)
+            ):
+                if result is not None:  # Collect non-error results
+                    results.append(result)
+
+        logger.info("All tasks complete. Consolidating results...")
 
         if not results:
             logger.warning(
-                "No results were generated. Check logs for per-series errors."
+                "No results were generated. Check worker logs for errors."
             )
             metrics_df = pd.DataFrame(
                 columns=[
