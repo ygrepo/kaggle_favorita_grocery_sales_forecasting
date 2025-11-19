@@ -17,7 +17,7 @@ MODEL_DIR="${PROJECT_ROOT}/output/models"
 mkdir -p "$MODEL_DIR"
 
 # Multiple models by default
-MODELS="NBEATS,TFT,TSMIXER"
+MODELS="NBEATS,TFT,TSMIXER,BLOCK_RNN,TCN,TIDE"
 
 # Metrics defaults (will be finalized *after* arg parsing)
 METRICS_DIR=""

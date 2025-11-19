@@ -18,7 +18,14 @@ import traceback
 import pandas as pd
 from tqdm import tqdm
 
-from darts.models import NBEATSModel, TFTModel, TSMixerModel
+from darts.models import (
+    NBEATSModel,
+    TFTModel,
+    TSMixerModel,
+    BlockRNNModel,
+    TCNModel,
+    TiDEModel,
+)
 from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.utils.callbacks import TFMProgressBar
 
@@ -55,6 +62,9 @@ class ModelType(str, Enum):
     NBEATS = "NBEATS"
     TFT = "TFT"
     TSMIXER = "TSMIXER"
+    BLOCK_RNN = "BLOCK_RNN"
+    TCN = "TCN"
+    TIDE = "TIDE"
 
 
 def parse_models_arg(models_string: str) -> List[ModelType]:
@@ -124,6 +134,9 @@ def create_model(
         **torch_kwargs,
     )
 
+    # -------------------------
+    # NBEATS
+    # -------------------------
     if model_type == ModelType.NBEATS:
         return NBEATSModel(
             generic_architecture=True,
@@ -134,6 +147,9 @@ def create_model(
             **base,
         )
 
+    # -------------------------
+    # TFT (Temporal Fusion Transformer)
+    # -------------------------
     elif model_type == ModelType.TFT:
         return TFTModel(
             hidden_size=64,
@@ -144,9 +160,49 @@ def create_model(
             **base,
         )
 
+    # -------------------------
+    # TS-Mixer
+    # -------------------------
     elif model_type == ModelType.TSMIXER:
         return TSMixerModel(
             hidden_size=64,
+            dropout=0.1,
+            **base,
+        )
+
+    # -------------------------
+    # Block RNN (LSTM/GRU)
+    # -------------------------
+    elif model_type == ModelType.BLOCK_RNN:
+        return BlockRNNModel(
+            model="LSTM",  # Could be "RNN" / "LSTM" / "GRU"
+            hidden_dim=64,  # Good default
+            n_rnn_layers=2,  # Stacked layers
+            dropout=0.1,
+            **base,
+        )
+
+    # -------------------------
+    # Temporal Convolutional Network (TCN)
+    # -------------------------
+    elif model_type == ModelType.TCN:
+        return TCNModel(
+            hidden_size=32,  # Each layer size
+            kernel_size=3,  # Temporal receptive field
+            num_filters=64,
+            dropout=0.1,
+            **base,
+        )
+
+    # -------------------------
+    # TiDE Model (MLP-based global model)
+    # -------------------------
+    elif model_type == ModelType.TIDE:
+        return TiDEModel(
+            hidden_size=64,
+            num_layers=2,
+            temporal_encoder_layers=1,
+            brnn_hidden_dim=64,  # BRNN encoder inside TiDE
             dropout=0.1,
             **base,
         )
