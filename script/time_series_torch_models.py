@@ -18,7 +18,8 @@ import traceback
 import pandas as pd
 from tqdm import tqdm
 
-from darts.models import NBEATSModel, TFTModel, TSMixerModel, ForecastingModel
+from darts.models import NBEATSModel, TFTModel, TSMixerModel
+from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.utils.callbacks import TFMProgressBar
 
 import torch
