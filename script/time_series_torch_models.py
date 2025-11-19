@@ -300,6 +300,9 @@ def parse_args():
     parser.add_argument("--metrics_fn", type=Path, default="")
     parser.add_argument("--split_point", type=float, default=0.8)
     parser.add_argument("--min_train_data_points", type=int, default=15)
+    parser.add_argument(
+        "--N", type=int, default=0, help="Limit to first N combinations"
+    )
     parser.add_argument("--log_fn", type=Path, default="")
     parser.add_argument("--log_level", type=str, default="INFO")
     return parser.parse_args()
@@ -327,7 +330,9 @@ def main():
     df = load_raw_data(args.data_fn)
     logger.info(df.head())
     unique_combinations = df[["store", "item"]].drop_duplicates()
-    unique_combinations = unique_combinations.head(10)
+    if args.N > 0:
+        logger.info(f"Limiting to first {args.N} combinations")
+        unique_combinations = unique_combinations.head(args.N)
     results = []
 
     for idx, (store, item) in tqdm(
