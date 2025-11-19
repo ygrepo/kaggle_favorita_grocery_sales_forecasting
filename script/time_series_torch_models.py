@@ -118,6 +118,7 @@ def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
 def create_model(
     model_type: ModelType,
     torch_kwargs: Dict,
+    n_epochs: int,
 ) -> ForecastingModel:
     """
     Factory to create a Darts model instance.
@@ -126,7 +127,7 @@ def create_model(
     base = dict(
         input_chunk_length=30,
         output_chunk_length=1,
-        n_epochs=10,
+        n_epochs=n_epochs,
         batch_size=800,
         random_state=42,
         save_checkpoints=True,
@@ -246,7 +247,7 @@ def process_store_item(
             model_dir.mkdir(parents=True, exist_ok=True)
             torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
-            model = create_model(mtype, torch_kwargs)
+            model = create_model(mtype, torch_kwargs, args.n_epochs)
 
             logger.info(
                 f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
@@ -305,6 +306,7 @@ def parse_args():
     )
     parser.add_argument("--log_fn", type=Path, default="")
     parser.add_argument("--log_level", type=str, default="INFO")
+    parser.add_argument("--n_epochs", type=int, default=10)
     return parser.parse_args()
 
 
