@@ -16,7 +16,7 @@ MODEL_DIR="${PROJECT_ROOT}/output/models"
 mkdir -p "$MODEL_DIR"
 #MODEL="NBEATS"
 #MODEL="TFT"
-MODEL="TSMIXER"
+MODELS="NBEATS,TFT,TSMIXER"
 METRICS_DIR="${PROJECT_ROOT}/output/metrics/${MODEL}"
 mkdir -p "$METRICS_DIR"
 METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --model_dir) MODEL_DIR="$2"; shift 2 ;;
-    --model) MODEL="$2"; shift 2 ;;
+    --models) MODELS="$2"; shift 2 ;;
     --metrics_fn) METRICS_FN="$2"; shift 2 ;;
     --metrics_dir) METRICS_DIR="$2"; shift 2 ;;
     --split_point) SPLIT_POINT="$2"; shift 2 ;;
@@ -66,7 +66,7 @@ export CUDA_VISIBLE_DEVICES=0,1
 python "${SCRIPT_DIR}/time_series_torch_models.py" \
   --data_fn "$DATA_FN" \
   --model_dir "$MODEL_DIR" \
-  --model "$MODEL" \
+  --models "$MODELS" \
   --metrics_fn "$METRICS_FN" \
   --split_point "$SPLIT_POINT" \
   --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \

@@ -2,16 +2,15 @@
 """
 Training script for the Favorita Grocery Sales Forecasting model.
 
-This script handles the complete training pipeline including:
-- Data loading and preprocessing
-- Logging
+Supports training multiple models per (store, item):
+--models "NBEATS,TFT" or --models "NBEATS"
 """
 
 import sys
 import argparse
 from pathlib import Path
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 try:
     import traceback
@@ -37,6 +36,7 @@ from src.utils import (
     get_logger,
     save_csv_or_parquet,
 )
+
 from src.data_utils import load_raw_data
 from src.time_series_utils import (
     prepare_store_item_series,
@@ -58,14 +58,21 @@ class ModelType(str, Enum):
     TSMIXER = "TSMIXER"
 
 
-def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
+def parse_models_arg(models_string: str) -> List[ModelType]:
     """
-    Build pl_trainer_kwargs and torch_metrics for Darts' TorchForecastingModel.
+    Convert --models "NBEATS,TFT" into [ModelType.NBEATS, ModelType.TFT].
+    """
+    try:
+        names = [m.strip().upper() for m in models_string.split(",")]
+        return [ModelType(name) for name in names]
+    except Exception:
+        raise ValueError(f"Invalid --models argument: {models_string}")
 
-    If gpu_id is None or CUDA is unavailable, falls back to CPU/auto.
-    """
+
+def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
+    """Return trainer kwargs + torch_metrics for a specific GPU."""
     early_stopper = EarlyStopping(
-        monitor="train_smape",  # consider "val_loss" if you want validation-based stopping
+        monitor="train_smape",
         min_delta=0.001,
         patience=6,
         verbose=True,
@@ -76,23 +83,16 @@ def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
         TFMProgressBar(enable_train_bar_only=True),
     ]
 
-    if (
-        gpu_id is not None
-        and torch.cuda.is_available()
-        and torch.cuda.device_count() > 0
-    ):
+    if gpu_id is not None and torch.cuda.is_available():
         accelerator = "gpu"
         devices = [gpu_id]
-        logger.debug(f"Using GPU {gpu_id} for this model.")
+        logger.debug(f"Using GPU {gpu_id}")
     else:
         accelerator = "auto"
         devices = "auto"
-        logger.debug("No specific CUDA device; using CPU/auto.")
 
     metrics = MetricCollection(
-        {
-            "smape": SymmetricMeanAbsolutePercentageError(),
-        }
+        {"smape": SymmetricMeanAbsolutePercentageError()}
     )
 
     return {
@@ -108,22 +108,18 @@ def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
 
 def create_model(
     model_type: ModelType,
-    model_name: str,
     torch_kwargs: Dict,
 ) -> NBEATSModel:
     """
-    Factory to create a Darts TorchForecastingModel (NBEATS, TFT, TSMixer)
-    with a shared set of base hyperparameters and model-specific extras.
+    Factory to create a Darts model instance.
     """
 
-    # Base kwargs shared by all three models
-    base_kwargs = dict(
+    base = dict(
         input_chunk_length=30,
         output_chunk_length=1,
         n_epochs=10,
         batch_size=800,
         random_state=42,
-        model_name=model_name,
         save_checkpoints=True,
         force_reset=True,
         **torch_kwargs,
@@ -136,33 +132,31 @@ def create_model(
             num_blocks=1,
             num_layers=4,
             layer_widths=512,
-            **base_kwargs,
+            **base,
         )
 
     elif model_type == ModelType.TFT:
-        # You can tune these hyperparameters further
         return TFTModel(
             hidden_size=64,
             lstm_layers=1,
-            num_attention_heads=4,
             dropout=0.1,
+            num_attention_heads=4,
             add_relative_index=True,
-            **base_kwargs,
+            **base,
         )
 
     elif model_type == ModelType.TSMIXER:
         return TSMixerModel(
             hidden_size=64,
             dropout=0.1,
-            **base_kwargs,
+            **base,
         )
 
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
+    raise ValueError(f"Unsupported model: {model_type}")
 
 
 # ---------------------------------------------------------------------
-# Core per-(store, item) processing
+# Train all models for a given (store, item)
 # ---------------------------------------------------------------------
 
 
@@ -172,88 +166,59 @@ def process_store_item(
     gpu_id: Optional[int],
     df: pd.DataFrame,
     args,
-    model_type: ModelType,
-):
-    """
-    Process a single (store, item) pair on a given GPU sequentially.
-    """
+    model_types: List[ModelType],
+) -> List[dict]:
+    """Train ALL requested models for a single store-item pair."""
     try:
-        # Prepare time series
         ts_df = prepare_store_item_series(df, store, item)
         if ts_df.empty:
-            logger.warning(f"No data for store {store}, item {item}")
-            return None
+            return []
 
         _, train_ts, val_ts = get_train_val_data(
-            ts_df,
-            store,
-            item,
-            args.split_point,
-            args.min_train_data_points,
+            ts_df, store, item, args.split_point, args.min_train_data_points
         )
-
         if train_ts is None or val_ts is None or len(val_ts) == 0:
-            logger.warning(
-                f"Skipping (store {store}, item {item}) due to insufficient data."
+            return []
+
+        rows = []
+
+        # train each model requested
+        for mtype in model_types:
+            model_dir = (
+                args.model_dir.resolve() / f"{mtype.value}_{store}_{item}"
             )
-            return None
+            torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
-        model_name = args.model
-        model_dir = args.model_dir.resolve() / f"{model_name}_{store}_{item}"
+            model = create_model(mtype, torch_kwargs)
 
-        # Build trainer kwargs targeting the chosen GPU
-        torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
-
-        # Create the model via factory
-        model = create_model(
-            model_type=model_type,
-            model_name=model_name,
-            torch_kwargs=torch_kwargs,
-        )
-
-        logger.info(
-            f"Fitting {model_type.value} for store {store}, item {item} on GPU {gpu_id}..."
-        )
-        model.fit(train_ts)
-
-        logger.debug(f"Store {store}, Item {item}:")
-        logger.debug(f"  Train length: {len(train_ts)}")
-        logger.debug(f"  Val length: {len(val_ts)}")
-        logger.debug(f"  Val start: {val_ts.start_time()}")
-        logger.debug(f"  Val end: {val_ts.end_time()}")
-
-        # One-shot forecast over the validation window
-        forecast = model.predict(len(val_ts))
-
-        metrics = calculate_metrics(train_ts, val_ts, forecast)
-
-        logger.debug(f"  Forecast length: {len(forecast)}")
-        logger.debug(f"  Forecast start: {forecast.start_time()}")
-        logger.debug(f"  Forecast end: {forecast.end_time()}")
-
-        if len(forecast) != len(val_ts):
-            logger.warning(
-                f"Length mismatch for (store {store}, item {item}): "
-                f"forecast={len(forecast)}, val={len(val_ts)}"
+            logger.info(
+                f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
             )
-        return {
-            "Model": model_name,
-            "Store": store,
-            "Item": item,
-            "RMSE": metrics["rmse"],
-            "MAE": metrics["mae"],
-            "SMAPE": metrics["smape"],
-            "OPE": metrics["ope"],
-            "RMSSE": metrics["rmsse"],
-            "MASE": metrics["mase"],
-        }
+            model.fit(train_ts)
+
+            forecast = model.predict(len(val_ts))
+            metrics = calculate_metrics(train_ts, val_ts, forecast)
+
+            rows.append(
+                {
+                    "Model": mtype.value,
+                    "Store": store,
+                    "Item": item,
+                    "RMSE": metrics["rmse"],
+                    "MAE": metrics["mae"],
+                    "SMAPE": metrics["smape"],
+                    "OPE": metrics["ope"],
+                    "RMSSE": metrics["rmsse"],
+                    "MASE": metrics["mase"],
+                }
+            )
+
+        return rows
 
     except Exception as e:
-        logger.error(
-            f"ERROR processing (store {store}, item {item}) on GPU {gpu_id}: {e}"
-        )
+        logger.error(f"ERROR for store={store}, item={item}: {e}")
         logger.error(traceback.format_exc())
-        return None
+        return []
 
 
 # ---------------------------------------------------------------------
@@ -262,180 +227,74 @@ def process_store_item(
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Create features for Favorita Grocery Sales Forecasting model"
+        description="Favorita forecasting benchmark"
     )
+
+    parser.add_argument("--data_fn", type=Path, default="")
+    parser.add_argument("--model_dir", type=Path, default="")
     parser.add_argument(
-        "--data_fn",
-        type=Path,
-        default="",
-        help="Path to data file (relative to project root)",
-    )
-    parser.add_argument(
-        "--model_dir",
-        type=Path,
-        default="",
-        help="Path to model directory (relative to project root)",
-    )
-    parser.add_argument(
-        "--model",
+        "--models",
         type=str,
-        default=ModelType.NBEATS.value,
-        choices=[m.value for m in ModelType],
-        help="Model to train (NBEATS, TFT, TSMIXER)",
+        default="NBEATS",
+        help="Comma-separated model list: 'NBEATS,TFT,TSMIXER'",
     )
-    parser.add_argument(
-        "--gpu",
-        type=int,
-        default=-1,
-        help=(
-            "If >=0, force all models onto this single GPU ID. "
-            "If <0 and multiple GPUs are available, GPUs are used in round-robin."
-        ),
-    )
-    parser.add_argument(
-        "--metrics_fn",
-        type=Path,
-        default="",
-        help="Path to metrics output file (relative to project root)",
-    )
-    parser.add_argument(
-        "--split_point",
-        type=float,
-        default=0.8,
-        help="Proportion of data to use for training",
-    )
-    parser.add_argument(
-        "--min_train_data_points",
-        type=int,
-        default=15,
-        help="Minimum number of data points to train on",
-    )
-    parser.add_argument(
-        "--log_fn",
-        type=Path,
-        default="",
-        help="Path to save script outputs (relative to project root)",
-    )
-    parser.add_argument(
-        "--log_level",
-        type=str,
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level",
-    )
+    parser.add_argument("--gpu", type=int, default=-1)
+    parser.add_argument("--metrics_fn", type=Path, default="")
+    parser.add_argument("--split_point", type=float, default=0.8)
+    parser.add_argument("--min_train_data_points", type=int, default=15)
+    parser.add_argument("--log_fn", type=Path, default="")
+    parser.add_argument("--log_level", type=str, default="INFO")
     return parser.parse_args()
 
 
 def main():
-    """Main training function."""
     args = parse_args()
-    data_fn = Path(args.data_fn).resolve()
-    output_metrics_fn = Path(args.metrics_fn).resolve()
-    log_fn = args.log_fn.resolve()
 
-    # Set up logging
-    logger = setup_logging(log_fn, args.log_level)
-    logger.info(f"Log fn: {log_fn}")
+    # Parse model list
+    model_types = parse_models_arg(args.models)
+    logger.info(f"Training models: {[m.value for m in model_types]}")
 
-    # Model type from Enum
-    model_type = ModelType(args.model)
+    # Setup logging
+    logger = setup_logging(args.log_fn, args.log_level)
 
-    # List all visible devices
-    num_gpus = 0
+    # GPUs
     if torch.cuda.is_available():
         num_gpus = torch.cuda.device_count()
         for i in range(num_gpus):
             logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
     else:
-        logger.warning("No GPUs found! Models will run on CPU/auto.")
+        num_gpus = 0
+        logger.warning("No GPUs detected — running on CPU")
 
-    try:
-        logger.info(
-            "Starting time series model benchmarking with configuration:"
-        )
-        logger.info(f"  Data fn: {data_fn}")
-        logger.info(f"  Model dir: {args.model_dir}")
-        logger.info(f"  Metrics fn: {output_metrics_fn}")
-        logger.info(f"  Log fn: {log_fn}")
-        logger.info(f"  Split point: {args.split_point}")
-        logger.info(f"  Min train data points: {args.min_train_data_points}")
-        logger.info(f"  Model type: {model_type.value}")
+    df = load_raw_data(args.data_fn)
 
-        # Load raw data
-        logger.info("Loading raw data...")
-        df = load_raw_data(data_fn)
+    unique_combinations = df[["store", "item"]].drop_duplicates()
 
-        # Get unique store-item pairs
-        logger.info("Finding unique store-item combinations...")
-        unique_combinations = df[["store", "item"]].drop_duplicates()
-        unique_combinations = unique_combinations.head(10)
-        logger.info(f"Found {len(unique_combinations)} unique combinations")
+    results = []
 
-        results = []
+    for idx, row in tqdm(
+        unique_combinations.itertuples(index=False),
+        total=len(unique_combinations),
+    ):
 
+        # GPU assignment
         if num_gpus == 0:
-            logger.info("Running sequentially on CPU/auto.")
+            gpu_id = None
+        elif args.gpu >= 0:
+            gpu_id = args.gpu  # force one GPU
         else:
-            logger.info(
-                f"Using {num_gpus} GPU(s). "
-                "Assigning (store, item) to GPUs in round-robin, unless --gpu is set."
-            )
+            gpu_id = idx % num_gpus  # round-robin GPUs
 
-        for idx, row in tqdm(
-            enumerate(unique_combinations.itertuples(index=False)),
-            total=len(unique_combinations),
-        ):
-            store = row.store
-            item = row.item
-
-            if num_gpus == 0:
-                gpu_id = None
-            else:
-                if args.gpu is not None and args.gpu >= 0:
-                    gpu_id = args.gpu
-                else:
-                    gpu_id = idx % num_gpus
-
-            res = process_store_item(store, item, gpu_id, df, args, model_type)
-            if res is not None:
-                results.append(res)
-
-        logger.info(
-            "All (store, item) combinations processed. Consolidating results..."
+        rows = process_store_item(
+            row.store, row.item, gpu_id, df, args, model_types
         )
+        results.extend(rows)
 
-        if not results:
-            logger.warning(
-                "No results were generated. Check logs for per-series errors."
-            )
-            metrics_df = pd.DataFrame(
-                columns=[
-                    "Model",
-                    "Store",
-                    "Item",
-                    "RMSE",
-                    "MAE",
-                    "SMAPE",
-                    "OPE",
-                    "RMSSE",
-                    "MASE",
-                ]
-            )
-        else:
-            metrics_df = pd.DataFrame(results)
+    metrics_df = pd.DataFrame(results)
+    save_csv_or_parquet(metrics_df, args.metrics_fn)
 
-        logger.info(f"Saving results to {output_metrics_fn}")
-        save_csv_or_parquet(metrics_df, output_metrics_fn)
-        logger.info("Benchmarking completed successfully!")
-
-    except Exception as e:
-        logger.error(f"Error in benchmarking: {e}")
-        import traceback
-
-        logger.error(traceback.format_exc())
-        raise
+    logger.info("Benchmark complete.")
 
 
 if __name__ == "__main__":
