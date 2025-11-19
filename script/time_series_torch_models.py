@@ -150,7 +150,7 @@ def process_store_item(task_data, df, args):
         #     retrain=False,
         #     verbose=False,  # Set to False to avoid flooding logs
         # )
-        forecast = concatenate(forecast)
+        # forecast = concatenate(forecast)
 
         metrics = calculate_metrics(train_ts, val_ts, forecast)
 
