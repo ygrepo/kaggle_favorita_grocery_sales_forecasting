@@ -5,100 +5,39 @@ Training script for the Favorita Grocery Sales Forecasting model.
 This script handles the complete training pipeline including:
 - Data loading and preprocessing
 - Logging
-- Classical local models (ExponentialSmoothing, AutoARIMA, Theta, KalmanForecaster)
 """
 
 import sys
 import argparse
 from pathlib import Path
-from enum import Enum
-from typing import List
-
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
-
 from darts import TimeSeries
-from darts.models import (
-    AutoARIMA,
-    ExponentialSmoothing,
-    Theta,
-    KalmanForecaster,
-)
+from darts.models import AutoARIMA, ExponentialSmoothing, Theta
 from darts.metrics import rmse, rmsse, mae, mase, mape, ope, smape
 from darts.models.forecasting.forecasting_model import LocalForecastingModel
 from darts.utils.utils import SeasonalityMode
+from tqdm import tqdm
+
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
 from src.utils import (
     setup_logging,
     get_logger,
     save_csv_or_parquet,
 )
 from src.data_utils import load_raw_data
+from src.time_series_utils import get_train_val_data
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------
-# Enum + Factory
-# ---------------------------------------------------------------------
-
-
-class ModelType(str, Enum):
-    EXPONENTIAL_SMOOTHING = "EXPONENTIAL_SMOOTHING"
-    AUTO_ARIMA = "AUTO_ARIMA"
-    THETA = "THETA"
-    KALMAN = "KALMAN"
-
-
-def parse_models_arg(models_string: str) -> List[ModelType]:
-    """
-    Convert --models "EXPONENTIAL_SMOOTHING,AUTO_ARIMA" into
-    [ModelType.EXPONENTIAL_SMOOTHING, ModelType.AUTO_ARIMA].
-    """
-    names = [m.strip().upper() for m in models_string.split(",") if m.strip()]
-    try:
-        return [ModelType(name) for name in names]
-    except ValueError as e:
-        raise ValueError(
-            f"Invalid --models argument: {models_string}. "
-            f"Valid options: {[m.value for m in ModelType]}"
-        ) from e
-
-
-def create_local_model(model_type: ModelType) -> LocalForecastingModel:
-    """
-    Factory to create a classical Darts local forecasting model.
-    """
-    if model_type == ModelType.EXPONENTIAL_SMOOTHING:
-        return ExponentialSmoothing()
-
-    if model_type == ModelType.AUTO_ARIMA:
-        return AutoARIMA()
-
-    if model_type == ModelType.THETA:
-        return Theta(season_mode=SeasonalityMode.ADDITIVE)
-
-    if model_type == ModelType.KALMAN:
-        # simple univariate Kalman; can tune dim_x later
-        return KalmanForecaster(dim_x=1, random_state=42)
-
-    raise ValueError(f"Unsupported model type: {model_type}")
-
-
-# ---------------------------------------------------------------------
-# Argparse
-# ---------------------------------------------------------------------
 
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Classical models for Favorita Grocery Sales Forecasting"
+        description="Create features for Favorita Grocery Sales Forecasting model"
     )
     parser.add_argument(
         "--data_fn",
@@ -110,7 +49,7 @@ def parse_args():
         "--metrics_fn",
         type=Path,
         default="",
-        help="Path to metrics output file (relative to project root)",
+        help="Path to data file (relative to project root)",
     )
     parser.add_argument(
         "--split_point",
@@ -125,21 +64,6 @@ def parse_args():
         help="Minimum number of data points to train on",
     )
     parser.add_argument(
-        "--models",
-        type=str,
-        default="EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN",
-        help=(
-            "Comma-separated list of models to train. "
-            "Options: EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN"
-        ),
-    )
-    parser.add_argument(
-        "--N",
-        type=int,
-        default=0,
-        help="Limit to first N combinations",
-    )
-    parser.add_argument(
         "--log_fn",
         type=Path,
         default="",
@@ -152,13 +76,7 @@ def parse_args():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level",
     )
-
     return parser.parse_args()
-
-
-# ---------------------------------------------------------------------
-# Data prep + per-(store,item) logic
-# ---------------------------------------------------------------------
 
 
 def prepare_store_item_series(
@@ -168,6 +86,7 @@ def prepare_store_item_series(
 ) -> pd.DataFrame:
     """Prepare time series for a specific store-item combination."""
 
+    # Filter data for specific store-item combination
     mask = (df["store"] == store) & (df["item"] == item)
     series_df = df[mask].copy()
 
@@ -175,8 +94,10 @@ def prepare_store_item_series(
         logger.warning(f"No data for store {store}, item {item}")
         return pd.DataFrame()
 
+    # Sort by date and prepare time series
     series_df = series_df.sort_values("date")
 
+    # Create time series DataFrame
     ts_df = series_df[["date", "growth_rate"]].copy()
     ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
     ts_df = ts_df.set_index("date")
@@ -192,18 +113,17 @@ def process_store_item_combination(
     split_point: float,
     min_train_data_points: int,
     metrics_df: pd.DataFrame,
-    model_types: List[ModelType],
 ) -> pd.DataFrame:
     """Process a single store-item combination."""
 
     logger.info(f"Processing store {store}, item {item}")
 
+    # Prepare time series
     ts_df = prepare_store_item_series(df, store, item)
     if ts_df.empty:
         return metrics_df
 
     try:
-        # basic training-data checks (non-missing, variance)
         train_data_for_std = ts_df.iloc[: int(len(ts_df) * split_point)]
         non_missing_count = train_data_for_std["growth_rate"].count()
         logger.info(
@@ -211,12 +131,11 @@ def process_store_item_combination(
         )
         if non_missing_count < min_train_data_points:
             logger.warning(
-                f"Training series has insufficient data "
-                f"({non_missing_count} non-NaN < {min_train_data_points}) "
-                f"for store {store}, item {item}. Skipping."
+                f"Training series has insufficient data ({non_missing_count} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
             return metrics_df
 
+        # Check variance
         train_std = train_data_for_std["growth_rate"].std()
         if train_std == 0 or np.isnan(train_std):
             logger.warning(
@@ -224,10 +143,12 @@ def process_store_item_combination(
             )
             return metrics_df
 
-        # Build TimeSeries
+        # Convert to Darts TimeSeries
         ts = TimeSeries.from_dataframe(
             ts_df, fill_missing_dates=True, freq="D"
         )
+
+        # Split data
         train_ts, val_ts = ts.split_before(split_point)
 
         if len(val_ts) == 0:
@@ -236,17 +157,16 @@ def process_store_item_combination(
             )
             return metrics_df
 
-        # Stronger checks on filled train
+        # Get the count of *actual* data points, ignoring NaNs
         train_series_pd = train_ts.to_series()
         non_missing_count = train_series_pd.count()
         logger.info(
             f"training: Non-missing count for store {store}, item {item}: {non_missing_count}"
         )
+
         if non_missing_count < min_train_data_points:
             logger.warning(
-                f"Training series has insufficient data "
-                f"({non_missing_count} non-NaN < {min_train_data_points}) "
-                f"for store {store}, item {item}. Skipping."
+                f"Training series has insufficient data ({non_missing_count} non-NaN < {min_train_data_points}) for store {store}, item {item}. Skipping."
             )
             return metrics_df
 
@@ -257,22 +177,28 @@ def process_store_item_combination(
             )
             return metrics_df
 
-        non_missing_count_val = val_ts.to_series().count()
+        non_missing_count = val_ts.to_series().count()
         logger.info(
-            f"Validation: Non-missing count for store {store}, item {item}: {non_missing_count_val}"
+            f"Validation: Non-missing count for store {store}, item {item}: {non_missing_count}"
         )
 
-        # re-create ts with fillna_value=0 if desired for some models
-        ts_filled = TimeSeries.from_dataframe(
+        # Test models
+        models = [
+            ("ExponentialSmoothing", ExponentialSmoothing()),
+            ("AutoARIMA", AutoARIMA()),
+            ("Theta", Theta(season_mode=SeasonalityMode.ADDITIVE)),
+        ]
+
+        ts = TimeSeries.from_dataframe(
             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
         )
-        train_ts, val_ts = ts_filled.split_before(split_point)
 
-        # evaluate each requested model
-        for mtype in model_types:
-            model = create_local_model(mtype)
+        # Split the filled series
+        train_ts, val_ts = ts.split_before(split_point)
+
+        for model_name, model in models:
             metrics_df = eval_model(
-                mtype,
+                model_name,
                 model,
                 store,
                 item,
@@ -288,11 +214,6 @@ def process_store_item_combination(
         return metrics_df
 
 
-# ---------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------
-
-
 def calculate_rmsse(
     train_vals: np.ndarray,
     val_vals: np.ndarray,
@@ -300,9 +221,14 @@ def calculate_rmsse(
     epsilon: float = np.finfo(float).eps,
 ) -> float:
     """Calculates RMSSE manually using numpy."""
+    # Numerator: RMSE of the forecast
     rmse_forecast = np.sqrt(np.mean(np.square(val_vals - fcst_vals)))
+
+    # Denominator: RMSE of the 1-step naive forecast in-sample
+    # This is the other part that fails in Darts
     naive_train_sq_errors = np.square(train_vals[1:] - train_vals[:-1])
     rmse_naive = np.sqrt(np.mean(naive_train_sq_errors))
+
     return rmse_forecast / (rmse_naive + epsilon)
 
 
@@ -313,9 +239,14 @@ def calculate_mase(
     epsilon: float = np.finfo(float).eps,
 ) -> float:
     """Calculates MASE manually using numpy."""
+    # Numerator: MAE of the forecast
     mae_forecast = np.mean(np.abs(val_vals - fcst_vals))
+
+    # Denominator: MAE of the 1-step naive forecast in-sample
+    # This is the part that fails in Darts
     naive_train_errors = np.abs(train_vals[1:] - train_vals[:-1])
     mae_naive = np.mean(naive_train_errors)
+
     return mae_forecast / (mae_naive + epsilon)
 
 
@@ -326,6 +257,9 @@ def calculate_metrics(
 ):
     """Calculate metrics with error handling."""
     try:
+        # logger.info(f"train: {train}")
+        # logger.info(f"val: {val}")
+        # logger.info(f"forecast: {forecast}")
         return {
             "rmse": rmse(val, forecast),
             "rmsse": calculate_rmsse(
@@ -340,6 +274,7 @@ def calculate_metrics(
         }
     except Exception as e:
         logger.warning(f"Error calculating some metrics: {e}")
+        # Return basic metrics only
         return {
             "rmse": rmse(val, forecast),
             "rmsse": np.nan,
@@ -351,7 +286,7 @@ def calculate_metrics(
 
 
 def eval_model(
-    model_type: ModelType,
+    modelType: str,
     model: LocalForecastingModel,
     store: int,
     item: int,
@@ -360,15 +295,14 @@ def eval_model(
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Evaluate a model with error handling."""
-    model_name = model_type.value
     try:
         logger.info(
-            f"Training {model_name} model, store {store}, item {item}..."
+            f"Training {modelType} model, store {store}, item {item}..."
         )
         model.fit(train)
 
         logger.info(
-            f"Generating forecast with {model_name}, store {store}, item {item}..."
+            f"Generating forecast with {modelType}, store {store}, item {item}..."
         )
         forecast = model.predict(len(val))
 
@@ -377,38 +311,39 @@ def eval_model(
         new_row = pd.DataFrame(
             [
                 {
-                    "Model": model_name,
+                    "Model": modelType,
                     "Store": store,
                     "Item": item,
                     "RMSE": metrics["rmse"],
-                    "MAE": metrics["mae"],
-                    "SMAPE": metrics["smape"],
                     "RMSSE": metrics["rmsse"],
-                    "OPE": metrics["ope"],
+                    "MAE": metrics["mae"],
                     "MASE": metrics["mase"],
+                    "SMAPE": metrics["smape"],
+                    "OPE": metrics["ope"],
                 }
             ]
         )
 
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
         logger.info(
-            f"{model_name} completed successfully, store {store}, item {item}"
+            f"{modelType} completed successfully, store {store}, item {item}"
         )
 
     except Exception as e:
-        logger.error(f"Error with {model_name}: {e}")
+        logger.error(f"Error with {modelType}: {e}")
+        # Add a row with NaN values to indicate failure
         new_row = pd.DataFrame(
             [
                 {
-                    "Model": model_name,
+                    "Model": modelType,
                     "Store": store,
                     "Item": item,
                     "RMSE": np.nan,
-                    "MAE": np.nan,
-                    "SMAPE": np.nan,
                     "RMSSE": np.nan,
-                    "OPE": np.nan,
+                    "MAE": np.nan,
                     "MASE": np.nan,
+                    "SMAPE": np.nan,
+                    "OPE": np.nan,
                 }
             ]
         )
@@ -417,13 +352,9 @@ def eval_model(
     return metrics_df
 
 
-# ---------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------
-
-
 def main():
     """Main training function."""
+    # Parse command line arguments
     args = parse_args()
     data_fn = Path(args.data_fn).resolve()
     output_metrics_fn = Path(args.metrics_fn).resolve()
@@ -433,11 +364,8 @@ def main():
     logger = setup_logging(log_fn, args.log_level)
     logger.info(f"Log fn: {log_fn}")
 
-    # Parse models list
-    model_types = parse_models_arg(args.models)
-    logger.info(f"Models to train: {[m.value for m in model_types]}")
-
     try:
+        # Log configuration
         logger.info(
             "Starting time series model benchmarking with configuration:"
         )
@@ -450,29 +378,26 @@ def main():
         # Load raw data
         logger.info("Loading raw data...")
         df = load_raw_data(data_fn)
-
+        # Get unique store-item pairs
         logger.info("Finding unique store-item combinations...")
         unique_combinations = df[["store", "item"]].drop_duplicates()
-        if args.N > 0:
-            logger.info(f"Limiting to first {args.N} combinations")
-            unique_combinations = unique_combinations.head(args.N)
 
-        logger.info(f"Found {len(unique_combinations)} unique combinations")
+        # Initialize metrics dataframe
         logger.info("Running models...")
-
         metrics_df = pd.DataFrame(
             columns=[
                 "Model",
                 "Store",
                 "Item",
                 "RMSE",
+                # "RMSSE",
                 "MAE",
+                # "MASE",
                 "SMAPE",
                 "OPE",
-                "RMSSE",
-                "MASE",
             ]
         )
+
         for _, row in tqdm(
             unique_combinations.iterrows(), total=len(unique_combinations)
         ):
@@ -486,7 +411,6 @@ def main():
                 args.split_point,
                 args.min_train_data_points,
                 metrics_df,
-                model_types,
             )
 
         logger.info(f"Saving results to {output_metrics_fn}")
