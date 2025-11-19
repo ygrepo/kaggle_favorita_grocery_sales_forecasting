@@ -3,9 +3,9 @@
 # Set strict error handling
 set -euo pipefail
 
-export OMP_NUM_THREADS=32
-export MKL_NUM_THREADS=32
-export NUMEXPR_NUM_THREADS=32
+# export OMP_NUM_THREADS=32
+# export MKL_NUM_THREADS=32
+# export NUMEXPR_NUM_THREADS=32
 
 
 # Get the directory of this script
@@ -32,7 +32,7 @@ SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 N=10
 N_EPOCHS=10
-BATCH_SIZE=8192
+BATCH_SIZE=800
 NUM_WORKERS=8
 
 
