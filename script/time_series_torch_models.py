@@ -10,11 +10,18 @@ This script handles the complete training pipeline including:
 import sys
 import argparse
 from pathlib import Path
+from enum import Enum
+from typing import Dict, Optional
+
+try:
+    import traceback
+except ImportError:
+    pass
+
 import pandas as pd
 from tqdm import tqdm
 
-from darts import TimeSeries
-from darts.models import NBEATSModel
+from darts.models import NBEATSModel, TFTModel, TSMixerModel
 from darts.utils.callbacks import TFMProgressBar
 
 import torch
@@ -40,33 +47,47 @@ from src.time_series_utils import (
 logger = get_logger(__name__)
 
 
-def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
+# ---------------------------------------------------------------------
+# Enum + Factory
+# ---------------------------------------------------------------------
+
+
+class ModelType(str, Enum):
+    NBEATS = "NBEATS"
+    TFT = "TFT"
+    TSMIXER = "TSMIXER"
+
+
+def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
     """
     Build pl_trainer_kwargs and torch_metrics for Darts' TorchForecastingModel.
 
-    Note: we set a specific GPU device per (store, item) via `devices=[gpu_id]`.
+    If gpu_id is None or CUDA is unavailable, falls back to CPU/auto.
     """
-    # Early stopping; you may want to change monitor to "val_loss" if needed.
     early_stopper = EarlyStopping(
-        monitor="train_smape",
+        monitor="train_smape",  # consider "val_loss" if you want validation-based stopping
         min_delta=0.001,
         patience=6,
         verbose=True,
-        mode="min",  # SMAPE should be minimized
+        mode="min",
     )
     callbacks = [
         early_stopper,
         TFMProgressBar(enable_train_bar_only=True),
     ]
 
-    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+    if (
+        gpu_id is not None
+        and torch.cuda.is_available()
+        and torch.cuda.device_count() > 0
+    ):
         accelerator = "gpu"
         devices = [gpu_id]
         logger.debug(f"Using GPU {gpu_id} for this model.")
     else:
-        accelerator = "auto"  # fallback to 'cpu' or 'auto'
+        accelerator = "auto"
         devices = "auto"
-        logger.debug("No CUDA device detected; using CPU/auto.")
+        logger.debug("No specific CUDA device; using CPU/auto.")
 
     metrics = MetricCollection(
         {
@@ -85,11 +106,76 @@ def generate_torch_kwargs(gpu_id: int, working_dir: Path) -> dict:
     }
 
 
+def create_model(
+    model_type: ModelType,
+    model_name: str,
+    torch_kwargs: Dict,
+) -> NBEATSModel:
+    """
+    Factory to create a Darts TorchForecastingModel (NBEATS, TFT, TSMixer)
+    with a shared set of base hyperparameters and model-specific extras.
+    """
+
+    # Base kwargs shared by all three models
+    base_kwargs = dict(
+        input_chunk_length=30,
+        output_chunk_length=1,
+        n_epochs=10,
+        batch_size=800,
+        random_state=42,
+        model_name=model_name,
+        save_checkpoints=True,
+        force_reset=True,
+        **torch_kwargs,
+    )
+
+    if model_type == ModelType.NBEATS:
+        return NBEATSModel(
+            generic_architecture=True,
+            num_stacks=10,
+            num_blocks=1,
+            num_layers=4,
+            layer_widths=512,
+            **base_kwargs,
+        )
+
+    elif model_type == ModelType.TFT:
+        # You can tune these hyperparameters further
+        return TFTModel(
+            hidden_size=64,
+            lstm_layers=1,
+            num_attention_heads=4,
+            dropout=0.1,
+            add_relative_index=True,
+            **base_kwargs,
+        )
+
+    elif model_type == ModelType.TSMIXER:
+        return TSMixerModel(
+            hidden_size=64,
+            dropout=0.1,
+            **base_kwargs,
+        )
+
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+
+# ---------------------------------------------------------------------
+# Core per-(store, item) processing
+# ---------------------------------------------------------------------
+
+
 def process_store_item(
-    store: int, item: int, gpu_id: int, df: pd.DataFrame, args
+    store: int,
+    item: int,
+    gpu_id: Optional[int],
+    df: pd.DataFrame,
+    args,
+    model_type: ModelType,
 ):
     """
-    Process a single (store, item) pair on a given GPU *sequentially*.
+    Process a single (store, item) pair on a given GPU sequentially.
     """
     try:
         # Prepare time series
@@ -98,7 +184,7 @@ def process_store_item(
             logger.warning(f"No data for store {store}, item {item}")
             return None
 
-        ts, train_ts, val_ts = get_train_val_data(
+        _, train_ts, val_ts = get_train_val_data(
             ts_df,
             store,
             item,
@@ -116,33 +202,20 @@ def process_store_item(
         model_dir = args.model_dir.resolve() / f"{model_name}_{store}_{item}"
 
         # Build trainer kwargs targeting the chosen GPU
-        model_kwargs = generate_torch_kwargs(gpu_id, model_dir)
+        torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
 
-        model = NBEATSModel(
-            input_chunk_length=30,
-            output_chunk_length=1,
-            generic_architecture=True,
-            num_stacks=10,
-            num_blocks=1,
-            num_layers=4,
-            layer_widths=512,
-            n_epochs=10,
-            nr_epochs_val_period=1,
-            batch_size=800,
-            random_state=42,
+        # Create the model via factory
+        model = create_model(
+            model_type=model_type,
             model_name=model_name,
-            save_checkpoints=True,
-            force_reset=True,
-            **model_kwargs,
+            torch_kwargs=torch_kwargs,
         )
 
-        # Train your model
         logger.info(
-            f"Fitting NBEATS for store {store}, item {item} on GPU {gpu_id}..."
+            f"Fitting {model_type.value} for store {store}, item {item} on GPU {gpu_id}..."
         )
         model.fit(train_ts)
 
-        # Log some info about the data
         logger.debug(f"Store {store}, Item {item}:")
         logger.debug(f"  Train length: {len(train_ts)}")
         logger.debug(f"  Val length: {len(val_ts)}")
@@ -158,34 +231,34 @@ def process_store_item(
         logger.debug(f"  Forecast start: {forecast.start_time()}")
         logger.debug(f"  Forecast end: {forecast.end_time()}")
 
-        # Check for alignment issues
         if len(forecast) != len(val_ts):
             logger.warning(
                 f"Length mismatch for (store {store}, item {item}): "
                 f"forecast={len(forecast)}, val={len(val_ts)}"
             )
-
-        # Return the result as a dictionary
         return {
             "Model": model_name,
             "Store": store,
             "Item": item,
             "RMSE": metrics["rmse"],
-            "RMSSE": metrics["rmsse"],
             "MAE": metrics["mae"],
-            "MASE": metrics["mase"],
             "SMAPE": metrics["smape"],
             "OPE": metrics["ope"],
+            "RMSSE": metrics["rmsse"],
+            "MASE": metrics["mase"],
         }
 
     except Exception as e:
         logger.error(
             f"ERROR processing (store {store}, item {item}) on GPU {gpu_id}: {e}"
         )
-        import traceback
-
         logger.error(traceback.format_exc())
         return None
+
+
+# ---------------------------------------------------------------------
+# Argparse + main
+# ---------------------------------------------------------------------
 
 
 def parse_args():
@@ -208,16 +281,17 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="NBEATS",
-        help="Model to train",
+        default=ModelType.NBEATS.value,
+        choices=[m.value for m in ModelType],
+        help="Model to train (NBEATS, TFT, TSMIXER)",
     )
     parser.add_argument(
         "--gpu",
         type=int,
-        default=0,
+        default=-1,
         help=(
-            "Optional: If set, force all models onto this single GPU ID. "
-            "If left as 0 and multiple GPUs are available, GPUs are used in round-robin."
+            "If >=0, force all models onto this single GPU ID. "
+            "If <0 and multiple GPUs are available, GPUs are used in round-robin."
         ),
     )
     parser.add_argument(
@@ -265,6 +339,9 @@ def main():
     logger = setup_logging(log_fn, args.log_level)
     logger.info(f"Log fn: {log_fn}")
 
+    # Model type from Enum
+    model_type = ModelType(args.model)
+
     # List all visible devices
     num_gpus = 0
     if torch.cuda.is_available():
@@ -284,6 +361,7 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
         logger.info(f"  Split point: {args.split_point}")
         logger.info(f"  Min train data points: {args.min_train_data_points}")
+        logger.info(f"  Model type: {model_type.value}")
 
         # Load raw data
         logger.info("Loading raw data...")
@@ -295,21 +373,16 @@ def main():
         unique_combinations = unique_combinations.head(10)
         logger.info(f"Found {len(unique_combinations)} unique combinations")
 
-        # Prepare metrics collection
         results = []
 
         if num_gpus == 0:
-            # CPU-only: just iterate sequentially
             logger.info("Running sequentially on CPU/auto.")
-            gpu_ids = [None] * len(
-                unique_combinations
-            )  # not used, but kept for API
         else:
             logger.info(
-                f"Using {num_gpus} GPU(s). Assigning (store, item) to GPUs in round-robin."
+                f"Using {num_gpus} GPU(s). "
+                "Assigning (store, item) to GPUs in round-robin, unless --gpu is set."
             )
 
-        # Sequential loop, GPU chosen per (store, item)
         for idx, row in tqdm(
             enumerate(unique_combinations.itertuples(index=False)),
             total=len(unique_combinations),
@@ -318,15 +391,14 @@ def main():
             item = row.item
 
             if num_gpus == 0:
-                gpu_id = 0  # ignored in generate_torch_kwargs (will fall back to auto/CPU)
+                gpu_id = None
             else:
-                # If args.gpu is set explicitly, use that for all; else round-robin
                 if args.gpu is not None and args.gpu >= 0:
                     gpu_id = args.gpu
                 else:
                     gpu_id = idx % num_gpus
 
-            res = process_store_item(store, item, gpu_id, df, args)
+            res = process_store_item(store, item, gpu_id, df, args, model_type)
             if res is not None:
                 results.append(res)
 
@@ -344,11 +416,11 @@ def main():
                     "Store",
                     "Item",
                     "RMSE",
-                    "RMSSE",
                     "MAE",
-                    "MASE",
                     "SMAPE",
                     "OPE",
+                    "RMSSE",
+                    "MASE",
                 ]
             )
         else:
