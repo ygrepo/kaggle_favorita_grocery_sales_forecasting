@@ -33,8 +33,9 @@ import torch
 from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
 from pytorch_lightning.callbacks import EarlyStopping
 
-torch.set_num_threads(32)
-torch.set_num_interop_threads(16)
+# torch.set_num_threads(32)
+# torch.set_num_interop_threads(16)
+
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
