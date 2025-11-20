@@ -97,7 +97,7 @@ done
 # ------------------------------
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/${TIMESTAMP}_benchmark_time_series_models.log"
+LOG_FILE="${LOG_DIR}/${TIMESTAMP}_time_series_torch_models.log"
 
 echo "Starting script at $(date)" | tee -a "$LOG_FILE"
 echo "Starting script with the following configuration:" | tee -a "$LOG_FILE"
