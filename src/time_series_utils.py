@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import LocalForecastingModel
-from darts.metrics import rmse, rmsse, mae, mase, mape, ope, smape
+from darts.metrics import rmse, mae, ope, smape, marre
 from typing import Optional
 
 
@@ -37,7 +37,7 @@ def prepare_store_item_series(
     series_df = series_df.sort_values("date")
 
     # Create time series DataFrame
-    ts_df = series_df[["date", "growth_rate"]].copy()
+    ts_df = series_df[["date", "growth_rate"]]
     ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
     ts_df = ts_df.set_index("date")
     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
@@ -286,12 +286,19 @@ def calculate_metrics(
             logger.warning(f"MASE calculation failed: {e}")
             metrics["mase"] = np.nan
 
+        try:
+            metrics["marre"] = marre(val_aligned, forecast_aligned)
+        except Exception as e:
+            logger.warning(f"MARRE calculation failed: {e}")
+            metrics["marre"] = np.nan
+
         return metrics
 
     except Exception as e:
         logger.error(f"Error in calculate_metrics: {e}")
         return {
-            k: np.nan for k in ["rmse", "rmsse", "mae", "mase", "smape", "ope"]
+            k: np.nan
+            for k in ["rmsse", "mse", "smape", "marre", "rmse", "mae", "ope"]
         }
 
 
@@ -324,11 +331,12 @@ def eval_model(
                     "Model": modelType,
                     "Store": store,
                     "Item": item,
-                    "RMSE": metrics["rmse"],
                     "RMSSE": metrics["rmsse"],
-                    "MAE": metrics["mae"],
                     "MASE": metrics["mase"],
                     "SMAPE": metrics["smape"],
+                    "MARRE": metrics["marre"],
+                    "RMSE": metrics["rmse"],
+                    "MAE": metrics["mae"],
                     "OPE": metrics["ope"],
                 }
             ]
@@ -348,11 +356,12 @@ def eval_model(
                     "Model": modelType,
                     "Store": store,
                     "Item": item,
-                    "RMSE": np.nan,
                     "RMSSE": np.nan,
-                    "MAE": np.nan,
                     "MASE": np.nan,
                     "SMAPE": np.nan,
+                    "MARRE": np.nan,
+                    "RMSE": np.nan,
+                    "MAE": np.nan,
                     "OPE": np.nan,
                 }
             ]
