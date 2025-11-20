@@ -6,7 +6,8 @@ from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import LocalForecastingModel
 from darts.metrics import rmse, mae, ope, smape, marre
 from typing import Optional
-
+from sklearn.preprocessing import RobustScaler
+from darts.dataprocessing.transformers import Scaler
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -311,18 +312,30 @@ def eval_model(
     val: TimeSeries,
     metrics_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Evaluate a model with error handling."""
+    """Evaluate a model with error handling and automatic RobustScaling."""
     try:
         logger.info(
             f"Training {modelType} model, store {store}, item {item}..."
         )
-        model.fit(train)
 
-        logger.info(
-            f"Generating forecast with {modelType}, store {store}, item {item}..."
-        )
-        forecast = model.predict(len(val))
+        # --- START SCALING LOGIC ---
+        # 1. Initialize and fit the scaler on training data
+        scaler = Scaler(RobustScaler())
+        train_scaled = scaler.fit_transform(train)
 
+        # 2. Fit model on SCALED data (prevents Kalman explosion)
+        model.fit(train_scaled)
+
+        logger.info(f"Generating forecast with {modelType}...")
+
+        # 3. Predict (returns scaled output)
+        forecast_scaled = model.predict(len(val))
+
+        # 4. Inverse transform to get Real Units back
+        forecast = scaler.inverse_transform(forecast_scaled)
+        # --- END SCALING LOGIC ---
+
+        # 5. Calculate metrics using Real Units (train, val, forecast are all unscaled now)
         metrics = calculate_metrics(train, val, forecast)
 
         new_row = pd.DataFrame(
@@ -369,3 +382,72 @@ def eval_model(
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
     return metrics_df
+
+
+# def eval_model(
+#     modelType: str,
+#     model: LocalForecastingModel,
+#     store: int,
+#     item: int,
+#     train: TimeSeries,
+#     val: TimeSeries,
+#     metrics_df: pd.DataFrame,
+# ) -> pd.DataFrame:
+#     """Evaluate a model with error handling."""
+#     try:
+#         logger.info(
+#             f"Training {modelType} model, store {store}, item {item}..."
+#         )
+#         model.fit(train)
+
+#         logger.info(
+#             f"Generating forecast with {modelType}, store {store}, item {item}..."
+#         )
+#         forecast = model.predict(len(val))
+
+#         metrics = calculate_metrics(train, val, forecast)
+
+#         new_row = pd.DataFrame(
+#             [
+#                 {
+#                     "Model": modelType,
+#                     "Store": store,
+#                     "Item": item,
+#                     "RMSSE": metrics["rmsse"],
+#                     "MASE": metrics["mase"],
+#                     "SMAPE": metrics["smape"],
+#                     "MARRE": metrics["marre"],
+#                     "RMSE": metrics["rmse"],
+#                     "MAE": metrics["mae"],
+#                     "OPE": metrics["ope"],
+#                 }
+#             ]
+#         )
+
+#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+#         logger.info(
+#             f"{modelType} completed successfully, store {store}, item {item}"
+#         )
+
+#     except Exception as e:
+#         logger.error(f"Error with {modelType}: {e}")
+#         # Add a row with NaN values to indicate failure
+#         new_row = pd.DataFrame(
+#             [
+#                 {
+#                     "Model": modelType,
+#                     "Store": store,
+#                     "Item": item,
+#                     "RMSSE": np.nan,
+#                     "MASE": np.nan,
+#                     "SMAPE": np.nan,
+#                     "MARRE": np.nan,
+#                     "RMSE": np.nan,
+#                     "MAE": np.nan,
+#                     "OPE": np.nan,
+#                 }
+#             ]
+#         )
+#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+
+#     return metrics_df

@@ -16,7 +16,7 @@ from typing import List
 
 import pandas as pd
 from tqdm import tqdm
-from sklearn.preprocessing import StandardScaler, RobustScaler
+
 
 from darts.models import (
     AutoARIMA,
@@ -181,81 +181,40 @@ def process_store_item_combination(
     if ts_df.empty:
         return metrics_df
 
-    ts, train_ts, val_ts = get_train_val_data(
-        df=df,
+    _, train_ts, val_ts = get_train_val_data(
+        df=ts_df,
         store=store,
         item=item,
         split_point=split_point,
         min_train_data_points=min_train_data_points,
     )
 
-    # try:
-    #     # basic training-data checks (non-missing, variance)
-    #     train_data_for_std = ts_df.iloc[: int(len(ts_df) * split_point)]
-    #     non_missing_count = train_data_for_std["growth_rate"].count()
-    #     logger.info(
-    #         f"training: Non-missing count for store {store}, item {item}: {non_missing_count}"
-    #     )
-    #     if non_missing_count < min_train_data_points:
-    #         logger.warning(
-    #             f"Training series has insufficient data "
-    #             f"({non_missing_count} non-NaN < {min_train_data_points}) "
-    #             f"for store {store}, item {item}. Skipping."
-    #         )
-    #         return metrics_df
+    if train_ts is None:
+        logger.warning(
+            f"store:{store},item:{item}. Skipping, no training data.:"
+        )
+        return metrics_df
+    if len(train_ts) == 0:
+        logger.warning(
+            f"store:{store},item:{item}. Skipping, no training data.:"
+        )
+    if val_ts is None:
+        logger.warning(
+            f"store:{store},item:{item}. Skipping, no validation data.:"
+        )
+        return metrics_df
+    if len(val_ts) == 0:
+        logger.warning(
+            f"store:{store},item:{item}. Skipping, no validation data.:"
+        )
+        return metrics_df
+    if len(train_ts) < min_train_data_points:
+        logger.warning(
+            f"store:{store},item:{item},training: Non-missing count:"
+            f"({len(train_ts)} < {min_train_data_points}).Skipping."
+        )
+        return metrics_df
 
-    #     train_std = train_data_for_std["growth_rate"].std()
-    #     if train_std == 0 or np.isnan(train_std):
-    #         logger.warning(
-    #             f"Training series has zero variance for store {store}, item {item}. Skipping."
-    #         )
-    #         return metrics_df
-
-    #     # Build TimeSeries
-    #     ts = TimeSeries.from_dataframe(
-    #         ts_df, fill_missing_dates=True, freq="D"
-    #     )
-    #     train_ts, val_ts = ts.split_before(split_point)
-
-    #     if len(val_ts) == 0:
-    #         logger.warning(
-    #             f"No validation data for store {store}, item {item}"
-    #         )
-    #         return metrics_df
-
-    #     # Stronger checks on filled train
-    #     train_series_pd = train_ts.to_series()
-    #     non_missing_count = train_series_pd.count()
-    #     logger.info(
-    #         f"training: Non-missing count for store {store}, item {item}: {non_missing_count}"
-    #     )
-    #     if non_missing_count < min_train_data_points:
-    #         logger.warning(
-    #             f"Training series has insufficient data "
-    #             f"({non_missing_count} non-NaN < {min_train_data_points}) "
-    #             f"for store {store}, item {item}. Skipping."
-    #         )
-    #         return metrics_df
-
-    #     train_std = train_series_pd.std()
-    #     if train_std == 0 or np.isnan(train_std):
-    #         logger.warning(
-    #             f"Training series has zero variance for store {store}, item {item}. Skipping."
-    #         )
-    #         return metrics_df
-
-    #     non_missing_count_val = val_ts.to_series().count()
-    #     logger.info(
-    #         f"Validation: Non-missing count for store {store}, item {item}: {non_missing_count_val}"
-    #     )
-
-    #     # re-create ts with fillna_value=0 if desired for some models
-    #     ts_filled = TimeSeries.from_dataframe(
-    #         ts_df, fill_missing_dates=True, freq="D", fillna_value=0
-    #     )
-    #     train_ts, val_ts = ts_filled.split_before(split_point)
-
-    # evaluate each requested model
     for mtype in model_types:
         model = create_local_model(mtype)
         metrics_df = eval_model(
@@ -269,139 +228,6 @@ def process_store_item_combination(
         )
 
     return metrics_df
-
-    # except Exception as e:
-    #     logger.warning(f"Failed to process store {store}, item {item}: {e}")
-    #     return me
-
-
-# # ---------------------------------------------------------------------
-# # Metrics
-# # ---------------------------------------------------------------------
-
-
-# def calculate_rmsse(
-#     train_vals: np.ndarray,
-#     val_vals: np.ndarray,
-#     fcst_vals: np.ndarray,
-#     epsilon: float = np.finfo(float).eps,
-# ) -> float:
-#     """Calculates RMSSE manually using numpy."""
-#     rmse_forecast = np.sqrt(np.mean(np.square(val_vals - fcst_vals)))
-#     naive_train_sq_errors = np.square(train_vals[1:] - train_vals[:-1])
-#     rmse_naive = np.sqrt(np.mean(naive_train_sq_errors))
-#     return rmse_forecast / (rmse_naive + epsilon)
-
-
-# def calculate_mase(
-#     train_vals: np.ndarray,
-#     val_vals: np.ndarray,
-#     fcst_vals: np.ndarray,
-#     epsilon: float = np.finfo(float).eps,
-# ) -> float:
-#     """Calculates MASE manually using numpy."""
-#     mae_forecast = np.mean(np.abs(val_vals - fcst_vals))
-#     naive_train_errors = np.abs(train_vals[1:] - train_vals[:-1])
-#     mae_naive = np.mean(naive_train_errors)
-#     return mae_forecast / (mae_naive + epsilon)
-
-
-# def calculate_metrics(
-#     train: TimeSeries,
-#     val: TimeSeries,
-#     forecast: TimeSeries,
-# ):trics_df
-#     """Calculate metrics with error handling."""
-#     try:
-#         return {
-#             "rmse": rmse(val, forecast),
-#             "rmsse": calculate_rmsse(
-#                 train.values(), val.values(), forecast.values()
-#             ),
-#             "mae": mae(val, forecast),
-#             "mase": calculate_mase(
-#                 train.values(), val.values(), forecast.values()
-#             ),
-#             "smape": smape(val, forecast),
-#             "ope": ope(val, forecast),
-#         }
-#     except Exception as e:
-#         logger.warning(f"Error calculating some metrics: {e}")
-#         return {
-#             "rmse": rmse(val, forecast),
-#             "rmsse": np.nan,
-#             "mae": mae(val, forecast),
-#             "mase": np.nan,
-#             "smape": np.nan,
-#             "ope": np.nan,
-#         }
-
-
-# def eval_model(
-#     model_type: ModelType,
-#     model: LocalForecastingModel,
-#     store: int,
-#     item: int,
-#     train: TimeSeries,
-#     val: TimeSeries,
-#     metrics_df: pd.DataFrame,
-# ) -> pd.DataFrame:
-#     """Evaluate a model with error handling."""
-#     model_name = model_type.value
-#     try:
-#         logger.info(
-#             f"Training {model_name} model, store {store}, item {item}..."
-#         )
-#         model.fit(train)
-
-#         logger.info(
-#             f"Generating forecast with {model_name}, store {store}, item {item}..."
-#         )
-#         forecast = model.predict(len(val))
-
-#         metrics = calculate_metrics(train, val, forecast)
-
-#         new_row = pd.DataFrame(
-#             [
-#                 {
-#                     "Model": model_name,
-#                     "Store": store,
-#                     "Item": item,
-#                     "RMSE": metrics["rmse"],
-#                     "MAE": metrics["mae"],
-#                     "SMAPE": metrics["smape"],
-#                     "RMSSE": metrics["rmsse"],
-#                     "OPE": metrics["ope"],
-#                     "MASE": metrics["mase"],
-#                 }
-#             ]
-#         )
-
-#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-#         logger.info(
-#             f"{model_name} completed successfully, store {store}, item {item}"
-#         )
-
-#     except Exception as e:
-#         logger.error(f"Error with {model_name}: {e}")
-#         new_row = pd.DataFrame(
-#             [
-#                 {
-#                     "Model": model_name,
-#                     "Store": store,
-#                     "Item": item,
-#                     "RMSE": np.nan,
-#                     "MAE": np.nan,
-#                     "SMAPE": np.nan,
-#                     "RMSSE": np.nan,
-#                     "OPE": np.nan,
-#                     "MASE": np.nan,
-#                 }
-#             ]
-#         )
-#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-
-#     return metrics_df
 
 
 # ---------------------------------------------------------------------
