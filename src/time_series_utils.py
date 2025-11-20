@@ -318,24 +318,24 @@ def eval_model(
             f"Training {modelType} model, store {store}, item {item}..."
         )
 
-        # --- START SCALING LOGIC ---
-        # 1. Initialize and fit the scaler on training data
+        # START SCALING LOGIC
+        # Initialize and fit the scaler on training data
         scaler = Scaler(RobustScaler())
         train_scaled = scaler.fit_transform(train)
 
-        # 2. Fit model on SCALED data (prevents Kalman explosion)
+        # Fit model on SCALED data (prevents Kalman explosion)
         model.fit(train_scaled)
 
         logger.info(f"Generating forecast with {modelType}...")
 
-        # 3. Predict (returns scaled output)
+        # Predict (returns scaled output)
         forecast_scaled = model.predict(len(val))
 
-        # 4. Inverse transform to get Real Units back
+        # Inverse transform to get Real Units back
         forecast = scaler.inverse_transform(forecast_scaled)
-        # --- END SCALING LOGIC ---
+        # END SCALING LOGIC
 
-        # 5. Calculate metrics using Real Units (train, val, forecast are all unscaled now)
+        # Calculate metrics using Real Units (train, val, forecast are all unscaled now)
         metrics = calculate_metrics(train, val, forecast)
 
         new_row = pd.DataFrame(
