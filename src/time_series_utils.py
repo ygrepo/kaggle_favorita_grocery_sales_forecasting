@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from darts import TimeSeries
-from darts.models.forecasting.forecasting_model import LocalForecastingModel
+from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.metrics import rmse, mae, ope, smape, marre
 from typing import Optional
 from sklearn.preprocessing import RobustScaler
@@ -305,7 +305,7 @@ def calculate_metrics(
 
 def eval_model(
     modelType: str,
-    model: LocalForecastingModel,
+    model: ForecastingModel,
     store: int,
     item: int,
     train: TimeSeries,
@@ -382,72 +382,3 @@ def eval_model(
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
     return metrics_df
-
-
-# def eval_model(
-#     modelType: str,
-#     model: LocalForecastingModel,
-#     store: int,
-#     item: int,
-#     train: TimeSeries,
-#     val: TimeSeries,
-#     metrics_df: pd.DataFrame,
-# ) -> pd.DataFrame:
-#     """Evaluate a model with error handling."""
-#     try:
-#         logger.info(
-#             f"Training {modelType} model, store {store}, item {item}..."
-#         )
-#         model.fit(train)
-
-#         logger.info(
-#             f"Generating forecast with {modelType}, store {store}, item {item}..."
-#         )
-#         forecast = model.predict(len(val))
-
-#         metrics = calculate_metrics(train, val, forecast)
-
-#         new_row = pd.DataFrame(
-#             [
-#                 {
-#                     "Model": modelType,
-#                     "Store": store,
-#                     "Item": item,
-#                     "RMSSE": metrics["rmsse"],
-#                     "MASE": metrics["mase"],
-#                     "SMAPE": metrics["smape"],
-#                     "MARRE": metrics["marre"],
-#                     "RMSE": metrics["rmse"],
-#                     "MAE": metrics["mae"],
-#                     "OPE": metrics["ope"],
-#                 }
-#             ]
-#         )
-
-#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-#         logger.info(
-#             f"{modelType} completed successfully, store {store}, item {item}"
-#         )
-
-#     except Exception as e:
-#         logger.error(f"Error with {modelType}: {e}")
-#         # Add a row with NaN values to indicate failure
-#         new_row = pd.DataFrame(
-#             [
-#                 {
-#                     "Model": modelType,
-#                     "Store": store,
-#                     "Item": item,
-#                     "RMSSE": np.nan,
-#                     "MASE": np.nan,
-#                     "SMAPE": np.nan,
-#                     "MARRE": np.nan,
-#                     "RMSE": np.nan,
-#                     "MAE": np.nan,
-#                     "OPE": np.nan,
-#                 }
-#             ]
-#         )
-#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-
-#     return metrics_df

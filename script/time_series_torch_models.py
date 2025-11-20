@@ -52,6 +52,7 @@ from src.time_series_utils import (
     prepare_store_item_series,
     get_train_val_data,
     calculate_metrics,
+    eval_model,
 )
 
 logger = get_logger(__name__)
@@ -227,20 +228,19 @@ def process_store_item(
     df: pd.DataFrame,
     args,
     model_types: List[ModelType],
-) -> List[dict]:
+    metrics_df: pd.DataFrame,
+) -> pd.DataFrame:
     """Train ALL requested models for a single store-item pair."""
     try:
         ts_df = prepare_store_item_series(df, store, item)
         if ts_df.empty:
-            return []
+            return metrics_df
 
         _, train_ts, val_ts = get_train_val_data(
             ts_df, store, item, args.split_point, args.min_train_data_points
         )
         if train_ts is None or val_ts is None or len(val_ts) == 0:
-            return []
-
-        rows = []
+            return metrics_df
 
         # train each model requested
         for mtype in model_types:
@@ -259,33 +259,36 @@ def process_store_item(
             logger.info(
                 f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
             )
-            model.fit(
-                train_ts, dataloader_kwargs={"num_workers": args.num_workers}
+            eval_model(
+                mtype.value, model, store, item, train_ts, val_ts, metrics_df
             )
+            # model.fit(
+            #     train_ts, dataloader_kwargs={"num_workers": args.num_workers}
+            # )
 
-            forecast = model.predict(len(val_ts))
-            metrics = calculate_metrics(train_ts, val_ts, forecast)
+            # forecast = model.predict(len(val_ts))
+            # metrics = calculate_metrics(train_ts, val_ts, forecast)
 
-            rows.append(
-                {
-                    "Model": mtype.value,
-                    "Store": store,
-                    "Item": item,
-                    "RMSE": metrics["rmse"],
-                    "MAE": metrics["mae"],
-                    "SMAPE": metrics["smape"],
-                    "OPE": metrics["ope"],
-                    "RMSSE": metrics["rmsse"],
-                    "MASE": metrics["mase"],
-                }
-            )
+            # rows.append(
+            #     {
+            #         "Model": mtype.value,
+            #         "Store": store,
+            #         "Item": item,
+            #         "RMSE": metrics["rmse"],
+            #         "MAE": metrics["mae"],
+            #         "SMAPE": metrics["smape"],
+            #         "OPE": metrics["ope"],
+            #         "RMSSE": metrics["rmsse"],
+            #         "MASE": metrics["mase"],
+            #     }
+            # )
 
-        return rows
+        return metrics_df
 
     except Exception as e:
         logger.error(f"ERROR for store={store}, item={item}: {e}")
         logger.error(traceback.format_exc())
-        return []
+        return metrics_df
 
 
 # ---------------------------------------------------------------------
@@ -350,7 +353,20 @@ def main():
     if args.N > 0:
         logger.info(f"Limiting to first {args.N} combinations")
         unique_combinations = unique_combinations.head(args.N)
-    results = []
+    metrics_df = pd.DataFrame(
+        columns=[
+            "Model",
+            "Store",
+            "Item",
+            "RMSSE",
+            "MASE",
+            "SMAPE",
+            "MARRE",
+            "RMSE",
+            "MAE",
+            "OPE",
+        ]
+    )
 
     for idx, (store, item) in tqdm(
         enumerate(
@@ -369,10 +385,10 @@ def main():
         else:
             gpu_id = idx % num_gpus  # round-robin GPUs
 
-        rows = process_store_item(store, item, gpu_id, df, args, model_types)
-        results.extend(rows)
+        metrics_df = process_store_item(
+            store, item, gpu_id, df, args, model_types, metrics_df
+        )
 
-    metrics_df = pd.DataFrame(results)
     save_csv_or_parquet(metrics_df, args.metrics_fn)
 
     logger.info("Benchmark complete.")
