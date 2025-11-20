@@ -51,7 +51,6 @@ from src.data_utils import load_raw_data
 from src.time_series_utils import (
     prepare_store_item_series,
     get_train_val_data,
-    calculate_metrics,
     eval_model,
 )
 
@@ -262,26 +261,6 @@ def process_store_item(
             eval_model(
                 mtype.value, model, store, item, train_ts, val_ts, metrics_df
             )
-            # model.fit(
-            #     train_ts, dataloader_kwargs={"num_workers": args.num_workers}
-            # )
-
-            # forecast = model.predict(len(val_ts))
-            # metrics = calculate_metrics(train_ts, val_ts, forecast)
-
-            # rows.append(
-            #     {
-            #         "Model": mtype.value,
-            #         "Store": store,
-            #         "Item": item,
-            #         "RMSE": metrics["rmse"],
-            #         "MAE": metrics["mae"],
-            #         "SMAPE": metrics["smape"],
-            #         "OPE": metrics["ope"],
-            #         "RMSSE": metrics["rmsse"],
-            #         "MASE": metrics["mase"],
-            #     }
-            # )
 
         return metrics_df
 
@@ -389,7 +368,8 @@ def main():
             store, item, gpu_id, df, args, model_types, metrics_df
         )
 
-    save_csv_or_parquet(metrics_df, args.metrics_fn)
+    metrics_fn = Path(args.metrics_fn).resolve()
+    save_csv_or_parquet(metrics_df, metrics_fn)
 
     logger.info("Benchmark complete.")
 
