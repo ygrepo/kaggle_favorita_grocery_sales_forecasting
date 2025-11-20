@@ -258,7 +258,7 @@ def process_store_item(
             logger.info(
                 f"[GPU {gpu_id}] Training {mtype.value} for store={store}, item={item}"
             )
-            eval_model(
+            metrics_df = eval_model(
                 mtype.value, model, store, item, train_ts, val_ts, metrics_df
             )
 
