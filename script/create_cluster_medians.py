@@ -86,33 +86,59 @@ def main():
         )
 
         df = load_raw_data(data_fn)
+        logger.info(f"Final dataframe shape: {df.shape}")
+
+        # Get store assignments and rename columns
         assignments = model_dict["assignments"].query("factor_name == 'Store'")
         assignments.rename(columns={"item_name": "store"}, inplace=True)
         assignments["store"] = assignments["store"].astype(int)
-        logger.info(f"Unique stores: {df['store'].nunique()}")
-        df = df.merge(assignments, on=["cluster_id", "date"], how="left")
-        logger.info(f"Unique stores: {df['store'].nunique()}")
-        df = compute_cluster_medians(
-            df,
-            date_col="date",
-            cluster_col="cluster_id",
-            value_col="growth_rate",
+        # Add cluster IDs to main dataframe
+        df = df.merge(
+            assignments[["store", "cluster_id"]].rename(
+                columns={"cluster_id": "store_cluster_id"}
+            ),
+            on="store",
+            how="left",
+        )
+        # Compute store cluster medians by date
+        medians = (
+            df.groupby(["date", "store_cluster_id"])["growth_rate"]
+            .median()
+            .reset_index()
+            .rename(columns={"growth_rate": "store_median"})
+        )
+        df = df.merge(medians, on=["date", "store_cluster_id"], how="left")
+
+        # Get item assignments and rename columns
+        assignments = model_dict["assignments"].query("factor_name == 'SKU'")
+        assignments.rename(columns={"item_name": "item"}, inplace=True)
+        assignments["item"] = assignments["item"].astype(int)
+
+        df = df.merge(
+            assignments[["item", "cluster_id"]].rename(
+                columns={"cluster_id": "item_cluster_id"}
+            ),
+            on="item",
+            how="left",
         )
 
-        assignments = model_dict["assignments"].query("factor_name == 'SKU'")
-        assignments.rename(columns={"item_name": "sku"}, inplace=True)
-        assignments["sku"] = assignments["sku"].astype(int)
-        df = df.merge(assignments, on=["cluster_id", "date"], how="left")
-        logger.info(f"Unique stores: {df['store'].nunique()}")
-        df = compute_cluster_medians(
-            df,
-            date_col="date",
-            cluster_col="cluster_id",
-            value_col="growth_rate",
+        # Compute item cluster medians by date
+        medians = (
+            df.groupby(["date", "item_cluster_id"])["growth_rate"]
+            .median()
+            .reset_index()
+            .rename(columns={"growth_rate": "item_median"})
         )
-        logger.info(f"Unique stores: {df['store'].nunique()}")
-        logger.info(f"Unique skus: {df['sku'].nunique()}")
+        df = df.merge(medians, on=["date", "item_cluster_id"], how="left")
+
+        # Optional: drop intermediate cluster columns
+        # df = df.drop(columns=["store_cluster_id", "item_cluster_id"])
+
         save_csv_or_parquet(df, output_fn)
+
+        logger.info(f"Final dataframe shape: {df.shape}")
+        logger.info(f"Columns: {df.columns.tolist()}")
+
         logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error: {e}")
