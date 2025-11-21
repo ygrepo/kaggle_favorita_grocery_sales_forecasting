@@ -81,7 +81,9 @@ def main():
         logger.info(f"  Log fn: {log_fn}")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model_dict = torch.load(model_fn, map_location=device)
+        model_dict = torch.load(
+            model_fn, map_location=device, weights_only=False
+        )
 
         df = load_raw_data(data_fn)
         assignments = model_dict["assignments"].query("factor_name == 'Store'")
