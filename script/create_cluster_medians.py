@@ -89,36 +89,27 @@ def main():
         assignments = model_dict["assignments"].query("factor_name == 'Store'")
         assignments.rename(columns={"item_name": "store"}, inplace=True)
         assignments["store"] = assignments["store"].astype(int)
-
-        med_df = compute_cluster_medians(
-            assignments,
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        df = df.merge(assignments, on=["cluster_id", "date"], how="left")
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        df = compute_cluster_medians(
+            df,
             date_col="date",
             cluster_col="cluster_id",
             value_col="growth_rate",
         )
-        logger.info(f"Unique stores: {df['store'].nunique()}")
-        df = df.merge(med_df, on=["cluster_id", "date"], how="left")
-        logger.info(f"Unique stores: {df['store'].nunique()}")
+
         assignments = model_dict["assignments"].query("factor_name == 'SKU'")
         assignments.rename(columns={"item_name": "sku"}, inplace=True)
         assignments["sku"] = assignments["sku"].astype(int)
-
-        med_df = compute_cluster_medians(
+        df = df.merge(assignments, on=["cluster_id", "date"], how="left")
+        logger.info(f"Unique stores: {df['store'].nunique()}")
+        df = compute_cluster_medians(
             df,
             date_col="date",
             cluster_col="cluster_id",
             value_col="growth_rate",
         )
-
-        med_df = compute_cluster_medians(
-            df,
-            date_col="date",
-            cluster_col="cluster_id",
-            value_col="unit_sales",
-        )
-        logger.info(f"Unique stores: {df['store'].nunique()}")
-        logger.info(f"Unique skus: {df['sku'].nunique()}")
-        df = df.merge(med_df, on=["cluster_id", "date"], how="left")
         logger.info(f"Unique stores: {df['store'].nunique()}")
         logger.info(f"Unique skus: {df['sku'].nunique()}")
         save_csv_or_parquet(df, output_fn)
