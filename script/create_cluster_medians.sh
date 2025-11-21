@@ -12,8 +12,9 @@ cd "$PROJECT_ROOT"
 # Default configuration
 DATA_DIR="${PROJECT_ROOT}/output/data"
 OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
-DATA_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2014_January_top_53_store_2000_item_growth_rate_clustered_medians.parquet"
+MODEL_FN="${OUTPUT_DATA_DIR}/20251108_tucker_2014_January_top_53_store_2000_item_growth_rate_clusters.pt"
+DATA_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_medians.parquet"
 
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -25,6 +26,7 @@ LOG_LEVEL="INFO"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --model_fn) MODEL_FN="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
     --output_fn) OUTPUT_FN="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
@@ -51,6 +53,7 @@ echo "  Log fn: ${LOG_FILE}" | tee -a "$LOG_FILE"
 echo "  Log level: ${LOG_LEVEL}" | tee -a "$LOG_FILE"
 
 python "${SCRIPT_DIR}/create_cluster_medians.py" \
+  --model_fn "$MODEL_FN" \
   --data_fn "$DATA_FN" \
   --output_fn "$OUTPUT_FN" \
   --log_fn "$LOG_FILE" \

@@ -11,6 +11,7 @@ from sklearn.impute import SimpleImputer
 import logging
 from src.utils import (
     save_csv_or_parquet,
+    read_csv_or_parquet,
     get_logger,
     safe_autocorr,
     trend_slope,
@@ -159,24 +160,12 @@ def load_raw_data(data_fn: Path) -> pd.DataFrame:
         Preprocessed DataFrame
     """
     logger.info(f"Loading data from {data_fn}")
-
-    try:
-        if data_fn.suffix == ".parquet":
-            df = pd.read_parquet(data_fn)
-        else:
-            df = pd.read_csv(
-                data_fn,
-                low_memory=False,
-            )
-        df["store_item"] = (
-            df["store"].astype(str) + "_" + df["item"].astype(str)
-        )
-        df["date"] = pd.to_datetime(df["date"])
-        df.sort_values(["date", "store_item"], inplace=True, kind="mergesort")
-        logger.info(f"Loaded data with shape {df.shape}")
-        return df
-    except Exception as e:
-        logger.error(f"Error loading data: {e}")
+    df = read_csv_or_parquet(data_fn)
+    df["store_item"] = df["store"].astype(str) + "_" + df["item"].astype(str)
+    df["date"] = pd.to_datetime(df["date"])
+    df.sort_values(["date", "store_item"], inplace=True, kind="mergesort")
+    logger.info(f"Loaded data with shape {df.shape}")
+    return df
 
 
 def load_xtensor_npz(path: str | Path):
