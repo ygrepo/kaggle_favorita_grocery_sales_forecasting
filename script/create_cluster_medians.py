@@ -91,7 +91,7 @@ def main():
         assignments["store"] = assignments["store"].astype(int)
 
         med_df = compute_cluster_medians(
-            df,
+            assignments,
             date_col="date",
             cluster_col="cluster_id",
             value_col="growth_rate",
