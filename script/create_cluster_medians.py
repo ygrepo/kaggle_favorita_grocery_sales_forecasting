@@ -85,14 +85,16 @@ def main():
         model_dict = torch.load(
             model_fn, map_location=device, weights_only=False
         )
+        assignment_df = model_dict["assignments"].copy()
+        del model_dict
+        gc.collect()
 
         df = load_raw_data(data_fn)
-        logger.info(f"Final dataframe shape: {df.shape}")
+        logger.info(f"Dataframe shape: {df.shape}")
 
         # Get store assignments and rename columns
         assignments = (
-            model_dict["assignments"]
-            .query("factor_name == 'Store'")
+            assignment_df.query("factor_name == 'Store'")
             .rename(columns={"item_name": "store"})
             .assign(store=lambda x: x["store"].astype(int))
         )
@@ -122,8 +124,7 @@ def main():
 
         # Get item assignments and rename columns
         assignments = (
-            model_dict["assignments"]
-            .query("factor_name == 'SKU'")
+            assignment_df.query("factor_name == 'SKU'")
             .rename(columns={"item_name": "item"})
             .assign(item=lambda x: x["item"].astype(int))
         )
