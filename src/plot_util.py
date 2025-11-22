@@ -37,6 +37,13 @@ from src.tensor_models import calculate_cluster_profiles
 logger = get_logger(__name__)
 
 
+# Colors for the two metrics
+METRIC_COLORS = {
+    "RMSSE": "#B82020",  # dark red
+    "MASE": "#395B9B",  # navy blue
+}
+
+
 def plot_store_sku_heatmap(
     df: pd.DataFrame,
     *,
@@ -2513,92 +2520,6 @@ def plot_feature_factors_multiplot(
         plt.close()
 
 
-# def plot_factor_matrix(
-#     factor_matrix, title="Factor Matrix Loadings", x_labels=None, y_labels=None
-# ):
-#     """
-#     Visualizes a factor matrix using a heatmap.
-
-#     Args:
-#         factor_matrix (np.ndarray): The 2D factor matrix (e.g., F_features).
-#         title (str): The title for the plot.
-#         x_labels (list[str], optional): Labels for the columns (e.g., ["Factor 1", ...]).
-#         y_labels (list[str], optional): Labels for the rows (e.g., your 9 feature names).
-#     """
-#     if factor_matrix.ndim != 2:
-#         raise ValueError(
-#             f"Factor matrix must be 2D, but got {factor_matrix.ndim} dimensions."
-#         )
-
-#     plt.figure(
-#         figsize=(
-#             max(8, factor_matrix.shape[1]),
-#             max(6, factor_matrix.shape[0] / 2),
-#         )
-#     )
-
-#     # Create default labels if none provided
-#     if x_labels is None:
-#         x_labels = [f"Factor {i+1}" for i in range(factor_matrix.shape[1])]
-#     if y_labels is None:
-#         y_labels = [f"Row {i+1}" for i in range(factor_matrix.shape[0])]
-
-#     # Use a diverging color map to show positive/negative loadings
-#     cmap = "vlag"  # (Blue -> White -> Red)
-
-#     ax = sns.heatmap(
-#         factor_matrix,
-#         annot=True,
-#         fmt=".2f",
-#         annot_kws={"fontsize": 10, "fontweight": "bold"},
-#         cmap=cmap,
-#         xticklabels=x_labels,
-#         yticklabels=y_labels,
-#         center=0,  # Center color map at zero
-#         cbar_kws={"label": "Loadings"},
-#     )
-
-#     ax.set_title(title, fontsize=16, pad=20, fontweight="bold")
-#     plt.xlabel("Factor Components", fontsize=12, fontweight="bold")
-#     plt.ylabel("Original Dimensions", fontsize=12, fontweight="bold")
-#     ax.set_xticklabels(ax.get_xticklabels(), fontweight="bold", rotation=0)
-#     ax.set_yticklabels(ax.get_yticklabels(), fontweight="bold")
-
-
-# def plot_feature_factor_interpretation(model_dict, fn=None):
-#     """
-#     Calls your plot_factor_matrix function to visualize the
-#     feature factor matrix (F_features) from the model_dict.
-
-#     Args:
-#         model_dict (dict): The loaded model dictionary.
-#     """
-#     try:
-#         # F_features is factors[2] based on (stores, SKU, FEATURES)
-#         f_features = model_dict["factors"][2]
-#         feature_names = model_dict["feature_names"]
-#         k_rank = f_features.shape[1]
-#     except KeyError:
-#         print("ERROR: 'factors' or 'feature_names' not found in model_dict.")
-#         return
-#     except IndexError:
-#         print("ERROR: Feature factor matrix not found at index 2.")
-#         return
-
-#     logger.info("Plotting Feature Factor Loadings...")
-#     plot_factor_matrix(
-#         f_features,
-#         title="Feature Factor Loadings",
-#         x_labels=[f"Factor {k+1}" for k in range(k_rank)],
-#         y_labels=feature_names,
-#     )
-#     plt.tight_layout()
-#     if fn:
-#         plt.savefig(fn, dpi=300)
-#     plt.show()
-#     plt.close()
-
-
 def plot_cluster_combined_profiles(
     model_dict: Dict[str, Any],
     mask: str,
@@ -3069,444 +2990,341 @@ def _plot_radar(
         plt.tight_layout()
 
 
-# def plot_cluster_profiles(
-#     model_dict: Dict[str, Any],
-#     mask: str,
-#     plot_type: Literal["heatmap", "parallel", "bar", "radar"] = "heatmap",
-#     title_fontsize: int = 16,
-#     figsize: tuple = (12, 8),
-#     normalize: bool = True,
-#     save_path: Optional[str] = None,
-#     max_clusters: int = 10,
-#     selection_method: Literal["size", "variance", "hierarchical"] = "size",
-# ):
-#     """
-#     Plot cluster profiles using various visualization methods.
+def plot_grouped_bar(metrics_stats):
+    models = metrics_stats["Model"].values
+    n_models = len(models)
+    n_metrics = len(metrics)
 
-#     Args:
-#         model_dict: The loaded model dictionary
-#         mask: 'Store' or 'SKU'
-#         plot_type: Type of visualization
-#         title_fontsize: Font size for the plot title
-#         figsize: Figure size
-#         normalize: Whether to normalize features for better comparison
-#         save_path: Path to save the plot
-#         max_clusters: Maximum number of clusters to show (default: 10)
-#         selection_method: How to select top clusters ('size', 'variance', 'hierarchical')
-#     """
+    # Spacing between model groups
+    x = np.arange(n_models) * 1.3
 
-#     cluster_means = calculate_cluster_profiles(
-#         model_dict, mask, max_clusters, selection_method
-#     )
-#     if cluster_means is None:
-#         return
+    # Width of each bar
+    width = 0.30
 
-#     feature_names = model_dict["feature_names"]
-#     feature_data = cluster_means[feature_names]
+    fig, ax = plt.subplots(figsize=(9, 5))
 
-#     # Normalize features if requested (z-score normalization)
-#     if normalize:
-#         feature_data = (
-#             feature_data - feature_data.mean()
-#         ) / feature_data.std()
-#         value_label = "Normalized Values"
-#     else:
-#         value_label = "Feature Values"
+    eps = 1e-6
 
-#     # Add cluster size info to the title
-#     total_clusters = len(
-#         model_dict["assignments"]
-#         .query("factor_name == @mask")["cluster_id"]
-#         .unique()
-#     )
-#     title_suffix = f" (Top {len(feature_data)}/{total_clusters} clusters by {selection_method})"
+    for i, metric in enumerate(metrics):
+        means = np.clip(metrics_stats[(metric, "mean")].values, eps, None)
+        stds = np.clip(metrics_stats[(metric, "std")].values, eps, None)
 
-#     if plot_type == "heatmap":
-#         _plot_heatmap(
-#             feature_data,
-#             mask,
-#             title_fontsize,
-#             figsize,
-#             value_label,
-#             title_suffix,
-#             cluster_means,
-#         )
-#     elif plot_type == "parallel":
-#         _plot_parallel_coordinates(
-#             feature_data,
-#             mask,
-#             title_fontsize,
-#             figsize,
-#             value_label,
-#             title_suffix,
-#             cluster_means,
-#         )
-#     elif plot_type == "bar":
-#         _plot_grouped_bars(
-#             feature_data,
-#             mask,
-#             title_fontsize,
-#             figsize,
-#             value_label,
-#             title_suffix,
-#             cluster_means,
-#         )
-#     elif plot_type == "radar":
-#         _plot_radar(
-#             feature_data,
-#             mask,
-#             title_fontsize,
-#             figsize,
-#             title_suffix,
-#             cluster_means,
-#         )
-#     else:
-#         logger.error(f"Unknown plot_type: {plot_type}")
-#         return
+        ax.bar(
+            x + (i - (n_metrics - 1) / 2) * width,
+            means,
+            yerr=stds,
+            capsize=4,
+            width=width,
+            edgecolor="black",
+            linewidth=2.2,
+            color=colors[metric],
+            label=metric,
+        )
 
-#     if save_path:
-#         plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, fontsize=12)
 
-#     plt.show()
+    ax.set_ylabel("Metric Value", fontsize=13)
+    ax.set_yscale("linear")  # <-- force linear scale
+
+    # Aesthetic style
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_linewidth(1.6)
+    ax.spines["bottom"].set_linewidth(1.6)
+    ax.tick_params(width=1.5, labelsize=11)
+
+    ax.legend(title="Metric", fontsize=11)
+
+    plt.tight_layout()
+    plt.show()
 
 
-# def _plot_heatmap(
-#     feature_data: pd.DataFrame,
-#     mask: str,
-#     title_fontsize: int,
-#     figsize: tuple,
-#     value_label: str,
-#     title_suffix: str,
-#     cluster_means: pd.DataFrame,
-# ):
-#     """Heatmap visualization with cluster size annotations."""
-#     fig, ax = plt.subplots(figsize=figsize)
+def plot_grouped_bar_iqr(
+    metric_names: list[str],
+    df: pd.DataFrame,
+    figsize: tuple = (10, 6),
+    y_tick_step: float = 0.1,
+    y_min: float | None = None,
+    y_max: float | None = None,
+    fn: Path | None = None,
+):
+    models = df["Model"].unique()
+    n_models = len(models)
+    n_metrics = len(metric_names)
 
-#     # Create heatmap with better styling
-#     sns.heatmap(
-#         feature_data,
-#         annot=True,
-#         fmt=".2f",
-#         cmap="RdBu_r",
-#         center=0,
-#         cbar_kws={"label": value_label},
-#         ax=ax,
-#         linewidths=0.5,
-#     )
+    # ---- compute median + IQR ----
+    stats = {}
+    for metric in metric_names:
+        grouped = df.groupby("Model")[metric]
+        med = grouped.median()
+        q1 = grouped.quantile(0.25)
+        q3 = grouped.quantile(0.75)
 
-#     ax.set_title(
-#         f"{mask} Factor - Heatmap{title_suffix}",
-#         fontsize=title_fontsize,
-#         fontweight="bold",
-#         pad=20,
-#     )
-#     ax.set_xlabel("Features", fontsize=12, fontweight="bold")
-#     ax.set_ylabel("Cluster ID (size)", fontsize=12, fontweight="bold")
+        stats[metric] = {
+            "median": med.reindex(models).to_numpy(),
+            "lower": (med - q1).reindex(models).to_numpy(),
+            "upper": (q3 - med).reindex(models).to_numpy(),
+        }
 
-#     # Update y-axis labels to include cluster sizes
-#     y_labels = [
-#         f"Cluster {idx} (n={cluster_means.loc[idx, 'cluster_size']})"
-#         for idx in feature_data.index
-#     ]
-#     ax.set_yticklabels(y_labels, rotation=0, fontweight="bold")
+    # ---- spacing ----
+    width = 0.32  # bar width
+    gap = 0.08  # horizontal gap between bars within a group
 
-#     # Rotate x-axis labels for better readability
-#     plt.xticks(rotation=45, ha="right", fontweight="bold")
-#     plt.tight_layout()
+    # step between group centers (controls space between model groups)
+    group_step = 1.2
+    x = np.arange(n_models) * group_step
 
+    fig, ax = plt.subplots(figsize=figsize)
 
-# def _plot_parallel_coordinates(
-#     feature_data: pd.DataFrame,
-#     mask: str,
-#     title_fontsize: int,
-#     figsize: tuple,
-#     value_label: str,
-#     title_suffix: str,
-#     cluster_means: pd.DataFrame,
-# ):
-#     """Create parallel coordinates plot with cluster size info."""
-#     fig, ax = plt.subplots(figsize=figsize)
+    # ---- draw bars ----
+    for j, metric in enumerate(metric_names):
+        med = stats[metric]["median"]
+        lower = stats[metric]["lower"]
+        upper = stats[metric]["upper"]
+        yerr = np.vstack([lower, upper])
 
-#     # Create color palette with better distinction
-#     colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data)))
+        # for 2 bars: j=0,1 → offsets -0.5, +0.5
+        offset_factor = j - (n_metrics - 1) / 2  # -0.5, +0.5 for 2 metrics
+        offset = offset_factor * (width + gap)  # distance from group center
 
-#     # Plot each cluster
-#     for idx, (cluster_id, row) in enumerate(feature_data.iterrows()):
-#         cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
-#         ax.plot(
-#             range(len(feature_data.columns)),
-#             row.values,
-#             marker="o",
-#             linewidth=2.5,
-#             markersize=8,
-#             label=f"Cluster {cluster_id} (n={cluster_size})",
-#             color=colors[idx],
-#             alpha=0.8,
-#         )
+        ax.bar(
+            x + offset,
+            med,
+            yerr=yerr,
+            capsize=4,
+            width=width,
+            edgecolor="black",
+            linewidth=2.2,
+            color=METRIC_COLORS[metric],
+            label=metric,
+        )
+    # axis style…
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        models,
+        fontsize=10,
+        fontweight="bold",
+        rotation=0,
+        ha="center",
+        rotation_mode="anchor",
+    )
+    if y_min is not None and y_max is not None:
+        # Use provided y_min and y_max
+        y_ticks = np.arange(y_min, y_max + y_tick_step / 2, y_tick_step)
+        ax.set_yticks(y_ticks)
+        ax.set_ylim(y_min, y_max)
+    else:
+        # Fall back to automatic limits if not provided
+        current_y_min, current_y_max = ax.get_ylim()
+        y_min_auto = np.floor(current_y_min / y_tick_step) * y_tick_step
+        y_max_auto = np.ceil(current_y_max / y_tick_step) * y_tick_step
+        y_ticks = np.arange(
+            y_min_auto, y_max_auto + y_tick_step / 2, y_tick_step
+        )
+        ax.set_yticks(y_ticks)
+        ax.set_ylim(y_min_auto, y_max_auto)
 
-#     ax.set_xticks(range(len(feature_data.columns)))
-#     ax.set_xticklabels(
-#         feature_data.columns, rotation=45, ha="right", fontweight="bold"
-#     )
-#     ax.set_ylabel(value_label, fontsize=12, fontweight="bold")
-#     ax.set_title(
-#         f"{mask} Factor - {title_suffix}",
-#         fontsize=title_fontsize,
-#         fontweight="bold",
-#         pad=20,
-#     )
+    ax.set_ylabel("Metric Value", fontsize=15, fontweight="bold")
+    # y_min, y_max = ax.get_ylim()
 
-#     ax.grid(True, alpha=0.3)
-#     ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-#     plt.tight_layout()
+    # # Round to nearest tick step and add padding
+    # y_min_rounded = np.floor(y_min / y_tick_step) * y_tick_step
+    # y_max_rounded = np.ceil(y_max / y_tick_step) * y_tick_step
 
+    # # Create y-ticks at specified intervals
+    # y_ticks = np.arange(
+    #     y_min_rounded, y_max_rounded + y_tick_step / 2, y_tick_step
+    # )
+    # ax.set_yticks(y_ticks)
+    # ax.set_ylim(y_min_rounded, y_max_rounded)
 
-# def _plot_grouped_bars(
-#     feature_data: pd.DataFrame,
-#     mask: str,
-#     title_fontsize: int,
-#     figsize: tuple,
-#     value_label: str,
-#     title_suffix: str,
-#     cluster_means: pd.DataFrame,
-# ):
-#     """Create grouped bar chart with cluster size info."""
-#     fig, ax = plt.subplots(figsize=figsize)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_linewidth(1.8)
+    ax.spines["bottom"].set_linewidth(1.8)
+    ax.yaxis.grid(True, linestyle="--", linewidth=0.8, alpha=0.4)
+    ax.set_axisbelow(True)
 
-#     # Transpose for better bar grouping
-#     feature_data_t = feature_data.T
+    ax.tick_params(axis="x", pad=2)
+    # ax.tick_params(width=1.6, labelsize=12)
+    ax.legend(title="Metric", fontsize=12)
+    plt.subplots_adjust(bottom=0.1)  # bring entire figure closer
 
-#     # Create grouped bar plot with better colors
-#     feature_data_t.plot(kind="bar", ax=ax, width=0.8, colormap="tab10")
-
-#     ax.set_title(
-#         f"{mask} Factor - {title_suffix}",
-#         fontsize=title_fontsize,
-#         fontweight="bold",
-#         pad=20,
-#     )
-#     ax.set_xlabel("Features", fontsize=12, fontweight="bold")
-#     ax.set_ylabel(value_label, fontsize=12, fontweight="bold")
-
-#     # Update legend with cluster sizes
-#     legend_labels = [
-#         f"Cluster {col} (n={cluster_means.loc[col, 'cluster_size']})"
-#         for col in feature_data.index
-#     ]
-#     ax.legend(
-#         legend_labels,
-#         title="Cluster ID",
-#         bbox_to_anchor=(1.05, 1),
-#         loc="upper left",
-#     )
-
-#     plt.xticks(rotation=45, ha="right", fontweight="bold")
-#     plt.grid(True, alpha=0.3, axis="y")
-#     plt.tight_layout()
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
 
 
-# def _plot_radar(
-#     feature_data: pd.DataFrame,
-#     mask: str,
-#     title_fontsize: int,
-#     figsize: tuple,
-#     title_suffix: str,
-#     cluster_means: pd.DataFrame,
-# ):
-#     """Create radar plot with cluster size info."""
-#     num_vars = len(feature_data.columns)
-#     angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-#     angles += angles[:1]  # Complete the circle
+def plot_grouped_bar_iqr_comparison(
+    metric_names: list[str],
+    df_left: pd.DataFrame,
+    df_right: pd.DataFrame,
+    left_title: str = "Left Plot",
+    right_title: str = "Right Plot",
+    figsize: tuple = (16, 6),
+    fn: Path | None = None,
+):
+    # Get models from both dataframes
+    models_left = df_left["Model"].unique()
+    models_right = df_right["Model"].unique()
+    n_models_left = len(models_left)
+    n_models_right = len(models_right)
+    n_metrics = len(metric_names)
 
-#     fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
+    # ---- compute median + IQR for both dataframes ----
+    def compute_stats(df, models):
+        stats = {}
+        for metric in metric_names:
+            grouped = df.groupby("Model")[metric]
+            med = grouped.median()
+            q1 = grouped.quantile(0.25)
+            q3 = grouped.quantile(0.75)
 
-#     # Color palette with better distinction
-#     colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data)))
+            stats[metric] = {
+                "median": med.reindex(models).to_numpy(),
+                "lower": (med - q1).reindex(models).to_numpy(),
+                "upper": (q3 - med).reindex(models).to_numpy(),
+            }
+        return stats
 
-#     # Plot each cluster
-#     for idx, (cluster_id, row) in enumerate(feature_data.iterrows()):
-#         values = row.tolist()
-#         values += values[:1]  # Complete the circle
-#         cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
+    stats_left = compute_stats(df_left, models_left)
+    stats_right = compute_stats(df_right, models_right)
 
-#         ax.plot(
-#             angles,
-#             values,
-#             "o-",
-#             linewidth=2.5,
-#             markersize=6,
-#             label=f"Cluster {cluster_id} (n={cluster_size})",
-#             color=colors[idx],
-#             alpha=0.8,
-#         )
-#         ax.fill(angles, values, alpha=0.1, color=colors[idx])
+    # ---- determine global y-axis range for consistent scaling ----
+    all_values = []
+    for df in [df_left, df_right]:
+        for metric in metric_names:
+            # Filter out infinite and NaN values
+            values = df[metric].replace([np.inf, -np.inf], np.nan).dropna()
+            if len(values) > 0:
+                all_values.extend(values.values)
 
-#     # Customize the plot
-#     ax.set_xticks(angles[:-1])
-#     ax.set_xticklabels(feature_data.columns, fontsize=10, fontweight="bold")
-#     ax.set_title(
-#         f"{mask} Factor - {title_suffix}",
-#         fontsize=title_fontsize,
-#         fontweight="bold",
-#         y=1.08,
-#     )
+    if not all_values:
+        raise ValueError("No valid values found in the data")
 
-#     # Add grid
-#     ax.grid(True, alpha=0.3)
+    y_min = min(all_values)
+    y_max = max(all_values)
 
-#     # Legend
-#     plt.legend(loc="upper right", bbox_to_anchor=(1.3, 1.0))
-#     plt.tight_layout()
+    print(f"Debug: y_min = {y_min}, y_max = {y_max}")
 
+    # Check for reasonable range
+    y_range = y_max - y_min
+    if y_range > 100:  # If range is too large, use automatic ticks
+        print(f"Warning: Large y-range ({y_range:.2f}), using automatic ticks")
+        use_custom_ticks = False
+        y_ticks = None
+        y_min_rounded = y_min
+        y_max_rounded = y_max
+    else:
+        # Round to nearest 0.1 and add some padding
+        y_min_rounded = np.floor(y_min * 10) / 10 - 0.1
+        y_max_rounded = np.ceil(y_max * 10) / 10 + 0.1
 
-# def plot_cluster_combined_profiles(
-#     model_dict: Dict[str, Any],
-#     mask: str,
-#     max_clusters: int = 5,  # Much smaller default
-#     selection_method: Literal["size", "variance", "hierarchical"] = "size",
-#     figsize: tuple = (14, 10),
-# ):
-#     """
-#     Smart cluster profile plotting with automatic best visualization selection.
-#     """
-#     cluster_means = calculate_cluster_profiles(
-#         model_dict, mask, max_clusters, selection_method
-#     )
-#     if cluster_means is None:
-#         return
+        # Create y-ticks every 0.1, but limit the number of ticks
+        tick_range = y_max_rounded - y_min_rounded
+        if tick_range <= 10:  # Only use 0.1 intervals if range is reasonable
+            y_ticks = np.arange(y_min_rounded, y_max_rounded + 0.05, 0.1)
+            use_custom_ticks = True
+        else:
+            # Use larger intervals for larger ranges
+            tick_step = 0.5 if tick_range <= 50 else 1.0
+            y_ticks = np.arange(
+                y_min_rounded, y_max_rounded + tick_step / 2, tick_step
+            )
+            use_custom_ticks = True
 
-#     feature_names = model_dict["feature_names"]
-#     feature_data = cluster_means[feature_names]
+    # ---- spacing ----
+    width = 0.32  # bar width
+    gap = 0.08  # horizontal gap between bars within a group
+    group_step = 1.2
 
-#     # Normalize for better comparison
-#     feature_data_norm = (
-#         feature_data - feature_data.mean()
-#     ) / feature_data.std()
+    # Create subplots
+    fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=figsize, sharey=True)
 
-#     total_clusters = len(
-#         model_dict["assignments"]
-#         .query("factor_name == @mask")["cluster_id"]
-#         .unique()
-#     )
+    def plot_bars(ax, stats, models, title):
+        n_models = len(models)
+        x = np.arange(n_models) * group_step
 
-#     # Create subplots
-#     fig, axes = plt.subplots(2, 2, figsize=figsize)
-#     fig.suptitle(
-#         f"{mask} Factor Profiles: Top {len(feature_data)}/{total_clusters} Clusters (by {selection_method})",
-#         fontsize=16,
-#         fontweight="bold",
-#     )
+        # ---- draw bars ----
+        for j, metric in enumerate(metric_names):
+            med = stats[metric]["median"]
+            lower = stats[metric]["lower"]
+            upper = stats[metric]["upper"]
 
-#     # Colors for consistency
-#     colors = plt.cm.tab10(np.linspace(0, 1, len(feature_data_norm)))
+            # Filter out invalid values
+            valid_mask = ~(
+                np.isnan(med)
+                | np.isnan(lower)
+                | np.isnan(upper)
+                | np.isinf(med)
+                | np.isinf(lower)
+                | np.isinf(upper)
+            )
 
-#     # 1. Heatmap (top-left)
-#     ax1 = axes[0, 0]
-#     im = ax1.imshow(
-#         feature_data_norm.values, cmap="RdBu_r", aspect="auto", vmin=-2, vmax=2
-#     )
-#     ax1.set_xticks(range(len(feature_names)))
-#     ax1.set_xticklabels(feature_names, rotation=45, ha="right", fontsize=9)
-#     ax1.set_yticks(range(len(feature_data_norm)))
-#     ax1.set_yticklabels(
-#         [
-#             f'C{idx} (n={cluster_means.loc[idx, "cluster_size"]})'
-#             for idx in feature_data_norm.index
-#         ],
-#         fontsize=9,
-#     )
-#     ax1.set_title("Heatmap", fontweight="bold")
-#     plt.colorbar(im, ax=ax1, shrink=0.8)
+            if not np.any(valid_mask):
+                print(f"Warning: No valid data for metric {metric}")
+                continue
 
-#     # 2. Parallel Coordinates (top-right)
-#     ax2 = axes[0, 1]
-#     for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
-#         cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
-#         ax2.plot(
-#             range(len(row)),
-#             row.values,
-#             "o-",
-#             label=f"C{cluster_id} (n={cluster_size})",
-#             color=colors[idx],
-#             linewidth=2,
-#             markersize=6,
-#         )
-#     ax2.set_xticks(range(len(feature_names)))
-#     ax2.set_xticklabels(feature_names, rotation=45, ha="right", fontsize=9)
-#     ax2.set_ylabel("Normalized Values")
-#     ax2.set_title("Parallel Coordinates", fontweight="bold")
-#     ax2.legend(fontsize=8)
-#     ax2.grid(True, alpha=0.3)
+            yerr = np.vstack([lower, upper])
 
-#     # 3. Bar Chart (bottom-left)
-#     ax3 = axes[1, 0]
-#     x_pos = np.arange(len(feature_names))
-#     width = 0.8 / len(feature_data_norm)
+            # for 2 bars: j=0,1 → offsets -0.5, +0.5
+            offset_factor = j - (n_metrics - 1) / 2  # -0.5, +0.5 for 2 metrics
+            offset = offset_factor * (
+                width + gap
+            )  # distance from group center
 
-#     for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
-#         cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
-#         ax3.bar(
-#             x_pos + idx * width,
-#             row.values,
-#             width,
-#             label=f"C{cluster_id} (n={cluster_size})",
-#             color=colors[idx],
-#             alpha=0.8,
-#         )
+            ax.bar(
+                x + offset,
+                med,
+                yerr=yerr,
+                capsize=4,
+                width=width,
+                edgecolor="black",
+                linewidth=2.2,
+                color=METRIC_COLORS[metric],
+                label=metric,
+            )
 
-#     ax3.set_xticks(x_pos + width * (len(feature_data_norm) - 1) / 2)
-#     ax3.set_xticklabels(feature_names, rotation=45, ha="right", fontsize=9)
-#     ax3.set_ylabel("Normalized Values")
-#     ax3.set_title("Grouped Bars", fontweight="bold")
-#     ax3.legend(fontsize=8)
-#     ax3.grid(True, alpha=0.3, axis="y")
+        # ---- styling ----
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            models,
+            fontsize=10,
+            fontweight="bold",
+            rotation=0,
+            ha="center",
+            rotation_mode="anchor",
+        )
+        ax.set_title(title, fontsize=14, fontweight="bold", pad=15)
 
-#     # 4. Simplified Radar (bottom-right) - Only if ≤ 6 clusters
-#     ax4 = axes[1, 1]
-#     if len(feature_data_norm) <= 6:
-#         ax4.remove()
-#         ax4 = fig.add_subplot(2, 2, 4, projection="polar")
+        # Set consistent y-axis
+        if use_custom_ticks and y_ticks is not None:
+            ax.set_yticks(y_ticks)
+            ax.set_ylim(y_min_rounded, y_max_rounded)
 
-#         num_vars = len(feature_names)
-#         angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-#         angles += angles[:1]
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_linewidth(1.8)
+        ax.spines["bottom"].set_linewidth(1.8)
+        ax.yaxis.grid(True, linestyle="--", linewidth=0.8, alpha=0.4)
+        ax.set_axisbelow(True)
+        ax.tick_params(axis="x", pad=2)
 
-#         for idx, (cluster_id, row) in enumerate(feature_data_norm.iterrows()):
-#             values = row.tolist() + [row.tolist()[0]]
-#             cluster_size = cluster_means.loc[cluster_id, "cluster_size"]
-#             ax4.plot(
-#                 angles,
-#                 values,
-#                 "o-",
-#                 label=f"C{cluster_id} (n={cluster_size})",
-#                 color=colors[idx],
-#                 linewidth=2,
-#                 markersize=4,
-#             )
-#             ax4.fill(angles, values, alpha=0.1, color=colors[idx])
+    # Plot left subplot
+    plot_bars(ax_left, stats_left, models_left, left_title)
+    ax_left.set_ylabel("Metric Value", fontsize=15, fontweight="bold")
 
-#         ax4.set_xticks(angles[:-1])
-#         ax4.set_xticklabels(feature_names, fontsize=8)
-#         ax4.set_title("Radar Chart", fontweight="bold", y=1.08)
-#         ax4.grid(True, alpha=0.3)
-#     else:
-#         # Too many clusters for radar - show cluster sizes instead
-#         cluster_sizes_plot = [
-#             cluster_means.loc[idx, "cluster_size"]
-#             for idx in feature_data_norm.index
-#         ]
-#         cluster_labels = [f"Cluster {idx}" for idx in feature_data_norm.index]
+    # Plot right subplot
+    plot_bars(ax_right, stats_right, models_right, right_title)
 
-#         bars = ax4.bar(
-#             range(len(cluster_sizes_plot)), cluster_sizes_plot, color=colors
-#         )
-#         ax4.set_xticks(range(len(cluster_labels)))
-#         ax4.set_xticklabels(
-#             cluster_labels, rotation=45, ha="right", fontsize=9
-#         )
-#         ax4.set_ylabel("Cluster Size")
-#         ax4.set_title("Cluster Sizes", fontweight="bold")
-#         ax4.grid(True, alpha=0.3, axis="y")
+    # Add legend to the right subplot only (to avoid duplication)
+    ax_right.legend(title="Metric", fontsize=12, loc="upper right")
 
-#     plt.tight_layout()
-#     plt.show()
+    plt.tight_layout()
+    if fn:
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()

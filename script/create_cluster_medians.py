@@ -89,9 +89,13 @@ def main():
         logger.info(f"Final dataframe shape: {df.shape}")
 
         # Get store assignments and rename columns
-        assignments = model_dict["assignments"].query("factor_name == 'Store'")
-        assignments.rename(columns={"item_name": "store"}, inplace=True)
-        assignments["store"] = assignments["store"].astype(int)
+        assignments = (
+            model_dict["assignments"]
+            .query("factor_name == 'Store'")
+            .rename(columns={"item_name": "store"})
+            .assign(store=lambda x: x["store"].astype(int))
+        )
+
         # Add cluster IDs to main dataframe
         df = df.merge(
             assignments[["store", "cluster_id"]].rename(
@@ -110,9 +114,12 @@ def main():
         df = df.merge(medians, on=["date", "store_cluster_id"], how="left")
 
         # Get item assignments and rename columns
-        assignments = model_dict["assignments"].query("factor_name == 'SKU'")
-        assignments.rename(columns={"item_name": "item"}, inplace=True)
-        assignments["item"] = assignments["item"].astype(int)
+        assignments = (
+            model_dict["assignments"]
+            .query("factor_name == 'SKU'")
+            .rename(columns={"item_name": "item"})
+            .assign(item=lambda x: x["item"].astype(int))
+        )
 
         df = df.merge(
             assignments[["item", "cluster_id"]].rename(
