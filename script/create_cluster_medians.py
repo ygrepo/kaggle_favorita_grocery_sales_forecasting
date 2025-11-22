@@ -11,6 +11,7 @@ import sys
 import argparse
 from pathlib import Path
 import torch
+import gc
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -104,6 +105,9 @@ def main():
             on="store",
             how="left",
         )
+        del assignments
+        gc.collect()
+        logger.info("Merged store assignments")
         # Compute store cluster medians by date
         medians = (
             df.groupby(["date", "store_cluster_id"])["growth_rate"]
@@ -112,6 +116,9 @@ def main():
             .rename(columns={"growth_rate": "store_median"})
         )
         df = df.merge(medians, on=["date", "store_cluster_id"], how="left")
+        del medians
+        gc.collect()
+        logger.info("Merged store medians")
 
         # Get item assignments and rename columns
         assignments = (
@@ -128,6 +135,10 @@ def main():
             on="item",
             how="left",
         )
+        del assignments
+
+        gc.collect()
+        logger.info("Merged item assignments")
 
         # Compute item cluster medians by date
         medians = (
@@ -137,6 +148,9 @@ def main():
             .rename(columns={"growth_rate": "item_median"})
         )
         df = df.merge(medians, on=["date", "item_cluster_id"], how="left")
+        del medians
+        gc.collect()
+        logger.info("Merged item medians")
 
         # Optional: drop intermediate cluster columns
         # df = df.drop(columns=["store_cluster_id", "item_cluster_id"])
