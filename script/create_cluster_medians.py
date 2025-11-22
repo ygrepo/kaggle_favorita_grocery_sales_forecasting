@@ -189,11 +189,14 @@ def main():
         elif action == "both":
             logger.info("Merging store and item cluster medians")
 
+            logger.info(f"Loading store medians: {args.store_input_fn}")
+            logger.info(f"Loading item medians: {args.item_input_fn}")
             # Convert Path objects to resolved paths
             store_input_fn = Path(args.store_input_fn).resolve()
             item_input_fn = Path(args.item_input_fn).resolve()
 
-            # Load the main data
+            # Load the data
+            logger.info(f"Loading data from {data_fn}")
             df = load_raw_data(data_fn)
             logger.info(f"Initial dataframe shape: {df.shape}")
 
