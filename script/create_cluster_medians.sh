@@ -62,6 +62,8 @@ python "${SCRIPT_DIR}/create_cluster_medians.py" \
   --model_fn "$MODEL_FN" \
   --data_fn "$DATA_FN" \
   --output_fn "$OUTPUT_FN" \
+  --store_input_fn "$STORE_FN" \
+  --item_input_fn "$ITEM_FN" \
   --action "$ACTION" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \

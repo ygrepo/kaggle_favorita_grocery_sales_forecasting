@@ -196,7 +196,6 @@ def main():
             item_input_fn = Path(args.item_input_fn).resolve()
 
             # Load the data
-            logger.info(f"Loading data from {data_fn}")
             df = load_raw_data(data_fn)
             logger.info(f"Initial dataframe shape: {df.shape}")
 
