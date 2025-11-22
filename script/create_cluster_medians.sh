@@ -15,8 +15,11 @@ OUTPUT_DATA_DIR="${PROJECT_ROOT}/output/data"
 MODEL_FN="${OUTPUT_DATA_DIR}/20251108_tucker_2014_January_top_53_store_2000_item_growth_rate_clusters.pt"
 DATA_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features.parquet"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
-ACTION="item"
+#OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_item_medians.parquet"
+STORE_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
+ITEM_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
+ACTION="both"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -29,7 +32,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --model_fn) MODEL_FN="$2"; shift 2 ;;
     --data_fn) DATA_FN="$2"; shift 2 ;;
-    --output_fn) OUTPUT_FN="$2"; shift 2 ;;
+    --store_fn) STORE_FN="$2"; shift 2 ;;
+    --item_fn) ITEM_FN="$2"; shift 2 ;;
     --action) ACTION="$2"; shift 2 ;;
     --log_fn) LOG_FILE="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
