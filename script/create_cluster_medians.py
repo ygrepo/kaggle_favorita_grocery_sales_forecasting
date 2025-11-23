@@ -200,6 +200,7 @@ def main():
 
             # Load the data
             df = load_raw_data(data_fn)
+            df = df[["date", "store", "item", "growth_rate"]]
             logger.info(f"Initial dataframe shape: {df.shape}")
 
             # Load and merge store medians
