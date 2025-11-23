@@ -191,21 +191,10 @@ def main():
 
         if action == "both":
             logger.info("Merging store and item cluster medians")
-
-            logger.info(f"Loading store medians: {args.store_input_fn}")
-            logger.info(f"Loading item medians: {args.item_input_fn}")
-            # Convert Path objects to resolved paths
-            store_input_fn = Path(args.store_input_fn).resolve()
-            item_input_fn = Path(args.item_input_fn).resolve()
-
             # Load the data
             df = load_raw_data(data_fn)
             df = df[["date", "store", "item", "growth_rate"]]
             logger.info(f"Initial dataframe shape: {df.shape}")
-
-            # Load and merge store medians
-            medians = read_csv_or_parquet(store_input_fn)
-            logger.info(f"Store medians shape: {medians.shape}")
 
             # Need to get store cluster assignments first
             device = torch.device(
@@ -234,12 +223,18 @@ def main():
             )
 
             # Now merge store medians
+            logger.info(f"Loading store medians: {args.store_input_fn}")
+            store_input_fn = Path(args.store_input_fn).resolve()
+            medians = read_csv_or_parquet(store_input_fn)
+            logger.info(f"Store medians shape: {medians.shape}")
             df = df.merge(medians, on=["date", "store_cluster_id"], how="left")
             del medians, assignments
             gc.collect()
             logger.info("Merged store medians")
 
             # Load and merge item medians
+            logger.info(f"Loading item medians: {args.item_input_fn}")
+            item_input_fn = Path(args.item_input_fn).resolve()
             medians = read_csv_or_parquet(item_input_fn)
             logger.info(f"Item medians shape: {medians.shape}")
 
@@ -257,10 +252,11 @@ def main():
                 on="item",
                 how="left",
             )
-
+            del assignments, assignment_df
             # Now merge item medians
+            logger.info("Merging item medians")
             df = df.merge(medians, on=["date", "item_cluster_id"], how="left")
-            del medians, assignments, assignment_df
+            del medians
             gc.collect()
             logger.info("Merged item medians")
             logger.info(f"Final dataframe shape: {df.head()}")
