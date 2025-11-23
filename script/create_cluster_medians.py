@@ -207,37 +207,6 @@ def main():
             del model_dict
             gc.collect()
 
-            # Get store assignments to add store_cluster_id to df
-            assignments = (
-                assignment_df.query("factor_name == 'Store'")
-                .rename(columns={"item_name": "store"})
-                .assign(store=lambda x: x["store"].astype(int))
-            )
-
-            df = df.merge(
-                assignments[["store", "cluster_id"]].rename(
-                    columns={"cluster_id": "store_cluster_id"}
-                ),
-                on="store",
-                how="left",
-            )
-
-            # Now merge store medians
-            logger.info(f"Loading store medians: {args.store_input_fn}")
-            store_input_fn = Path(args.store_input_fn).resolve()
-            medians = read_csv_or_parquet(store_input_fn)
-            logger.info(f"Store medians shape: {medians.shape}")
-            df = df.merge(medians, on=["date", "store_cluster_id"], how="left")
-            del medians, assignments
-            gc.collect()
-            logger.info("Merged store medians")
-
-            # Load and merge item medians
-            logger.info(f"Loading item medians: {args.item_input_fn}")
-            item_input_fn = Path(args.item_input_fn).resolve()
-            medians = read_csv_or_parquet(item_input_fn)
-            logger.info(f"Item medians shape: {medians.shape}")
-
             # Get item assignments to add item_cluster_id to df
             assignments = (
                 assignment_df.query("factor_name == 'SKU'")
@@ -252,13 +221,46 @@ def main():
                 on="item",
                 how="left",
             )
-            del assignments, assignment_df
+            del assignments
+            gc.collect()
+
             # Now merge item medians
+            logger.info(f"Loading item medians: {args.item_input_fn}")
+            item_input_fn = Path(args.item_input_fn).resolve()
+            medians = read_csv_or_parquet(item_input_fn)
+            logger.info(f"Item medians shape: {medians.shape}")
             logger.info("Merging item medians")
             df = df.merge(medians, on=["date", "item_cluster_id"], how="left")
             del medians
             gc.collect()
-            logger.info("Merged item medians")
+
+            # Get store assignments to add store_cluster_id to df
+            assignments = (
+                assignment_df.query("factor_name == 'Store'")
+                .rename(columns={"item_name": "store"})
+                .assign(store=lambda x: x["store"].astype(int))
+            )
+
+            df = df.merge(
+                assignments[["store", "cluster_id"]].rename(
+                    columns={"cluster_id": "store_cluster_id"}
+                ),
+                on="store",
+                how="left",
+            )
+            del assignments, assignment_df
+            gc.collect()
+
+            # Now merge store medians
+            logger.info(f"Loading store medians: {args.store_input_fn}")
+            store_input_fn = Path(args.store_input_fn).resolve()
+            medians = read_csv_or_parquet(store_input_fn)
+            logger.info(f"Store medians shape: {medians.shape}")
+            df = df.merge(medians, on=["date", "store_cluster_id"], how="left")
+            logger.info("Merged store medians")
+            del medians
+            gc.collect()
+
             logger.info(f"Final dataframe shape: {df.head()}")
             logger.info(f"Columns: {df.columns.tolist()}")
             save_csv_or_parquet(df, output_fn)
