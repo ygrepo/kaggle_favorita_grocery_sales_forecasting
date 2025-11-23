@@ -129,7 +129,6 @@ def create_model(
     """
 
     # Base configuration shared by most models
-    # Crucial: We must tell the models the dimension of covariates they will receive
     base_kwargs = dict(
         input_chunk_length=30,
         output_chunk_length=1,
@@ -141,8 +140,10 @@ def create_model(
         **torch_kwargs,
     )
 
-    # Models that accept both past and future dim arguments directly
-    # Note: input_dim=1 refers to the target series dimension.
+    # Models that accept covariate dim arguments directly in init.
+    # Note: input_dim=1 refers to the target series dimension (univariate).
+    # Some recent Darts versions infer 'input_dim' automatically, but explicitly
+    # providing it for TFT/RNN/TCN is usually safe.
     cov_aware_kwargs = base_kwargs.copy()
     cov_aware_kwargs.update(
         {
@@ -155,8 +156,8 @@ def create_model(
     # -------------------------
     # NBEATS
     # -------------------------
-    # NBEATS in Darts treats exogenous variables as past covariates.
-    # It infers dimensions based on training data, so we don't pass explicit dims here.
+    # FIX: NBEATS does not accept 'input_dim' in __init__. It infers it during fit().
+    # It also infers covariate dimensions based on what is passed to fit().
     if model_type == ModelType.NBEATS:
         return NBEATSModel(
             generic_architecture=True,
@@ -164,14 +165,13 @@ def create_model(
             num_blocks=1,
             num_layers=4,
             layer_widths=512,
-            input_dim=1,
+            # input_dim=1,  <-- REMOVED THIS LINE causing the error
             **base_kwargs,
         )
 
     # -------------------------
     # TFT (Temporal Fusion Transformer)
     # -------------------------
-    # TFT is designed specifically for mixed covariates.
     elif model_type == ModelType.TFT:
         return TFTModel(
             hidden_size=64,
@@ -224,13 +224,11 @@ def create_model(
         return TiDEModel(
             hidden_size=64,
             dropout=0.1,
-            # TiDE needs explicit definition of how it handles covariates internally
             use_layer_norm=True,
             **cov_aware_kwargs,
         )
 
     raise ValueError(f"Unsupported model: {model_type}")
-
 
 # ---------------------------------------------------------------------
 # Train all models for a given (store, item)
