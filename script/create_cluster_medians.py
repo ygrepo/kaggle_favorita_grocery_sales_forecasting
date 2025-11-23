@@ -154,8 +154,10 @@ def main():
             # Don't include 'store' in the output - it's not in the groupby
             medians = medians[["date", "store_cluster_id", "store_median"]]
             save_csv_or_parquet(medians, output_fn)
+            logger.info("Completed successfully")
+            return
 
-        elif action == "item":
+        if action == "item":
             logger.info("Computing item cluster medians")
             # Get item assignments and rename columns
             assignments = (
@@ -182,11 +184,12 @@ def main():
                 .reset_index()
                 .rename(columns={"growth_rate": "item_median"})
             )
-            # FIX: Don't include 'item' in the output - it's not in the groupby
             medians = medians[["date", "item_cluster_id", "item_median"]]
             save_csv_or_parquet(medians, output_fn)
+            logger.info("Completed successfully")
+            return
 
-        elif action == "both":
+        if action == "both":
             logger.info("Merging store and item cluster medians")
 
             logger.info(f"Loading store medians: {args.store_input_fn}")
@@ -259,12 +262,13 @@ def main():
             del medians, assignments, assignment_df
             gc.collect()
             logger.info("Merged item medians")
-
+            logger.info(f"Final dataframe shape: {df.head()}")
+            logger.info(f"Columns: {df.columns.tolist()}")
             save_csv_or_parquet(df, output_fn)
+            logger.info("Completed successfully")
+            return
 
-        logger.info(f"Final dataframe shape: {df.shape}")
-        logger.info(f"Columns: {df.columns.tolist()}")
-        logger.info("Completed successfully")
+        raise ValueError(f"Unknown action: {action}")
 
     except Exception as e:
         logger.error(f"Error: {e}")
