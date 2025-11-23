@@ -121,14 +121,13 @@ def create_model(
     batch_size: int,
     torch_kwargs: Dict,
     n_epochs: int,
-    past_cov_dim: int,
-    future_cov_dim: int,
 ) -> ForecastingModel:
     """
-    Factory to create a Darts model instance, configured for input dimensions.
+    Factory to create a Darts model instance.
+    Note: Dimensions are inferred at fit() time in newer Darts versions.
     """
 
-    # Base configuration shared by most models
+    # Base configuration shared by all models
     base_kwargs = dict(
         input_chunk_length=30,
         output_chunk_length=1,
@@ -140,24 +139,9 @@ def create_model(
         **torch_kwargs,
     )
 
-    # Models that accept covariate dim arguments directly in init.
-    # Note: input_dim=1 refers to the target series dimension (univariate).
-    # Some recent Darts versions infer 'input_dim' automatically, but explicitly
-    # providing it for TFT/RNN/TCN is usually safe.
-    cov_aware_kwargs = base_kwargs.copy()
-    cov_aware_kwargs.update(
-        {
-            "input_dim": 1,
-            "past_covariates_dim": past_cov_dim,
-            "future_covariates_dim": future_cov_dim,
-        }
-    )
-
     # -------------------------
     # NBEATS
     # -------------------------
-    # FIX: NBEATS does not accept 'input_dim' in __init__. It infers it during fit().
-    # It also infers covariate dimensions based on what is passed to fit().
     if model_type == ModelType.NBEATS:
         return NBEATSModel(
             generic_architecture=True,
@@ -165,7 +149,6 @@ def create_model(
             num_blocks=1,
             num_layers=4,
             layer_widths=512,
-            # input_dim=1,  <-- REMOVED THIS LINE causing the error
             **base_kwargs,
         )
 
@@ -179,7 +162,7 @@ def create_model(
             dropout=0.1,
             num_attention_heads=4,
             add_relative_index=True,
-            **cov_aware_kwargs,
+            **base_kwargs,  # <--- CHANGED: Use base_kwargs, do not pass dims
         )
 
     # -------------------------
@@ -189,7 +172,7 @@ def create_model(
         return TSMixerModel(
             hidden_size=64,
             dropout=0.1,
-            **cov_aware_kwargs,
+            **base_kwargs,  # <--- CHANGED
         )
 
     # -------------------------
@@ -201,7 +184,7 @@ def create_model(
             hidden_dim=64,
             n_rnn_layers=2,
             dropout=0.1,
-            **cov_aware_kwargs,
+            **base_kwargs,  # <--- CHANGED
         )
 
     # -------------------------
@@ -214,7 +197,7 @@ def create_model(
             dilation_base=2,
             weight_norm=True,
             dropout=0.1,
-            **cov_aware_kwargs,
+            **base_kwargs,  # <--- CHANGED
         )
 
     # -------------------------
@@ -225,10 +208,11 @@ def create_model(
             hidden_size=64,
             dropout=0.1,
             use_layer_norm=True,
-            **cov_aware_kwargs,
+            **base_kwargs,  # <--- CHANGED
         )
 
     raise ValueError(f"Unsupported model: {model_type}")
+
 
 # ---------------------------------------------------------------------
 # Train all models for a given (store, item)
@@ -271,7 +255,10 @@ def process_store_item(
             if data_dict["train_future"]
             else 0
         )
-
+        logger.info(
+            f"S{store}/I{item}: Data prepared. Train len: {len(data_dict['train_target'])}, "
+            f"Val len: {len(data_dict['val_target'])}, Past Dim: {p_dim}, Future Dim: {f_dim}"
+        )
         # train each model requested
         for mtype in model_types:
             model_dir = (
@@ -288,8 +275,6 @@ def process_store_item(
                 args.batch_size,
                 torch_kwargs,
                 args.n_epochs,
-                past_cov_dim=p_dim,
-                future_cov_dim=f_dim,
             )
 
             logger.info(
