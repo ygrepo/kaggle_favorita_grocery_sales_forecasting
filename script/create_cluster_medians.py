@@ -157,47 +157,14 @@ def main():
             save_csv_or_parquet(medians, output_fn)
             logger.info("Completed successfully")
             return
-
-        if action == "item":
-            logger.info("Computing item cluster medians")
-            # Get item assignments and rename columns
-            assignments = (
-                assignment_df.query("factor_name == 'SKU'")
-                .rename(columns={"item_name": "item"})
-                .assign(item=lambda x: x["item"].astype(int))
-            )
-
-            df = df[["date", "item", "growth_rate"]].merge(
-                assignments[["item", "cluster_id"]].rename(
-                    columns={"cluster_id": "item_cluster_id"}
-                ),
-                on="item",
-                how="left",
-            )
-            del assignments
-            gc.collect()
-            logger.info("Merged item assignments")
-
-            # Compute item cluster medians by date
-            medians = (
-                df.groupby(["date", "item_cluster_id"])["growth_rate"]
-                .median()
-                .reset_index()
-                .rename(columns={"growth_rate": "item_median"})
-            )
-            medians = medians[["date", "item_cluster_id", "item_median"]]
-            save_csv_or_parquet(medians, output_fn)
-            logger.info("Completed successfully")
-            return
-
         if action == "both":
             logger.info("Merging store and item cluster medians")
-            # Load the data (only the needed columns)
+            # Load the data
             df = load_raw_data(data_fn)
             df = df[["date", "store", "item", "growth_rate"]]
             logger.info(f"Initial dataframe shape: {df.shape}")
 
-            # Load assignments from model
+            # Need to get store and item cluster assignments first
             device = torch.device(
                 "cuda" if torch.cuda.is_available() else "cpu"
             )
@@ -209,39 +176,38 @@ def main():
             gc.collect()
 
             # ---------------------------------------------------------
-            # 1) ITEM CLUSTER ID via map instead of merge
+            # 1) ITEM ASSIGNMENTS (multi-membership via merge)
             # ---------------------------------------------------------
-            logger.info("Creating item_cluster_id via map")
+            logger.info("Merging item assignments to add item_cluster_id")
             item_assignments = (
                 assignment_df.query("factor_name == 'SKU'")
                 .rename(columns={"item_name": "item"})
                 .assign(item=lambda x: x["item"].astype(int))
             )
+            logger.info(f"Item assignments shape: {item_assignments.shape}")
 
-            # Build a Series mapping item -> cluster_id
-            item_cluster_map = item_assignments.set_index("item")["cluster_id"]
-            # Optional downcast to save memory
-            if pd.api.types.is_integer_dtype(item_cluster_map):
-                item_cluster_map = item_cluster_map.astype("int16")
-
-            df["item_cluster_id"] = df["item"].map(item_cluster_map)
-
-            del item_assignments, item_cluster_map
+            df = df.merge(
+                item_assignments[["item", "cluster_id"]].rename(
+                    columns={"cluster_id": "item_cluster_id"}
+                ),
+                on="item",
+                how="left",
+            )
+            logger.info(
+                f"After merging item assignments, df shape: {df.shape}"
+            )
+            del item_assignments
             gc.collect()
 
             # ---------------------------------------------------------
-            # 2) ITEM MEDIANS via MultiIndex lookup instead of merge
+            # 2) ITEM MEDIANS via MultiIndex lookup (no big merge)
             # ---------------------------------------------------------
             logger.info(f"Loading item medians: {args.item_input_fn}")
             item_input_fn = Path(args.item_input_fn).resolve()
             item_medians = read_csv_or_parquet(item_input_fn)
             logger.info(f"Item medians shape: {item_medians.shape}")
 
-            # Ensure dtypes are compatible
-            # (you can add explicit astype calls here if needed)
-            # item_medians["item_cluster_id"] = item_medians["item_cluster_id"].astype(df["item_cluster_id"].dtype)
-
-            # Build MultiIndex -> median Series
+            # Build MultiIndex -> item_median Series
             logger.info("Building MultiIndex for item medians")
             item_key_index = pd.MultiIndex.from_frame(
                 item_medians[["date", "item_cluster_id"]]
@@ -249,13 +215,14 @@ def main():
             item_median_series = pd.Series(
                 item_medians["item_median"].to_numpy(), index=item_key_index
             )
+            # Optional: downcast
             if pd.api.types.is_float_dtype(item_median_series):
                 item_median_series = item_median_series.astype("float32")
 
             del item_medians, item_key_index
             gc.collect()
 
-            # Build MultiIndex for df and assign item_median column
+            # Align to df rows
             logger.info("Assigning item_median via reindex")
             df_item_index = pd.MultiIndex.from_arrays(
                 [df["date"].values, df["item_cluster_id"].values]
@@ -268,28 +235,31 @@ def main():
             gc.collect()
 
             # ---------------------------------------------------------
-            # 3) STORE CLUSTER ID via map instead of merge
+            # 3) STORE ASSIGNMENTS (multi-membership via merge)
             # ---------------------------------------------------------
-            logger.info("Creating store_cluster_id via map")
+            logger.info("Merging store assignments to add store_cluster_id")
             store_assignments = (
                 assignment_df.query("factor_name == 'Store'")
                 .rename(columns={"item_name": "store"})
                 .assign(store=lambda x: x["store"].astype(int))
             )
+            logger.info(f"Store assignments shape: {store_assignments.shape}")
 
-            store_cluster_map = store_assignments.set_index("store")[
-                "cluster_id"
-            ]
-            if pd.api.types.is_integer_dtype(store_cluster_map):
-                store_cluster_map = store_cluster_map.astype("int16")
-
-            df["store_cluster_id"] = df["store"].map(store_cluster_map)
-
-            del store_assignments, store_cluster_map, assignment_df
+            df = df.merge(
+                store_assignments[["store", "cluster_id"]].rename(
+                    columns={"cluster_id": "store_cluster_id"}
+                ),
+                on="store",
+                how="left",
+            )
+            logger.info(
+                f"After merging store assignments, df shape: {df.shape}"
+            )
+            del store_assignments, assignment_df
             gc.collect()
 
             # ---------------------------------------------------------
-            # 4) STORE MEDIANS via MultiIndex lookup instead of merge
+            # 4) STORE MEDIANS via MultiIndex lookup (no big merge)
             # ---------------------------------------------------------
             logger.info(f"Loading store medians: {args.store_input_fn}")
             store_input_fn = Path(args.store_input_fn).resolve()
@@ -323,6 +293,38 @@ def main():
             logger.info(f"Final dataframe shape: {df.shape}")
             logger.info(f"Final columns: {df.columns.tolist()}")
             save_csv_or_parquet(df, output_fn)
+            logger.info("Completed successfully")
+            return
+
+        if action == "item":
+            logger.info("Computing item cluster medians")
+            # Get item assignments and rename columns
+            assignments = (
+                assignment_df.query("factor_name == 'SKU'")
+                .rename(columns={"item_name": "item"})
+                .assign(item=lambda x: x["item"].astype(int))
+            )
+
+            df = df[["date", "item", "growth_rate"]].merge(
+                assignments[["item", "cluster_id"]].rename(
+                    columns={"cluster_id": "item_cluster_id"}
+                ),
+                on="item",
+                how="left",
+            )
+            del assignments
+            gc.collect()
+            logger.info("Merged item assignments")
+
+            # Compute item cluster medians by date
+            medians = (
+                df.groupby(["date", "item_cluster_id"])["growth_rate"]
+                .median()
+                .reset_index()
+                .rename(columns={"growth_rate": "item_median"})
+            )
+            medians = medians[["date", "item_cluster_id", "item_median"]]
+            save_csv_or_parquet(medians, output_fn)
             logger.info("Completed successfully")
             return
 
