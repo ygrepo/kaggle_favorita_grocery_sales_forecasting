@@ -93,33 +93,6 @@ def prepare_store_item_series(
     return ts_df
 
 
-# def prepare_store_item_series(
-#     df: pd.DataFrame,
-#     store: int,
-#     item: int,
-# ) -> pd.DataFrame:
-#     """Prepare time series for a specific store-item combination."""
-
-#     # Filter data for specific store-item combination
-#     mask = (df["store"] == store) & (df["item"] == item)
-#     series_df = df[mask]
-
-#     if len(series_df) == 0:
-#         logger.warning(f"No data for store {store}, item {item}")
-#         return pd.DataFrame()
-
-#     # Sort by date and prepare time series
-#     series_df = series_df.sort_values("date")
-
-#     # Create time series DataFrame
-#     ts_df = series_df[["date", "growth_rate"]]
-#     ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
-#     ts_df = ts_df.set_index("date")
-#     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
-
-#     return ts_df
-
-
 def get_train_val_data(
     df: pd.DataFrame,
     store: int,
@@ -289,7 +262,8 @@ def get_train_val_data_with_covariates(
             "val_past": val_past,
             "train_future": train_future,
             "val_future": val_future,
-            "full_future": future_covs_ts,
+            "full_past": past_covs_ts,  # <--- NEW
+            "full_future": future_covs_ts,  # existing
         }
 
     except Exception as e:
@@ -564,7 +538,6 @@ def eval_model_with_covariates(
     """
 
     # Which models support which types of covariates
-    # (adapt this mapping if you change models later)
     supports_past = modelType in {
         "NBEATS",
         "TFT",
@@ -592,13 +565,25 @@ def eval_model_with_covariates(
         # --- 2. PAST COVARIATES SCALER ---
         train_past_scaled = None
         val_past_scaled = None
+        past_covs_scaled_full = None
+
         if supports_past and data_dict.get("train_past") is not None:
             past_scaler = Scaler(RobustScaler())
+
+            # Fit on training past covariates
             train_past_scaled = past_scaler.fit_transform(
                 data_dict["train_past"]
             )
+
+            # Transform validation slice if present
             if data_dict.get("val_past") is not None:
                 val_past_scaled = past_scaler.transform(data_dict["val_past"])
+
+            # Transform the full past covariate history for prediction
+            if data_dict.get("full_past") is not None:
+                past_covs_scaled_full = past_scaler.transform(
+                    data_dict["full_past"]
+                )
 
         # --- 3. FUTURE COVARIATES SCALER ---
         future_covs_scaled_full = None
@@ -634,6 +619,7 @@ def eval_model_with_covariates(
                 fit_kwargs["val_past_covariates"] = val_past_scaled
 
         if supports_future and future_covs_scaled_full is not None:
+            # Darts uses the history; for validation consistency, pass val slice too
             fit_kwargs["future_covariates"] = future_covs_scaled_full
             if val_future_scaled is not None:
                 fit_kwargs["val_future_covariates"] = val_future_scaled
@@ -647,9 +633,9 @@ def eval_model_with_covariates(
 
         predict_kwargs: Dict[str, Any] = {"n": forecast_horizon}
 
-        if supports_past and train_past_scaled is not None:
-            # for prediction from end of training, the history covariates up to train end are enough
-            predict_kwargs["past_covariates"] = train_past_scaled
+        # IMPORTANT: for prediction, covariates must extend up to the forecast horizon
+        if supports_past and past_covs_scaled_full is not None:
+            predict_kwargs["past_covariates"] = past_covs_scaled_full
 
         if supports_future and future_covs_scaled_full is not None:
             predict_kwargs["future_covariates"] = future_covs_scaled_full
