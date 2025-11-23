@@ -5,9 +5,10 @@ import numpy as np
 from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.metrics import rmse, mae, ope, smape, marre
-from typing import Optional
+from typing import Optional, Dict, Any
 from sklearn.preprocessing import RobustScaler
 from darts.dataprocessing.transformers import Scaler
+import traceback
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -18,32 +19,105 @@ from src.utils import (
 
 logger = get_logger(__name__)
 
+# Define Covariate Groups globally for easy modification
+# Future: Known in advance (calendar features)
+# Note: Raw 'dayofweek', 'weekofmonth', 'monthofyear' excluded to avoid multicollinearity with sin/cos versions.
+FUTURE_COV_COLS = [
+    "dayofweek_sin",
+    "dayofweek_cos",
+    "weekofmonth_sin",
+    "weekofmonth_cos",
+    "monthofyear_sin",
+    "monthofyear_cos",
+    "paycycle_sin",
+    "paycycle_cos",
+    "season_sin",
+    "season_cos",
+]
+
+# Past: Only known up to present time (lagged/rolling features of target)
+PAST_COV_COLS = [
+    "unit_sales_rolling_median",
+    "unit_sales_ewm_decay",
+    "growth_rate_rolling_median",
+    "growth_rate_ewm_decay",
+]
+
+TARGET_COL = "growth_rate"
+
 
 def prepare_store_item_series(
     df: pd.DataFrame,
     store: int,
     item: int,
 ) -> pd.DataFrame:
-    """Prepare time series for a specific store-item combination."""
+    """
+    Prepare time series DataFrame including target and all available covariates
+    for a specific store-item combination.
+    """
 
-    # Filter data for specific store-item combination
     mask = (df["store"] == store) & (df["item"] == item)
-    series_df = df[mask]
+    series_df = df[mask].copy()
 
     if len(series_df) == 0:
         logger.warning(f"No data for store {store}, item {item}")
         return pd.DataFrame()
 
-    # Sort by date and prepare time series
     series_df = series_df.sort_values("date")
 
-    # Create time series DataFrame
-    ts_df = series_df[["date", "growth_rate"]]
-    ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
+    # Determine which requested covariate columns actually exist in the data
+    available_future = [c for c in FUTURE_COV_COLS if c in series_df.columns]
+    available_past = [c for c in PAST_COV_COLS if c in series_df.columns]
+
+    cols_to_keep = ["date", TARGET_COL] + available_future + available_past
+
+    ts_df = series_df[cols_to_keep].copy()
+
+    # Ensure numeric types
+    for col in ts_df.columns:
+        if col != "date":
+            ts_df[col] = pd.to_numeric(ts_df[col], errors="coerce")
+
     ts_df = ts_df.set_index("date")
     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
 
+    # Handle NaNs:
+    # 1. Target: Darts handles internal NaNs reasonably well, but leading/trailing might be issues.
+    #    We will let Darts fill missing dates, then handle remaining NaNs.
+    # 2. Covariates: Must be filled. A safe default for standardized features is 0 (mean).
+    cov_cols = available_future + available_past
+    if cov_cols:
+        # Fill covariate NaNs with 0 (assuming they will be robustly scaled later, 0 is reasonable center)
+        ts_df[cov_cols] = ts_df[cov_cols].fillna(0)
+
     return ts_df
+
+
+# def prepare_store_item_series(
+#     df: pd.DataFrame,
+#     store: int,
+#     item: int,
+# ) -> pd.DataFrame:
+#     """Prepare time series for a specific store-item combination."""
+
+#     # Filter data for specific store-item combination
+#     mask = (df["store"] == store) & (df["item"] == item)
+#     series_df = df[mask]
+
+#     if len(series_df) == 0:
+#         logger.warning(f"No data for store {store}, item {item}")
+#         return pd.DataFrame()
+
+#     # Sort by date and prepare time series
+#     series_df = series_df.sort_values("date")
+
+#     # Create time series DataFrame
+#     ts_df = series_df[["date", "growth_rate"]]
+#     ts_df["growth_rate"] = pd.to_numeric(ts_df["growth_rate"], errors="coerce")
+#     ts_df = ts_df.set_index("date")
+#     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
+
+#     return ts_df
 
 
 def get_train_val_data(
@@ -134,6 +208,102 @@ def get_train_val_data(
         return None, None, None
 
 
+def get_train_val_data_with_covariates(
+    ts_df: pd.DataFrame,
+    store: int,
+    item: int,
+    split_point: float,
+    min_train_data_points: int,
+) -> Optional[Dict[str, Any]]:
+    """
+    Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
+    and splits them consistently into train/validation sets.
+    """
+    try:
+        # Check minimum data requirements on the raw dataframe first
+        total_len = len(ts_df)
+        train_len_approx = int(total_len * split_point)
+
+        train_df_subset = ts_df.iloc[:train_len_approx]
+        non_missing_target = train_df_subset[TARGET_COL].count()
+
+        if non_missing_target < min_train_data_points:
+            logger.warning(
+                f"S{store}/I{item}: Insufficient training data ({non_missing_target} < {min_train_data_points}). Skipping."
+            )
+            return None
+
+        train_std = train_df_subset[TARGET_COL].std()
+        if train_std == 0 or np.isnan(train_std):
+            logger.warning(
+                f"S{store}/I{item}: Target has zero or NaN variance in training set. Skipping."
+            )
+            return None
+
+        # --- Create Darts TimeSeries ---
+        # Create the main TimeSeries object, filling missing dates
+        full_ts = TimeSeries.from_dataframe(
+            ts_df, fill_missing_dates=True, freq="D", fillna_value=0
+        )
+
+        # 1. Extract Target Series
+        target_ts = full_ts[TARGET_COL]
+
+        # 2. Extract Past Covariate Series (if columns existed)
+        valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
+        past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
+
+        # 3. Extract Future Covariate Series (if columns existed)
+        valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+        future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
+
+        # --- Split Data ---
+        # Split target
+        train_target, val_target = target_ts.split_before(split_point)
+
+        if len(val_target) == 0 or len(train_target) == 0:
+            logger.warning(
+                f"S{store}/I{item}: Data split resulted in empty train or validation set."
+            )
+            return None
+
+        # Split past covariates identical to target
+        train_past, val_past = (None, None)
+        if past_covs_ts:
+            train_past, val_past = past_covs_ts.split_before(split_point)
+
+        # Split future covariates
+        # Note: We need the *entire* future_covs_ts for forecasting beyond the training split,
+        # but we also need the split version for scaling purposes.
+        train_future, val_future = (None, None)
+        if future_covs_ts:
+            train_future, val_future = future_covs_ts.split_before(split_point)
+
+        logger.info(
+            f"S{store}/I{item}: Data prepared. Train len: {len(train_target)}, Val len: {len(val_target)}"
+        )
+        if past_covs_ts:
+            logger.debug(f"Past covs dim: {past_covs_ts.n_components}")
+        if future_covs_ts:
+            logger.debug(f"Future covs dim: {future_covs_ts.n_components}")
+
+        return {
+            "train_target": train_target,
+            "val_target": val_target,
+            "train_past": train_past,
+            # "val_past": val_past, # Not strictly needed for standard fitting, but good to have
+            "train_future": train_future,  # Used for fitting the scaler
+            "full_future": future_covs_ts,  # Used for actual prediction horizon
+        }
+
+    except Exception as e:
+        logger.error(
+            f"store:{store},item:{item},Error preparing train/val data: {e}"
+        )
+        logger.error(traceback.format_exc())
+        return None
+
+
 def calculate_rmsse(
     train_vals: np.ndarray,
     val_vals: np.ndarray,
@@ -173,6 +343,62 @@ def calculate_rmsse(
         or np.any(np.isnan(fcst_vals))
     ):
         logger.warning("NaN values found in input arrays")
+        return np.nan
+
+    # Numerator: RMSE of the forecast
+    forecast_errors = val_vals - fcst_vals
+    rmse_forecast = np.sqrt(np.mean(np.square(forecast_errors)))
+
+    # Denominator: RMSE of the 1-step naive forecast in-sample
+    naive_train_sq_errors = np.square(train_vals[1:] - train_vals[:-1])
+    rmse_naive = np.sqrt(np.mean(naive_train_sq_errors))
+
+    # Avoid division by zero
+    if rmse_naive == 0:
+        return np.inf if rmse_forecast > 0 else np.nan
+
+    return rmse_forecast / (rmse_naive + epsilon)
+
+
+def calculate_rmsse(
+    train_vals: np.ndarray,
+    val_vals: np.ndarray,
+    fcst_vals: np.ndarray,
+    epsilon: float = np.finfo(float).eps,
+) -> float:
+    """Calculates RMSSE manually using numpy."""
+    # Input validation
+    if train_vals is None or val_vals is None or fcst_vals is None:
+        return np.nan
+
+    # Flatten arrays to ensure 1D (handles (n,1) shapes)
+    train_vals = np.asarray(train_vals).flatten()
+    val_vals = np.asarray(val_vals).flatten()
+    fcst_vals = np.asarray(fcst_vals).flatten()
+
+    # Check for empty arrays
+    if len(train_vals) == 0 or len(val_vals) == 0 or len(fcst_vals) == 0:
+        return np.nan
+
+    # Ensure forecast and validation have same length
+    min_len = min(len(val_vals), len(fcst_vals))
+    if min_len == 0:
+        return np.nan
+
+    val_vals = val_vals[:min_len]
+    fcst_vals = fcst_vals[:min_len]
+
+    # Need at least 2 training points for naive forecast
+    if len(train_vals) < 2:
+        return np.nan
+
+    # Check for NaN values
+    if (
+        np.any(np.isnan(train_vals))
+        or np.any(np.isnan(val_vals))
+        or np.any(np.isnan(fcst_vals))
+    ):
+        # logger.warning("NaN values found in input arrays for RMSSE")
         return np.nan
 
     # Numerator: RMSE of the forecast
@@ -379,6 +605,166 @@ def eval_model(
                 }
             ]
         )
+        metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+
+    return metrics_df
+
+
+def eval_model_with_covariates(
+    modelType: str,
+    model: ForecastingModel,
+    store: int,
+    item: int,
+    data_dict: Dict[str, Any],
+    metrics_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Evaluate a model handling scaling for targets and covariates independently,
+    ensuring no data leakage from validation into training via scalers.
+    """
+    try:
+        # logger.info(f"Training {modelType} for S{store}/I{item}...")
+
+        train_target = data_dict["train_target"]
+        val_target = data_dict["val_target"]
+        forecast_horizon = len(val_target)
+
+        # --- 1. SCALING SETUP ---
+        # CRITICAL: Fit scalers ONLY on training data splits.
+
+        # a) Target Scaler
+        target_scaler = Scaler(RobustScaler())
+        train_target_scaled = target_scaler.fit_transform(train_target)
+        val_target_scaled = target_scaler.transform(val_target)
+
+        # b) Past Covariates Scaler
+        train_past_scaled = None
+        if data_dict["train_past"] is not None:
+            past_scaler = Scaler(RobustScaler())
+            train_past_scaled = past_scaler.fit_transform(
+                data_dict["train_past"]
+            )
+
+        # c) Future Covariates Scaler
+        # We need the full future series for prediction, but must fit scaler only on train part.
+        future_covs_scaled_full = None
+        if (
+            data_dict["full_future"] is not None
+            and data_dict["train_future"] is not None
+        ):
+            future_scaler = Scaler(RobustScaler())
+            # FIT on train split ONLY
+            future_scaler.fit(data_dict["train_future"])
+            # TRANSFORM the entire available future history
+            future_covs_scaled_full = future_scaler.transform(
+                data_dict["full_future"]
+            )
+
+        # --- 2. MODEL FITTING ---
+        logger.debug(f"Fitting {modelType} S{store}/I{item}...")
+
+        # Prepare fit arguments
+        fit_kwargs = {
+            "series": train_target_scaled,
+            "val_series": val_target_scaled,
+        }
+
+        # Add covariates if they exist and the model supports them in fit()
+        if train_past_scaled:
+            fit_kwargs["past_covariates"] = train_past_scaled
+
+        if future_covs_scaled_full:
+            # Darts models slice the future covariates internally during fit
+            fit_kwargs["future_covariates"] = future_covs_scaled_full
+
+        # NBEATS specific handling: It doesn't usually accept future_covariates in fit args
+        # in the standard Darts implementation (it treats everything as past covs).
+        if modelType == "NBEATS" and "future_covariates" in fit_kwargs:
+            del fit_kwargs["future_covariates"]
+
+        model.fit(**fit_kwargs)
+
+        # --- 3. GENERATING FORECAST ---
+        logger.debug(
+            f"Predicting {modelType} S{store}/I{item} (n={forecast_horizon})..."
+        )
+
+        # Prepare predict arguments
+        predict_kwargs = {"n": forecast_horizon}
+
+        # Add required covariates for prediction horizon
+        if future_covs_scaled_full:
+            # We pass the full scaled future series; Darts slices it for the horizon
+            predict_kwargs["future_covariates"] = future_covs_scaled_full
+
+        # For models that use past covariates, they need the history up to the prediction point
+        if train_past_scaled and modelType != "NBEATS":
+            predict_kwargs["past_covariates"] = train_past_scaled
+
+        # NBEATS specific handling for predict
+        if modelType == "NBEATS" and "future_covariates" in predict_kwargs:
+            del predict_kwargs["future_covariates"]
+
+        # Predict (returns scaled output)
+        forecast_scaled = model.predict(**predict_kwargs)
+
+        # --- 4. INVERSE TRANSFORM & METRICS ---
+        # Inverse transform forecast to get Real Units back
+        forecast = target_scaler.inverse_transform(forecast_scaled)
+
+        # Calculate metrics using Real Units (train, val, forecast are unscaled)
+        metrics = calculate_metrics(train_target, val_target, forecast)
+
+        new_row_dict = {
+            "Model": modelType,
+            "Store": store,
+            "Item": item,
+            "RMSSE": metrics["rmsse"],
+            "MASE": metrics["mase"],
+            "SMAPE": metrics["smape"],
+            "MARRE": metrics["marre"],
+            "RMSE": metrics["rmse"],
+            "MAE": metrics["mae"],
+            "OPE": metrics["ope"],
+        }
+
+        new_row = pd.DataFrame([new_row_dict])
+
+        # Downcast floats to save memory
+        cols_to_downcast = [
+            c for c in new_row.columns if c not in ["Model", "Store", "Item"]
+        ]
+        for col in cols_to_downcast:
+            new_row[col] = pd.to_numeric(new_row[col], downcast="float")
+
+        metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+        logger.info(
+            f"FINISHED {modelType} S{store}/I{item}. SMAPE: {metrics['smape']:.4f}"
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error fitting/evaluating {modelType} for S{store}/I{item}: {e}"
+        )
+        # logger.error(traceback.format_exc())
+        # Add a row with NaN values to indicate failure
+        nan_row_dict = {
+            "Model": modelType,
+            "Store": store,
+            "Item": item,
+        }
+        for metric in [
+            "RMSSE",
+            "MASE",
+            "SMAPE",
+            "MARRE",
+            "RMSE",
+            "MAE",
+            "OPE",
+        ]:
+            nan_row_dict[metric] = np.nan
+
+        new_row = pd.DataFrame([nan_row_dict])
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
     return metrics_df
