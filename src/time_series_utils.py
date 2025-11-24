@@ -551,7 +551,19 @@ def eval_model_with_covariates(
         "TFT",
         "TSMIXER",
         "TIDE",
-    } 
+    }
+
+    # Which models support validation series during training (deep learning models)
+    supports_val_series = modelType in {
+        "NBEATS",
+        "TFT",
+        "TSMIXER",
+        "BLOCK_RNN",
+        "TCN",
+        "TIDE",
+        "TRANSFORMER",
+        "NHITS",
+    }
 
     try:
         train_target = data_dict["train_target"]
@@ -568,7 +580,11 @@ def eval_model_with_covariates(
         val_past_scaled = None
         past_covs_scaled_full = None
 
-        if supports_past and data_dict.get("train_past") is not None:
+        if (
+            supports_past
+            and data_dict.get("train_past") is not None
+            and not no_past_covs
+        ):
             past_scaler = Scaler(RobustScaler())
 
             # Fit on training past covariates
@@ -593,6 +609,7 @@ def eval_model_with_covariates(
             supports_future
             and data_dict.get("full_future") is not None
             and data_dict.get("train_future") is not None
+            and not no_future_covs
         ):
             future_scaler = Scaler(RobustScaler())
             # Fit on train_future only (no leakage)
@@ -609,30 +626,36 @@ def eval_model_with_covariates(
         # --- MODEL FITTING ---
         logger.debug(f"Fitting {modelType} S{store}/I{item}...")
 
+        # Start with basic fit arguments
         fit_kwargs: Dict[str, Any] = {
             "series": train_target_scaled,
-            "val_series": val_target_scaled,
         }
 
+        # Add validation series only for models that support it
+        if supports_val_series:
+            fit_kwargs["val_series"] = val_target_scaled
+
+        # Add past covariates if supported
         if (
             supports_past
             and train_past_scaled is not None
             and not no_past_covs
         ):
             fit_kwargs["past_covariates"] = train_past_scaled
-            if val_past_scaled is not None:
+            if supports_val_series and val_past_scaled is not None:
                 fit_kwargs["val_past_covariates"] = val_past_scaled
 
+        # Add future covariates if supported
         if (
             supports_future
             and future_covs_scaled_full is not None
             and not no_future_covs
         ):
-            # Darts uses the history; for validation consistency, pass val slice too
             fit_kwargs["future_covariates"] = future_covs_scaled_full
-            if val_future_scaled is not None:
+            if supports_val_series and val_future_scaled is not None:
                 fit_kwargs["val_future_covariates"] = val_future_scaled
 
+        logger.debug(f"Fit kwargs keys: {list(fit_kwargs.keys())}")
         model.fit(**fit_kwargs)
 
         # --- FORECASTING ---
@@ -657,9 +680,10 @@ def eval_model_with_covariates(
         ):
             predict_kwargs["future_covariates"] = future_covs_scaled_full
 
+        logger.debug(f"Predict kwargs keys: {list(predict_kwargs.keys())}")
         forecast_scaled = model.predict(**predict_kwargs)
 
-        # --- 6. INVERSE TRANSFORM & METRICS ---
+        # --- INVERSE TRANSFORM & METRICS ---
         forecast = target_scaler.inverse_transform(forecast_scaled)
 
         metrics = calculate_metrics(train_target, val_target, forecast)
@@ -695,7 +719,7 @@ def eval_model_with_covariates(
         logger.error(
             f"Error fitting/evaluating {modelType} for S{store}/I{item}: {e}"
         )
-        # logger.error(traceback.format_exc())
+        logger.error(traceback.format_exc())  # Uncomment for debugging
         nan_row_dict = {
             "Model": modelType,
             "Store": store,
@@ -712,3 +736,194 @@ def eval_model_with_covariates(
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
     return metrics_df
+
+
+# def eval_model_with_covariates(
+#     modelType: str,
+#     model: ForecastingModel,
+#     store: int,
+#     item: int,
+#     data_dict: Dict[str, Any],
+#     metrics_df: pd.DataFrame,
+#     no_past_covs: bool = False,
+#     no_future_covs: bool = False,
+# ) -> pd.DataFrame:
+#     """
+#     Evaluate a model handling scaling for targets and covariates independently,
+#     ensuring no data leakage from validation into training via scalers.
+#     """
+
+#     # Which models support which types of covariates
+#     supports_past = modelType in {
+#         "NBEATS",
+#         "TFT",
+#         "TSMIXER",
+#         "BLOCK_RNN",
+#         "TCN",
+#         "TIDE",
+#     }
+#     supports_future = modelType in {
+#         "TFT",
+#         "TSMIXER",
+#         "TIDE",
+#     }
+
+#     try:
+#         train_target = data_dict["train_target"]
+#         val_target = data_dict["val_target"]
+#         forecast_horizon = len(val_target)
+
+#         # --- TARGET SCALER ---
+#         target_scaler = Scaler(RobustScaler())
+#         train_target_scaled = target_scaler.fit_transform(train_target)
+#         val_target_scaled = target_scaler.transform(val_target)
+
+#         # --- PAST COVARIATES SCALER ---
+#         train_past_scaled = None
+#         val_past_scaled = None
+#         past_covs_scaled_full = None
+
+#         if supports_past and data_dict.get("train_past") is not None:
+#             past_scaler = Scaler(RobustScaler())
+
+#             # Fit on training past covariates
+#             train_past_scaled = past_scaler.fit_transform(
+#                 data_dict["train_past"]
+#             )
+
+#             # Transform validation slice if present
+#             if data_dict.get("val_past") is not None:
+#                 val_past_scaled = past_scaler.transform(data_dict["val_past"])
+
+#             # Transform the full past covariate history for prediction
+#             if data_dict.get("full_past") is not None:
+#                 past_covs_scaled_full = past_scaler.transform(
+#                     data_dict["full_past"]
+#                 )
+
+#         # --- FUTURE COVARIATES SCALER ---
+#         future_covs_scaled_full = None
+#         val_future_scaled = None
+#         if (
+#             supports_future
+#             and data_dict.get("full_future") is not None
+#             and data_dict.get("train_future") is not None
+#         ):
+#             future_scaler = Scaler(RobustScaler())
+#             # Fit on train_future only (no leakage)
+#             future_scaler.fit(data_dict["train_future"])
+#             # Transform full history and validation slice
+#             future_covs_scaled_full = future_scaler.transform(
+#                 data_dict["full_future"]
+#             )
+#             if data_dict.get("val_future") is not None:
+#                 val_future_scaled = future_scaler.transform(
+#                     data_dict["val_future"]
+#                 )
+
+#         # --- MODEL FITTING ---
+#         logger.debug(f"Fitting {modelType} S{store}/I{item}...")
+
+#         fit_kwargs: Dict[str, Any] = {
+#             "series": train_target_scaled,
+#             "val_series": val_target_scaled,
+#         }
+
+#         if (
+#             supports_past
+#             and train_past_scaled is not None
+#             and not no_past_covs
+#         ):
+#             fit_kwargs["past_covariates"] = train_past_scaled
+#             if val_past_scaled is not None:
+#                 fit_kwargs["val_past_covariates"] = val_past_scaled
+
+#         if (
+#             supports_future
+#             and future_covs_scaled_full is not None
+#             and not no_future_covs
+#         ):
+#             # Darts uses the history; for validation consistency, pass val slice too
+#             fit_kwargs["future_covariates"] = future_covs_scaled_full
+#             if val_future_scaled is not None:
+#                 fit_kwargs["val_future_covariates"] = val_future_scaled
+
+#         model.fit(**fit_kwargs)
+
+#         # --- FORECASTING ---
+#         logger.debug(
+#             f"Predicting {modelType} S{store}/I{item} (n={forecast_horizon})..."
+#         )
+
+#         predict_kwargs: Dict[str, Any] = {"n": forecast_horizon}
+
+#         # IMPORTANT: for prediction, covariates must extend up to the forecast horizon
+#         if (
+#             supports_past
+#             and past_covs_scaled_full is not None
+#             and not no_past_covs
+#         ):
+#             predict_kwargs["past_covariates"] = past_covs_scaled_full
+
+#         if (
+#             supports_future
+#             and future_covs_scaled_full is not None
+#             and not no_future_covs
+#         ):
+#             predict_kwargs["future_covariates"] = future_covs_scaled_full
+
+#         forecast_scaled = model.predict(**predict_kwargs)
+
+#         # --- 6. INVERSE TRANSFORM & METRICS ---
+#         forecast = target_scaler.inverse_transform(forecast_scaled)
+
+#         metrics = calculate_metrics(train_target, val_target, forecast)
+
+#         new_row_dict = {
+#             "Model": modelType,
+#             "Store": store,
+#             "Item": item,
+#             "RMSSE": metrics["rmsse"],
+#             "MASE": metrics["mase"],
+#             "SMAPE": metrics["smape"],
+#             "MARRE": metrics["marre"],
+#             "RMSE": metrics["rmse"],
+#             "MAE": metrics["mae"],
+#             "OPE": metrics["ope"],
+#         }
+
+#         new_row = pd.DataFrame([new_row_dict])
+
+#         # Downcast floats to save memory
+#         cols_to_downcast = [
+#             c for c in new_row.columns if c not in ["Model", "Store", "Item"]
+#         ]
+#         for col in cols_to_downcast:
+#             new_row[col] = pd.to_numeric(new_row[col], downcast="float")
+
+#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+#         logger.info(
+#             f"FINISHED {modelType} S{store}/I{item}. SMAPE: {metrics['smape']:.4f}"
+#         )
+
+#     except Exception as e:
+#         logger.error(
+#             f"Error fitting/evaluating {modelType} for S{store}/I{item}: {e}"
+#         )
+#         # logger.error(traceback.format_exc())
+#         nan_row_dict = {
+#             "Model": modelType,
+#             "Store": store,
+#             "Item": item,
+#             "RMSSE": np.nan,
+#             "MASE": np.nan,
+#             "SMAPE": np.nan,
+#             "MARRE": np.nan,
+#             "RMSE": np.nan,
+#             "MAE": np.nan,
+#             "OPE": np.nan,
+#         }
+#         new_row = pd.DataFrame([nan_row_dict])
+#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
+
+#     return metrics_df
