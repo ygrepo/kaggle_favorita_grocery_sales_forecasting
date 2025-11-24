@@ -132,7 +132,9 @@ def main():
                 .rename(columns={"item_name": "store"})
                 .assign(store=lambda x: x["store"].astype(int))
             )
-
+            assignments.to_csv(
+                "output/data/20251124_store_assignments.csv", index=False
+            )
             # Add cluster IDs to main dataframe
             df = df[["date", "store", "growth_rate"]].merge(
                 assignments[["store", "cluster_id"]].rename(
@@ -157,6 +159,42 @@ def main():
             save_csv_or_parquet(medians, output_fn)
             logger.info("Completed successfully")
             return
+        if action == "item":
+            logger.info("Computing item cluster medians")
+            # Get item assignments and rename columns
+            assignments = (
+                assignment_df.query("factor_name == 'SKU'")
+                .rename(columns={"item_name": "item"})
+                .assign(item=lambda x: x["item"].astype(int))
+            )
+            assignments.to_csv(
+                "output/data/20251124_item_assignments.csv", index=False
+            )
+            # Add cluster IDs to main dataframe
+            df = df[["date", "item", "growth_rate"]].merge(
+                assignments[["item", "cluster_id"]].rename(
+                    columns={"cluster_id": "item_cluster_id"}
+                ),
+                on="item",
+                how="left",
+            )
+            del assignments
+            gc.collect()
+            logger.info("Merged item assignments")
+
+            # Compute store cluster medians by date
+            medians = (
+                df.groupby(["date", "item_cluster_id"])["growth_rate"]
+                .median()
+                .reset_index()
+                .rename(columns={"growth_rate": "item_median"})
+            )
+            # Don't include 'store' in the output - it's not in the groupby
+            medians = medians[["date", "item_cluster_id", "item_median"]]
+            save_csv_or_parquet(medians, output_fn)
+            logger.info("Completed successfully")
+            return
+
         if action == "both":
             logger.info("Merging store and item cluster medians")
             # Load the data

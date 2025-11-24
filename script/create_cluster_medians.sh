@@ -16,10 +16,10 @@ MODEL_FN="${OUTPUT_DATA_DIR}/20251108_tucker_2014_January_top_53_store_2000_item
 DATA_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features.parquet"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
 #OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
-OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_item_medians.parquet"
+OUTPUT_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
 STORE_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
 ITEM_FN="${OUTPUT_DATA_DIR}/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
-ACTION="both"
+ACTION="store"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
