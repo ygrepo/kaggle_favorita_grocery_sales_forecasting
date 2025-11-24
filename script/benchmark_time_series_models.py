@@ -11,21 +11,10 @@ This script handles the complete training pipeline including:
 import sys
 import argparse
 from pathlib import Path
-from enum import Enum
 from typing import List
 
 import pandas as pd
 from tqdm import tqdm
-
-
-from darts.models import (
-    AutoARIMA,
-    ExponentialSmoothing,
-    Theta,
-    KalmanForecaster,
-)
-from darts.models.forecasting.forecasting_model import LocalForecastingModel
-from darts.utils.utils import SeasonalityMode
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -38,59 +27,17 @@ from src.utils import (
 )
 from src.data_utils import load_raw_data
 from src.time_series_utils import (
+    ModelType,
+    parse_models_arg,
+    create_model,
     prepare_store_item_series,
     eval_model_with_covariates,
     get_train_val_data_with_covariates,
+    FUTURE_COV_COLS,
+    PAST_COV_COLS,
 )
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------
-# Enum + Factory
-# ---------------------------------------------------------------------
-
-
-class ModelType(str, Enum):
-    EXPONENTIAL_SMOOTHING = "EXPONENTIAL_SMOOTHING"
-    AUTO_ARIMA = "AUTO_ARIMA"
-    THETA = "THETA"
-    KALMAN = "KALMAN"
-
-
-def parse_models_arg(models_string: str) -> List[ModelType]:
-    """
-    Convert --models "EXPONENTIAL_SMOOTHING,AUTO_ARIMA" into
-    [ModelType.EXPONENTIAL_SMOOTHING, ModelType.AUTO_ARIMA].
-    """
-    names = [m.strip().upper() for m in models_string.split(",") if m.strip()]
-    try:
-        return [ModelType(name) for name in names]
-    except ValueError as e:
-        raise ValueError(
-            f"Invalid --models argument: {models_string}. "
-            f"Valid options: {[m.value for m in ModelType]}"
-        ) from e
-
-
-def create_local_model(model_type: ModelType) -> LocalForecastingModel:
-    """
-    Factory to create a classical Darts local forecasting model.
-    """
-    if model_type == ModelType.EXPONENTIAL_SMOOTHING:
-        return ExponentialSmoothing()
-
-    if model_type == ModelType.AUTO_ARIMA:
-        return AutoARIMA()
-
-    if model_type == ModelType.THETA:
-        return Theta(season_mode=SeasonalityMode.ADDITIVE)
-
-    if model_type == ModelType.KALMAN:
-        # simple univariate Kalman; can tune dim_x later
-        return KalmanForecaster(dim_x=1, random_state=42)
-
-    raise ValueError(f"Unsupported model type: {model_type}")
 
 
 # ---------------------------------------------------------------------
@@ -200,7 +147,7 @@ def process_store_item_combination(
 
     # Train all models using the covariate-aware evaluation
     for mtype in model_types:
-        model = create_local_model(mtype)
+        model = create_model(mtype)
 
         # Classical models don't support covariates, but eval_model_with_covariates
         # will handle this by only using the target series
@@ -258,9 +205,6 @@ def main():
             unique_combinations = unique_combinations.head(args.N)
 
         logger.info(f"Found {len(unique_combinations)} unique combinations")
-
-        # Check what covariate columns are available
-        from src.time_series_utils import FUTURE_COV_COLS, PAST_COV_COLS
 
         available_future_covs = [
             col for col in FUTURE_COV_COLS if col in df.columns

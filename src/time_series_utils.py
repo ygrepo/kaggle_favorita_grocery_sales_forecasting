@@ -1,14 +1,34 @@
 import sys
 from pathlib import Path
+from enum import Enum
+from typing import Optional, Dict, Any, List
 import pandas as pd
 import numpy as np
 from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.metrics import rmse, mae, ope, smape, marre
-from typing import Optional, Dict, Any
 from sklearn.preprocessing import RobustScaler
 from darts.dataprocessing.transformers import Scaler
 import traceback
+
+# Classical models
+from darts.models import (
+    AutoARIMA,
+    ExponentialSmoothing,
+    Theta,
+    KalmanForecaster,
+)
+from darts.utils.utils import SeasonalityMode
+
+# Deep learning models
+from darts.models import (
+    NBEATSModel,
+    TFTModel,
+    TSMixerModel,
+    BlockRNNModel,
+    TCNModel,
+    TiDEModel,
+)
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -44,6 +64,155 @@ PAST_COV_COLS = [
 ]
 
 TARGET_COL = "growth_rate"
+
+
+# =====================================================================
+# Unified ModelType Enum and Factory
+# =====================================================================
+
+
+class ModelType(str, Enum):
+    """Unified enum for all supported time series models."""
+
+    # Classical models
+    EXPONENTIAL_SMOOTHING = "EXPONENTIAL_SMOOTHING"
+    AUTO_ARIMA = "AUTO_ARIMA"
+    THETA = "THETA"
+    KALMAN = "KALMAN"
+    # Deep learning models
+    NBEATS = "NBEATS"
+    TFT = "TFT"
+    TSMIXER = "TSMIXER"
+    BLOCK_RNN = "BLOCK_RNN"
+    TCN = "TCN"
+    TIDE = "TIDE"
+
+
+def parse_models_arg(models_string: str) -> List[ModelType]:
+    """
+    Convert comma-separated model names to ModelType list.
+    Example: "EXPONENTIAL_SMOOTHING,AUTO_ARIMA" -> [ModelType.EXPONENTIAL_SMOOTHING, ModelType.AUTO_ARIMA]
+    """
+    names = [m.strip().upper() for m in models_string.split(",") if m.strip()]
+    try:
+        return [ModelType(name) for name in names]
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid models argument: {models_string}. "
+            f"Valid options: {[m.value for m in ModelType]}"
+        ) from e
+
+
+def create_model(
+    model_type: ModelType,
+    batch_size: int = 32,
+    torch_kwargs: Optional[Dict[str, Any]] = None,
+    n_epochs: int = 100,
+    dropout: float = 0.1,
+) -> ForecastingModel:
+    """
+    Factory to create a Darts model instance (classical or deep learning).
+
+    Args:
+        model_type: ModelType enum value
+        batch_size: Batch size for deep learning models
+        torch_kwargs: PyTorch/Lightning kwargs for deep learning models
+        n_epochs: Number of epochs for deep learning models
+        dropout: Dropout rate for deep learning models
+
+    Returns:
+        ForecastingModel instance
+    """
+    if torch_kwargs is None:
+        torch_kwargs = {}
+
+    # =====================================================================
+    # Classical Models (no batch_size, epochs, or torch_kwargs needed)
+    # =====================================================================
+
+    if model_type == ModelType.EXPONENTIAL_SMOOTHING:
+        return ExponentialSmoothing()
+
+    if model_type == ModelType.AUTO_ARIMA:
+        return AutoARIMA()
+
+    if model_type == ModelType.THETA:
+        return Theta(season_mode=SeasonalityMode.ADDITIVE)
+
+    if model_type == ModelType.KALMAN:
+        return KalmanForecaster(dim_x=1, random_state=42)
+
+    # =====================================================================
+    # Deep Learning Models
+    # =====================================================================
+
+    # Base configuration shared by all deep learning models
+    base_kwargs = dict(
+        input_chunk_length=30,
+        output_chunk_length=1,
+        n_epochs=n_epochs,
+        batch_size=batch_size,
+        random_state=42,
+        save_checkpoints=False,
+        force_reset=True,
+        **torch_kwargs,
+    )
+
+    if model_type == ModelType.NBEATS:
+        return NBEATSModel(
+            generic_architecture=True,
+            num_stacks=10,
+            num_blocks=1,
+            num_layers=4,
+            layer_widths=512,
+            **base_kwargs,
+        )
+
+    if model_type == ModelType.TFT:
+        return TFTModel(
+            hidden_size=64,
+            lstm_layers=1,
+            dropout=dropout,
+            num_attention_heads=4,
+            add_relative_index=True,
+            **base_kwargs,
+        )
+
+    if model_type == ModelType.TSMIXER:
+        return TSMixerModel(
+            hidden_size=64,
+            dropout=dropout,
+            **base_kwargs,
+        )
+
+    if model_type == ModelType.BLOCK_RNN:
+        return BlockRNNModel(
+            model="LSTM",
+            hidden_dim=64,
+            n_rnn_layers=2,
+            dropout=dropout,
+            **base_kwargs,
+        )
+
+    if model_type == ModelType.TCN:
+        return TCNModel(
+            kernel_size=3,
+            num_filters=64,
+            dilation_base=2,
+            weight_norm=True,
+            dropout=dropout,
+            **base_kwargs,
+        )
+
+    if model_type == ModelType.TIDE:
+        return TiDEModel(
+            hidden_size=64,
+            dropout=dropout,
+            use_layer_norm=True,
+            **base_kwargs,
+        )
+
+    raise ValueError(f"Unsupported model type: {model_type}")
 
 
 def prepare_store_item_series(
@@ -90,94 +259,6 @@ def prepare_store_item_series(
         ts_df[cov_cols] = ts_df[cov_cols].fillna(0)
 
     return ts_df
-
-
-def get_train_val_data(
-    df: pd.DataFrame,
-    store: int,
-    item: int,
-    split_point: float,
-    min_train_data_points: int,
-) -> Optional[tuple[TimeSeries, TimeSeries, TimeSeries]]:
-    """Split data into training and validation sets."""
-    try:
-        train_data_for_std = df.iloc[: int(len(df) * split_point)]
-        non_missing_count = train_data_for_std["growth_rate"].count()
-        logger.info(
-            f"store:{store},item:{item},training: Non-missing count: "
-            f"{non_missing_count}"
-        )
-        if non_missing_count < min_train_data_points:
-            logger.warning(
-                f"store:{store},item:{item},training: Non-missing count:"
-                f"({non_missing_count} non-NaN < {min_train_data_points}).Skipping."
-            )
-            return None, None, None
-
-        # Check variance
-        train_std = train_data_for_std["growth_rate"].std()
-        if train_std == 0 or np.isnan(train_std):
-            logger.warning(
-                f"store:{store},item:{item},training: Non-missing count:"
-                f"({train_std}).Skipping."
-            )
-            return None, None, None
-
-        # Convert to Darts TimeSeries
-        ts = TimeSeries.from_dataframe(df, fill_missing_dates=True, freq="D")
-
-        # Split data
-        train_ts, val_ts = ts.split_before(split_point)
-
-        if len(val_ts) == 0:
-            logger.warning(
-                f"store:{store},item:{item},validation: No validation data."
-            )
-            return None, None, None
-
-        # Get the count of *actual* data points, ignoring NaNs
-        train_series_pd = train_ts.to_series()
-        non_missing_count = train_series_pd.count()
-        logger.info(
-            f"store:{store},item:{item},training: Non-missing count: "
-            f"{non_missing_count}"
-        )
-
-        if non_missing_count < min_train_data_points:
-            logger.warning(
-                f"store:{store},item:{item},training: Non-missing count:"
-                f"({non_missing_count} non-NaN < {min_train_data_points}).Skipping."
-            )
-            return None, None, None
-
-        train_std = train_series_pd.std()
-        if train_std == 0 or np.isnan(train_std):
-            logger.warning(
-                f"store:{store},item:{item},training: Non-missing count:"
-                f"({train_std}).Skipping."
-            )
-            return None, None, None
-
-        non_missing_count = val_ts.to_series().count()
-        logger.info(
-            f"store:{store},item:{item},validation: Non-missing count: "
-            f"{non_missing_count}"
-        )
-
-        ts = TimeSeries.from_dataframe(
-            df, fill_missing_dates=True, freq="D", fillna_value=0
-        )
-
-        # Split the filled series
-        train_ts, val_ts = ts.split_before(split_point)
-
-        return ts, train_ts, val_ts
-
-    except Exception as e:
-        logger.error(
-            f"store:{store},item:{item},Error getting train/val data: {e}"
-        )
-        return None, None, None
 
 
 def get_train_val_data_with_covariates(
@@ -440,87 +521,6 @@ def calculate_metrics(
             k: np.nan
             for k in ["rmsse", "mse", "smape", "marre", "rmse", "mae", "ope"]
         }
-
-
-def eval_model(
-    modelType: str,
-    model: ForecastingModel,
-    store: int,
-    item: int,
-    train: TimeSeries,
-    val: TimeSeries,
-    metrics_df: pd.DataFrame,
-) -> pd.DataFrame:
-    """Evaluate a model with error handling and automatic RobustScaling."""
-    try:
-        logger.info(
-            f"Training {modelType} model, store {store}, item {item}..."
-        )
-
-        # START SCALING LOGIC
-        # Initialize and fit the scaler on training data
-        scaler = Scaler(RobustScaler())
-        train_scaled = scaler.fit_transform(train)
-
-        # Fit model on SCALED data (prevents Kalman explosion)
-        model.fit(train_scaled)
-
-        logger.info(f"Generating forecast with {modelType}...")
-
-        # Predict (returns scaled output)
-        forecast_scaled = model.predict(len(val))
-
-        # Inverse transform to get Real Units back
-        forecast = scaler.inverse_transform(forecast_scaled)
-        # END SCALING LOGIC
-
-        # Calculate metrics using Real Units (train, val, forecast are all unscaled now)
-        metrics = calculate_metrics(train, val, forecast)
-
-        new_row = pd.DataFrame(
-            [
-                {
-                    "Model": modelType,
-                    "Store": store,
-                    "Item": item,
-                    "RMSSE": metrics["rmsse"],
-                    "MASE": metrics["mase"],
-                    "SMAPE": metrics["smape"],
-                    "MARRE": metrics["marre"],
-                    "RMSE": metrics["rmse"],
-                    "MAE": metrics["mae"],
-                    "OPE": metrics["ope"],
-                }
-            ]
-        )
-
-        metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-        logger.info(
-            f"{modelType} completed successfully, store {store}, item {item}"
-        )
-
-    except Exception as e:
-        logger.error(f"Error with {modelType}: {e}")
-        # Add a row with NaN values to indicate failure
-        new_row = pd.DataFrame(
-            [
-                {
-                    "Model": modelType,
-                    "Store": store,
-                    "Item": item,
-                    "RMSSE": np.nan,
-                    "MASE": np.nan,
-                    "SMAPE": np.nan,
-                    "MARRE": np.nan,
-                    "RMSE": np.nan,
-                    "MAE": np.nan,
-                    "OPE": np.nan,
-                }
-            ]
-        )
-        metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-
-    return metrics_df
 
 
 def eval_model_with_covariates(

@@ -8,24 +8,13 @@ Supports training multiple models per (store, item) with past and future covaria
 import sys
 import argparse
 from pathlib import Path
-from enum import Enum
 from typing import Dict, Optional, List
-
 
 import traceback
 
 import pandas as pd
 from tqdm import tqdm
 
-from darts.models import (
-    NBEATSModel,
-    TFTModel,
-    TSMixerModel,
-    BlockRNNModel,
-    TCNModel,
-    TiDEModel,
-)
-from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.utils.callbacks import TFMProgressBar
 
 import torch
@@ -45,37 +34,15 @@ from src.utils import (
 
 from src.data_utils import load_raw_data
 from src.time_series_utils import (
+    ModelType,
+    parse_models_arg,
+    create_model,
     prepare_store_item_series,
     get_train_val_data_with_covariates,
     eval_model_with_covariates,
 )
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------
-# Enum + Factory
-# ---------------------------------------------------------------------
-
-
-class ModelType(str, Enum):
-    NBEATS = "NBEATS"
-    TFT = "TFT"
-    TSMIXER = "TSMIXER"
-    BLOCK_RNN = "BLOCK_RNN"
-    TCN = "TCN"
-    TIDE = "TIDE"
-
-
-def parse_models_arg(models_string: str) -> List[ModelType]:
-    """
-    Convert --models "NBEATS,TFT" into [ModelType.NBEATS, ModelType.TFT].
-    """
-    try:
-        names = [m.strip().upper() for m in models_string.split(",")]
-        return [ModelType(name) for name in names]
-    except Exception:
-        raise ValueError(f"Invalid --models argument: {models_string}")
 
 
 def generate_torch_kwargs(
@@ -116,105 +83,6 @@ def generate_torch_kwargs(
         },
         "torch_metrics": metrics,
     }
-
-
-def create_model(
-    model_type: ModelType,
-    batch_size: int,
-    torch_kwargs: Dict,
-    n_epochs: int,
-    dropout: float = 0.1,
-) -> ForecastingModel:
-    """
-    Factory to create a Darts model instance.
-    Note: Dimensions are inferred at fit() time in newer Darts versions.
-    """
-
-    # Base configuration shared by all models
-    base_kwargs = dict(
-        input_chunk_length=30,
-        output_chunk_length=1,
-        n_epochs=n_epochs,
-        batch_size=batch_size,
-        random_state=42,
-        save_checkpoints=False,
-        force_reset=True,
-        **torch_kwargs,
-    )
-
-    # -------------------------
-    # NBEATS
-    # -------------------------
-    if model_type == ModelType.NBEATS:
-        return NBEATSModel(
-            generic_architecture=True,
-            num_stacks=10,
-            num_blocks=1,
-            num_layers=4,
-            layer_widths=512,
-            **base_kwargs,
-        )
-
-    # -------------------------
-    # TFT (Temporal Fusion Transformer)
-    # -------------------------
-    elif model_type == ModelType.TFT:
-        return TFTModel(
-            hidden_size=64,
-            lstm_layers=1,
-            dropout=dropout,
-            num_attention_heads=4,
-            add_relative_index=True,
-            **base_kwargs,
-        )
-
-    # -------------------------
-    # TS-Mixer
-    # -------------------------
-    elif model_type == ModelType.TSMIXER:
-        return TSMixerModel(
-            hidden_size=64,
-            dropout=dropout,
-            **base_kwargs,
-        )
-
-    # -------------------------
-    # Block RNN (LSTM/GRU)
-    # -------------------------
-    elif model_type == ModelType.BLOCK_RNN:
-        return BlockRNNModel(
-            model="LSTM",
-            hidden_dim=64,
-            n_rnn_layers=2,
-            dropout=dropout,
-            **base_kwargs,
-        )
-
-    # -------------------------
-    # Temporal Convolutional Network (TCN)
-    # -------------------------
-    elif model_type == ModelType.TCN:
-        return TCNModel(
-            kernel_size=3,
-            num_filters=64,
-            dilation_base=2,
-            weight_norm=True,
-            dropout=dropout,
-            **base_kwargs,
-        )
-
-    # -------------------------
-    # TiDE Model
-    # -------------------------
-    elif model_type == ModelType.TIDE:
-        return TiDEModel(
-            hidden_size=64,
-            dropout=0.1,
-            use_layer_norm=True,
-            **base_kwargs,  # <--- CHANGED
-        )
-
-    raise ValueError(f"Unsupported model: {model_type}")
 
 
 # ---------------------------------------------------------------------
