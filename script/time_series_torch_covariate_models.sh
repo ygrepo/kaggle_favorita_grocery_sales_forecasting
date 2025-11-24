@@ -31,10 +31,13 @@ METRICS_FN=""
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 N=10
-N_EPOCHS=10
+N_EPOCHS=50
 BATCH_SIZE=8192
 NUM_WORKERS=8
-
+DROPOUT=0.5
+PATIENCE=10
+NO_PAST_COVS="False"
+NO_FUTURE_COVS="True"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -55,6 +58,10 @@ while [[ $# -gt 0 ]]; do
     --n_epochs) N_EPOCHS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
+    --dropout) DROPOUT="$2"; shift 2 ;;
+    --patience) PATIENCE="$2"; shift 2 ;;
+    --no_past_covs) NO_PAST_COVS="$2"; shift 2 ;;
+    --no_future_covs) NO_FUTURE_COVS="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -110,6 +117,10 @@ echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Model dir (parent): $MODEL_DIR" | tee -a "$LOG_FILE"
 echo "N epochs: $N_EPOCHS" | tee -a "$LOG_FILE"
 echo "N: $N" | tee -a "$LOG_FILE"
+echo "Dropout: $DROPOUT" | tee -a "$LOG_FILE"
+echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
+echo "No past covs: $NO_PAST_COVS" | tee -a "$LOG_FILE"
+echo "No future covs: $NO_FUTURE_COVS" | tee -a "$LOG_FILE"
 echo "Metrics dir: $METRICS_DIR" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 
@@ -139,7 +150,11 @@ python "${SCRIPT_DIR}/time_series_covariates.py" \
   --log_level "$LOG_LEVEL" \
   --n_epochs "$N_EPOCHS" \
   --batch_size "$BATCH_SIZE" \
-  --num_workers "$NUM_WORKERS"
+  --num_workers "$NUM_WORKERS" \
+  --dropout "$DROPOUT" \
+  --patience "$PATIENCE" \
+  --no_past_covs "$NO_PAST_COVS" \
+  --no_future_covs "$NO_FUTURE_COVS"
 
 EXIT_CODE=${PIPESTATUS[0]}
 

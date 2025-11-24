@@ -83,7 +83,6 @@ def prepare_store_item_series(
 
     # Handle NaNs:
     # 1. Target: Darts handles internal NaNs reasonably well, but leading/trailing might be issues.
-    #    We will let Darts fill missing dates, then handle remaining NaNs.
     # 2. Covariates: Must be filled. A safe default for standardized features is 0 (mean).
     cov_cols = available_future + available_past
     if cov_cols:
@@ -262,8 +261,8 @@ def get_train_val_data_with_covariates(
             "val_past": val_past,
             "train_future": train_future,
             "val_future": val_future,
-            "full_past": past_covs_ts,  # <--- NEW
-            "full_future": future_covs_ts,  # existing
+            "full_past": past_covs_ts,
+            "full_future": future_covs_ts,
         }
 
     except Exception as e:
@@ -531,6 +530,8 @@ def eval_model_with_covariates(
     item: int,
     data_dict: Dict[str, Any],
     metrics_df: pd.DataFrame,
+    no_past_covs: bool = False,
+    no_future_covs: bool = False,
 ) -> pd.DataFrame:
     """
     Evaluate a model handling scaling for targets and covariates independently,
@@ -557,12 +558,12 @@ def eval_model_with_covariates(
         val_target = data_dict["val_target"]
         forecast_horizon = len(val_target)
 
-        # --- 1. TARGET SCALER ---
+        # --- TARGET SCALER ---
         target_scaler = Scaler(RobustScaler())
         train_target_scaled = target_scaler.fit_transform(train_target)
         val_target_scaled = target_scaler.transform(val_target)
 
-        # --- 2. PAST COVARIATES SCALER ---
+        # --- PAST COVARIATES SCALER ---
         train_past_scaled = None
         val_past_scaled = None
         past_covs_scaled_full = None
@@ -585,7 +586,7 @@ def eval_model_with_covariates(
                     data_dict["full_past"]
                 )
 
-        # --- 3. FUTURE COVARIATES SCALER ---
+        # --- FUTURE COVARIATES SCALER ---
         future_covs_scaled_full = None
         val_future_scaled = None
         if (
@@ -605,7 +606,7 @@ def eval_model_with_covariates(
                     data_dict["val_future"]
                 )
 
-        # --- 4. MODEL FITTING ---
+        # --- MODEL FITTING ---
         logger.debug(f"Fitting {modelType} S{store}/I{item}...")
 
         fit_kwargs: Dict[str, Any] = {
@@ -613,12 +614,20 @@ def eval_model_with_covariates(
             "val_series": val_target_scaled,
         }
 
-        if supports_past and train_past_scaled is not None:
+        if (
+            supports_past
+            and train_past_scaled is not None
+            and not no_past_covs
+        ):
             fit_kwargs["past_covariates"] = train_past_scaled
             if val_past_scaled is not None:
                 fit_kwargs["val_past_covariates"] = val_past_scaled
 
-        if supports_future and future_covs_scaled_full is not None:
+        if (
+            supports_future
+            and future_covs_scaled_full is not None
+            and not no_future_covs
+        ):
             # Darts uses the history; for validation consistency, pass val slice too
             fit_kwargs["future_covariates"] = future_covs_scaled_full
             if val_future_scaled is not None:
@@ -626,7 +635,7 @@ def eval_model_with_covariates(
 
         model.fit(**fit_kwargs)
 
-        # --- 5. FORECASTING ---
+        # --- FORECASTING ---
         logger.debug(
             f"Predicting {modelType} S{store}/I{item} (n={forecast_horizon})..."
         )
@@ -634,10 +643,18 @@ def eval_model_with_covariates(
         predict_kwargs: Dict[str, Any] = {"n": forecast_horizon}
 
         # IMPORTANT: for prediction, covariates must extend up to the forecast horizon
-        if supports_past and past_covs_scaled_full is not None:
+        if (
+            supports_past
+            and past_covs_scaled_full is not None
+            and not no_past_covs
+        ):
             predict_kwargs["past_covariates"] = past_covs_scaled_full
 
-        if supports_future and future_covs_scaled_full is not None:
+        if (
+            supports_future
+            and future_covs_scaled_full is not None
+            and not no_future_covs
+        ):
             predict_kwargs["future_covariates"] = future_covs_scaled_full
 
         forecast_scaled = model.predict(**predict_kwargs)

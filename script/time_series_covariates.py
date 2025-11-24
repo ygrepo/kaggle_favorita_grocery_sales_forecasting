@@ -9,13 +9,12 @@ import sys
 import argparse
 from pathlib import Path
 from enum import Enum
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List
 
 
 import traceback
 
 import pandas as pd
-import numpy as np
 from tqdm import tqdm
 
 from darts.models import (
@@ -41,6 +40,7 @@ from src.utils import (
     setup_logging,
     get_logger,
     save_csv_or_parquet,
+    str2bool,
 )
 
 from src.data_utils import load_raw_data
@@ -78,13 +78,15 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
         raise ValueError(f"Invalid --models argument: {models_string}")
 
 
-def generate_torch_kwargs(gpu_id: Optional[int], working_dir: Path) -> Dict:
+def generate_torch_kwargs(
+    gpu_id: Optional[int], working_dir: Path, patience: int = 8
+) -> Dict:
     """Return trainer kwargs + torch_metrics for a specific GPU."""
     # Increase patience slightly as models with covariates might take longer to converge
     early_stopper = EarlyStopping(
         monitor="train_smape",
         min_delta=0.001,
-        patience=8,
+        patience=patience,
         verbose=True,
         mode="min",
     )
@@ -121,6 +123,7 @@ def create_model(
     batch_size: int,
     torch_kwargs: Dict,
     n_epochs: int,
+    dropout: float = 0.1,
 ) -> ForecastingModel:
     """
     Factory to create a Darts model instance.
@@ -159,10 +162,10 @@ def create_model(
         return TFTModel(
             hidden_size=64,
             lstm_layers=1,
-            dropout=0.1,
+            dropout=dropout,
             num_attention_heads=4,
             add_relative_index=True,
-            **base_kwargs,  # <--- CHANGED: Use base_kwargs, do not pass dims
+            **base_kwargs,
         )
 
     # -------------------------
@@ -171,8 +174,8 @@ def create_model(
     elif model_type == ModelType.TSMIXER:
         return TSMixerModel(
             hidden_size=64,
-            dropout=0.1,
-            **base_kwargs,  # <--- CHANGED
+            dropout=dropout,
+            **base_kwargs,
         )
 
     # -------------------------
@@ -183,8 +186,8 @@ def create_model(
             model="LSTM",
             hidden_dim=64,
             n_rnn_layers=2,
-            dropout=0.1,
-            **base_kwargs,  # <--- CHANGED
+            dropout=dropout,
+            **base_kwargs,
         )
 
     # -------------------------
@@ -196,8 +199,8 @@ def create_model(
             num_filters=64,
             dilation_base=2,
             weight_norm=True,
-            dropout=0.1,
-            **base_kwargs,  # <--- CHANGED
+            dropout=dropout,
+            **base_kwargs,
         )
 
     # -------------------------
@@ -230,12 +233,12 @@ def process_store_item(
 ) -> pd.DataFrame:
     """Train ALL requested models for a single store-item pair with covariates."""
     try:
-        # 1. Prepare DataFrame with target and all covariates
+        # Prepare DataFrame with target and all covariates
         ts_df = prepare_store_item_series(df, store, item)
         if ts_df.empty:
             return metrics_df
 
-        # 2. Get Train/Val splits for Target, Past Covs, and Future Covs
+        # Get Train/Val splits for Target, Past Covs, and Future Covs
         data_dict = get_train_val_data_with_covariates(
             ts_df, store, item, args.split_point, args.min_train_data_points
         )
@@ -259,7 +262,7 @@ def process_store_item(
             f"S{store}/I{item}: Data prepared. Train len: {len(data_dict['train_target'])}, "
             f"Val len: {len(data_dict['val_target'])}, Past Dim: {p_dim}, Future Dim: {f_dim}"
         )
-        # train each model requested
+        # Train each model requested
         for mtype in model_types:
             model_dir = (
                 args.model_dir.resolve()
@@ -267,7 +270,9 @@ def process_store_item(
                 / f"store_{store}_item_{item}"
             )
             model_dir.mkdir(parents=True, exist_ok=True)
-            torch_kwargs = generate_torch_kwargs(gpu_id, model_dir)
+            torch_kwargs = generate_torch_kwargs(
+                gpu_id, model_dir, args.patience
+            )
 
             # Pass dimensions to factory
             model = create_model(
@@ -275,6 +280,7 @@ def process_store_item(
                 args.batch_size,
                 torch_kwargs,
                 args.n_epochs,
+                args.dropout,
             )
 
             logger.info(
@@ -284,7 +290,14 @@ def process_store_item(
 
             # Pass the full data dictionary containing splits to evaluation
             metrics_df = eval_model_with_covariates(
-                mtype.value, model, store, item, data_dict, metrics_df
+                mtype.value,
+                model,
+                store,
+                item,
+                data_dict,
+                metrics_df,
+                args.no_past_covs,
+                args.no_future_covs,
             )
 
         return metrics_df
@@ -330,6 +343,10 @@ def parse_args():
     parser.add_argument("--log_fn", type=Path, default="")
     parser.add_argument("--log_level", type=str, default="INFO")
     parser.add_argument("--n_epochs", type=int, default=15)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--patience", type=int, default=8)
+    parser.add_argument("--no_past_covs", type=str2bool, default=False)
+    parser.add_argument("--no_future_covs", type=str2bool, default=False)
     return parser.parse_args()
 
 
@@ -342,6 +359,21 @@ def main():
     # Setup logging
     logger = setup_logging(args.log_fn, args.log_level)
     logger.info(f"Training models: {[m.value for m in model_types]}")
+
+    logger.info(f"Batch size: {args.batch_size}")
+    logger.info(f"Number of workers: {args.num_workers}")
+    logger.info(f"Dropout: {args.dropout}")
+    logger.info(f"Patience: {args.patience}")
+    logger.info(f"No past covs: {args.no_past_covs}")
+    logger.info(f"No future covs: {args.no_future_covs}")
+    logger.info(f"N epochs: {args.n_epochs}")
+    logger.info(f"Split point: {args.split_point}")
+    logger.info(f"Min train data points: {args.min_train_data_points}")
+    logger.info(f"Limit to first N combinations: {args.N}")
+    logger.info(f"Data fn: {args.data_fn}")
+    logger.info(f"Model dir: {args.model_dir}")
+    logger.info(f"Metrics fn: {args.metrics_fn}")
+    logger.info(f"Log fn: {args.log_fn}")
 
     # GPUs
     if torch.cuda.is_available():
