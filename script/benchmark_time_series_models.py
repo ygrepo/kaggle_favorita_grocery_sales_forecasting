@@ -39,8 +39,8 @@ from src.utils import (
 from src.data_utils import load_raw_data
 from src.time_series_utils import (
     prepare_store_item_series,
-    eval_model,
-    get_train_val_data,
+    eval_model_with_covariates,
+    get_train_val_data_with_covariates,
 )
 
 logger = get_logger(__name__)
@@ -177,53 +177,39 @@ def process_store_item_combination(
 
     logger.info(f"Processing store {store}, item {item}")
 
+    # Prepare the time series data with all features
     ts_df = prepare_store_item_series(df, store, item)
     if ts_df.empty:
+        logger.warning(f"No data for store {store}, item {item}")
         return metrics_df
 
-    _, train_ts, val_ts = get_train_val_data(
-        df=ts_df,
+    # Use the covariate-aware data preparation
+    data_dict = get_train_val_data_with_covariates(
+        ts_df=ts_df,
         store=store,
         item=item,
         split_point=split_point,
         min_train_data_points=min_train_data_points,
     )
 
-    if train_ts is None:
+    if data_dict is None:
         logger.warning(
-            f"store:{store},item:{item}. Skipping, no training data.:"
-        )
-        return metrics_df
-    if len(train_ts) == 0:
-        logger.warning(
-            f"store:{store},item:{item}. Skipping, no training data.:"
-        )
-    if val_ts is None:
-        logger.warning(
-            f"store:{store},item:{item}. Skipping, no validation data.:"
-        )
-        return metrics_df
-    if len(val_ts) == 0:
-        logger.warning(
-            f"store:{store},item:{item}. Skipping, no validation data.:"
-        )
-        return metrics_df
-    if len(train_ts) < min_train_data_points:
-        logger.warning(
-            f"store:{store},item:{item},training: Non-missing count:"
-            f"({len(train_ts)} < {min_train_data_points}).Skipping."
+            f"store:{store},item:{item}. Skipping, no training data."
         )
         return metrics_df
 
+    # Train all models using the covariate-aware evaluation
     for mtype in model_types:
         model = create_local_model(mtype)
-        metrics_df = eval_model(
-            mtype,
+
+        # Classical models don't support covariates, but eval_model_with_covariates
+        # will handle this by only using the target series
+        metrics_df = eval_model_with_covariates(
+            mtype.value,
             model,
             store,
             item,
-            train_ts,
-            val_ts,
+            data_dict,
             metrics_df,
         )
 
@@ -260,6 +246,7 @@ def main():
         logger.info(f"  Split point: {args.split_point}")
         logger.info(f"  Min train data points: {args.min_train_data_points}")
         logger.info(f"  N: {args.N}")
+
         # Load raw data
         logger.info("Loading raw data...")
         df = load_raw_data(data_fn)
@@ -271,6 +258,22 @@ def main():
             unique_combinations = unique_combinations.head(args.N)
 
         logger.info(f"Found {len(unique_combinations)} unique combinations")
+
+        # Check what covariate columns are available
+        from src.time_series_utils import FUTURE_COV_COLS, PAST_COV_COLS
+
+        available_future_covs = [
+            col for col in FUTURE_COV_COLS if col in df.columns
+        ]
+        available_past_covs = [
+            col for col in PAST_COV_COLS if col in df.columns
+        ]
+
+        logger.info(
+            f"Available future covariate columns: {available_future_covs}"
+        )
+        logger.info(f"Available past covariate columns: {available_past_covs}")
+
         logger.info("Running models...")
 
         metrics_df = pd.DataFrame(
@@ -287,6 +290,7 @@ def main():
                 "OPE",
             ]
         )
+
         for _, row in tqdm(
             unique_combinations.iterrows(), total=len(unique_combinations)
         ):
@@ -306,6 +310,32 @@ def main():
         logger.info(f"Saving results to {output_metrics_fn}")
         save_csv_or_parquet(metrics_df, output_metrics_fn)
         logger.info("Benchmarking completed successfully!")
+
+        # Log summary statistics
+        if not metrics_df.empty:
+            logger.info("Summary of results:")
+            for model in metrics_df["Model"].unique():
+                model_metrics = metrics_df[metrics_df["Model"] == model]
+                successful_runs = model_metrics.dropna(subset=["SMAPE"]).shape[
+                    0
+                ]
+                total_runs = len(model_metrics)
+                logger.info(
+                    f"  {model}: {successful_runs}/{total_runs} successful runs"
+                )
+
+                if successful_runs > 0:
+                    clean_metrics = model_metrics.dropna(
+                        subset=["SMAPE", "RMSSE"]
+                    )
+                    if len(clean_metrics) > 0:
+                        smape_mean = clean_metrics["SMAPE"].mean()
+                        rmsse_mean = clean_metrics["RMSSE"].mean()
+                        logger.info(
+                            f"    Mean SMAPE: {smape_mean:.4f}, Mean RMSSE: {rmsse_mean:.4f}"
+                        )
+        else:
+            logger.warning("No successful model runs completed!")
 
     except Exception as e:
         logger.error(f"Error in benchmarking: {e}")

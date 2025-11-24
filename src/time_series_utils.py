@@ -217,14 +217,14 @@ def get_train_val_data_with_covariates(
             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
         )
 
-        # 1. Target
+        # Target
         target_ts = full_ts[TARGET_COL]
 
-        # 2. Past covariates
+        # Past covariates
         valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
 
-        # 3. Future covariates
+        # Future covariates
         valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
         future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
 
