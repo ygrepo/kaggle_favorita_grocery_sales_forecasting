@@ -310,6 +310,29 @@ def main():
 
     logger.info("Benchmark complete.")
 
+    # Log summary statistics
+    if not metrics_df.empty:
+        logger.info("Summary of results:")
+        for model in metrics_df["Model"].unique():
+            model_metrics = metrics_df[metrics_df["Model"] == model]
+            successful_runs = model_metrics.dropna(subset=["SMAPE"]).shape[0]
+            total_runs = len(model_metrics)
+            logger.info(
+                f"  {model}: {successful_runs}/{total_runs} successful runs"
+            )
+
+            if successful_runs > 0:
+                clean_metrics = model_metrics.dropna(subset=["SMAPE", "RMSSE"])
+                if len(clean_metrics) > 0:
+                    smape_mean = clean_metrics["SMAPE"].mean()
+                    rmsse_mean = clean_metrics["RMSSE"].mean()
+                    logger.info(
+                        f"    Mean SMAPE: {smape_mean:.4f}, "
+                        f"Mean RMSSE: {rmsse_mean:.4f}"
+                    )
+    else:
+        logger.warning("No successful model runs completed!")
+
 
 if __name__ == "__main__":
     main()
