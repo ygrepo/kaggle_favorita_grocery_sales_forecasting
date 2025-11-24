@@ -16,12 +16,12 @@ DATE=$(date +"%Y%m%d")
 
 METRICS_DIR="${PROJECT_ROOT}/output/metrics"
 mkdir -p "$METRICS_DIR"
-METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_metrics.csv"
+METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_ml_metrics.csv"
 
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 MODELS="EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN"
-N=0 
+N=10
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 

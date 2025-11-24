@@ -551,7 +551,7 @@ def eval_model_with_covariates(
         "TFT",
         "TSMIXER",
         "TIDE",
-    }  # not NBEATS/TCN/BLOCK_RNN
+    } 
 
     try:
         train_target = data_dict["train_target"]
