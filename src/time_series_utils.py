@@ -105,31 +105,21 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
 
 def create_model(
     model_type: ModelType,
-    batch_size: int = 32,
+    batch_size: int = 64,  # smaller is fine per series
     torch_kwargs: Optional[Dict[str, Any]] = None,
-    n_epochs: int = 100,
-    dropout: float = 0.1,
+    n_epochs: int = 300,
+    dropout: float = 0.5,  # strong regularisation
 ) -> ForecastingModel:
     """
-    Factory to create a Darts model instance (classical or deep learning).
-
-    Args:
-        model_type: ModelType enum value
-        batch_size: Batch size for deep learning models
-        torch_kwargs: PyTorch/Lightning kwargs for deep learning models
-        n_epochs: Number of epochs for deep learning models
-        dropout: Dropout rate for deep learning models
-
-    Returns:
-        ForecastingModel instance
+    Factory to create a Darts model instance (classical or deep learning)
+    tuned for short, per-series time series.
     """
     if torch_kwargs is None:
         torch_kwargs = {}
 
     # =====================================================================
-    # Classical Models (no batch_size, epochs, or torch_kwargs needed)
+    # Classical Models
     # =====================================================================
-
     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
         return ExponentialSmoothing()
 
@@ -143,44 +133,47 @@ def create_model(
         return KalmanForecaster(dim_x=1, random_state=42)
 
     # =====================================================================
-    # Deep Learning Models
+    # Deep Learning Models (per-series, SMALL)
     # =====================================================================
 
-    # Base configuration shared by all deep learning models
+    # Shared config
     base_kwargs = dict(
-        input_chunk_length=30,
+        input_chunk_length=40,  # a bit more than your 30, still short
         output_chunk_length=1,
         n_epochs=n_epochs,
         batch_size=batch_size,
         random_state=42,
         save_checkpoints=False,
         force_reset=True,
+        optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
         **torch_kwargs,
     )
 
     if model_type == ModelType.NBEATS:
+        # Much smaller than your 10 stacks x 512 width
         return NBEATSModel(
             generic_architecture=True,
-            num_stacks=10,
+            num_stacks=2,
             num_blocks=1,
-            num_layers=4,
-            layer_widths=512,
+            num_layers=2,
+            layer_widths=64,
             **base_kwargs,
         )
 
     if model_type == ModelType.TFT:
+        # Tiny TFT for per-series data
         return TFTModel(
-            hidden_size=64,
+            hidden_size=16,
             lstm_layers=1,
             dropout=dropout,
-            num_attention_heads=4,
+            num_attention_heads=2,
             add_relative_index=True,
             **base_kwargs,
         )
 
     if model_type == ModelType.TSMIXER:
         return TSMixerModel(
-            hidden_size=64,
+            hidden_size=32,
             dropout=dropout,
             **base_kwargs,
         )
@@ -188,8 +181,8 @@ def create_model(
     if model_type == ModelType.BLOCK_RNN:
         return BlockRNNModel(
             model="LSTM",
-            hidden_dim=64,
-            n_rnn_layers=2,
+            hidden_dim=16,
+            n_rnn_layers=1,
             dropout=dropout,
             **base_kwargs,
         )
@@ -197,7 +190,7 @@ def create_model(
     if model_type == ModelType.TCN:
         return TCNModel(
             kernel_size=3,
-            num_filters=64,
+            num_filters=16,  # down from 64
             dilation_base=2,
             weight_norm=True,
             dropout=dropout,
@@ -206,13 +199,388 @@ def create_model(
 
     if model_type == ModelType.TIDE:
         return TiDEModel(
-            hidden_size=64,
+            hidden_size=32,
             dropout=dropout,
             use_layer_norm=True,
             **base_kwargs,
         )
 
     raise ValueError(f"Unsupported model type: {model_type}")
+
+
+# def create_model(
+#     model_type: ModelType,
+#     batch_size: int = 32,
+#     torch_kwargs: Optional[Dict[str, Any]] = None,
+#     n_epochs: int = 100,
+#     dropout: float = 0.1,
+# ) -> ForecastingModel:
+#     """
+#     Factory to create a Darts model instance (classical or deep learning).
+
+#     Args:
+#         model_type: ModelType enum value
+#         batch_size: Batch size for deep learning models
+#         torch_kwargs: PyTorch/Lightning kwargs for deep learning models
+#         n_epochs: Number of epochs for deep learning models
+#         dropout: Dropout rate for deep learning models
+
+#     Returns:
+#         ForecastingModel instance
+#     """
+#     if torch_kwargs is None:
+#         torch_kwargs = {}
+
+#     # =====================================================================
+#     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
+#     # =====================================================================
+
+#     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
+#         return ExponentialSmoothing()
+
+#     if model_type == ModelType.AUTO_ARIMA:
+#         return AutoARIMA()
+
+#     if model_type == ModelType.THETA:
+#         return Theta(season_mode=SeasonalityMode.ADDITIVE)
+
+#     if model_type == ModelType.KALMAN:
+#         return KalmanForecaster(dim_x=1, random_state=42)
+
+#     # =====================================================================
+#     # Deep Learning Models
+#     # =====================================================================
+
+#     # Base configuration shared by all deep learning models
+#     base_kwargs = dict(
+#         input_chunk_length=30,
+#         output_chunk_length=1,
+#         n_epochs=n_epochs,
+#         batch_size=batch_size,
+#         random_state=42,
+#         save_checkpoints=False,
+#         force_reset=True,
+#         **torch_kwargs,
+#     )
+
+#     if model_type == ModelType.NBEATS:
+#         return NBEATSModel(
+#             generic_architecture=True,
+#             num_stacks=10,
+#             num_blocks=1,
+#             num_layers=4,
+#             layer_widths=512,
+#             **base_kwargs,
+#         )
+
+#     if model_type == ModelType.TFT:
+#         return TFTModel(
+#             hidden_size=64,
+#             lstm_layers=1,
+#             dropout=dropout,
+#             num_attention_heads=4,
+#             add_relative_index=True,
+#             **base_kwargs,
+#         )
+
+#     if model_type == ModelType.TSMIXER:
+#         return TSMixerModel(
+#             hidden_size=64,
+#             dropout=dropout,
+#             **base_kwargs,
+#         )
+
+#     if model_type == ModelType.BLOCK_RNN:
+#         return BlockRNNModel(
+#             model="LSTM",
+#             hidden_dim=64,
+#             n_rnn_layers=2,
+#             dropout=dropout,
+#             **base_kwargs,
+#         )
+
+#     if model_type == ModelType.TCN:
+#         return TCNModel(
+#             kernel_size=3,
+#             num_filters=64,
+#             dilation_base=2,
+#             weight_norm=True,
+#             dropout=dropout,
+#             **base_kwargs,
+#         )
+
+#     if model_type == ModelType.TIDE:
+#         return TiDEModel(
+#             hidden_size=64,
+#             dropout=dropout,
+#             use_layer_norm=True,
+#             **base_kwargs,
+#         )
+
+#     raise ValueError(f"Unsupported model type: {model_type}")
+
+
+# def prepare_store_item_series(
+#     df: pd.DataFrame,
+#     store: int,
+#     item: int,
+#     store_medians_fn: Path,
+#     item_medians_fn: Path,
+#     store_assign_fn: Path,
+#     item_assign_fn: Path,
+# ) -> pd.DataFrame:
+#     """
+#     Memory-safe preparation of the (store, item) time series.
+#     Loads only the cluster-median rows needed for this specific (store, item).
+#     """
+
+#     # ----------------------------------------------------------------------
+#     # Extract base series (already filtered)
+#     # ----------------------------------------------------------------------
+#     mask = (df["store"] == store) & (df["item"] == item)
+#     series_df = df[mask].copy()
+
+#     if series_df.empty:
+#         logger.warning(f"No data for store {store}, item {item}")
+#         return pd.DataFrame()
+
+#     series_df = series_df.sort_values("date")
+#     dates = series_df["date"].unique()
+
+#     # ----------------------------------------------------------------------
+#     # Load cluster assignments only for the current store and item
+#     # ----------------------------------------------------------------------
+#     store_assign = pd.read_csv(store_assign_fn)
+#     item_assign = pd.read_csv(item_assign_fn)
+
+#     store_clusters = (
+#         store_assign.loc[store_assign["store"] == store, "cluster_id"]
+#         .drop_duplicates()
+#         .tolist()
+#     )
+
+#     item_clusters = (
+#         item_assign.loc[item_assign["item"] == item, "cluster_id"]
+#         .drop_duplicates()
+#         .tolist()
+#     )
+
+#     # ----------------------------------------------------------------------
+#     # Load only the necessary cluster median rows
+#     #  This avoids loading giant full-sized tables.
+#     # ----------------------------------------------------------------------
+#     store_medians = pd.read_parquet(
+#         store_medians_fn,
+#         filters=[
+#             ("store_cluster_id", "in", store_clusters),
+#             ("date", "in", dates.tolist()),
+#         ],
+#         columns=["date", "store_cluster_id", "store_cluster_median"],
+#     )
+
+#     item_medians = pd.read_parquet(
+#         item_medians_fn,
+#         filters=[
+#             ("item_cluster_id", "in", item_clusters),
+#             ("date", "in", dates.tolist()),
+#         ],
+#         columns=["date", "item_cluster_id", "item_cluster_median"],
+#     )
+
+#     # ----------------------------------------------------------------------
+#     # Pivot cluster medians wide (1 row per date)
+#     # ----------------------------------------------------------------------
+#     if not store_medians.empty:
+#         store_medians_wide = (
+#             store_medians.pivot(
+#                 index="date",
+#                 columns="store_cluster_id",
+#                 values="store_cluster_median",
+#             )
+#             .add_prefix("store_cluster_median_")
+#             .reset_index()
+#         )
+#         series_df = series_df.merge(store_medians_wide, on="date", how="left")
+
+#     if not item_medians.empty:
+#         item_medians_wide = (
+#             item_medians.pivot(
+#                 index="date",
+#                 columns="item_cluster_id",
+#                 values="item_cluster_median",
+#             )
+#             .add_prefix("item_cluster_median_")
+#             .reset_index()
+#         )
+#         series_df = series_df.merge(item_medians_wide, on="date", how="left")
+
+#     # ----------------------------------------------------------------------
+#     # Select covariates
+#     # ----------------------------------------------------------------------
+#     # base cov lists
+#     base_future = [c for c in FUTURE_COV_COLS if c in series_df.columns]
+#     base_past = [c for c in PAST_COV_COLS if c in series_df.columns]
+
+#     # dynamically detect cluster future covariates
+#     cluster_cols = [
+#         c
+#         for c in series_df.columns
+#         if c.startswith("store_cluster_median_")
+#         or c.startswith("item_cluster_median_")
+#     ]
+
+#     available_future = sorted(set(base_future + cluster_cols))
+
+#     cols_to_keep = ["date", TARGET_COL] + available_future + base_past
+#     ts_df = series_df[cols_to_keep].copy()
+
+#     # (rest of your function unchanged)
+#     for col in ts_df.columns:
+#         if col != "date":
+#             ts_df[col] = pd.to_numeric(ts_df[col], errors="coerce")
+
+#     ts_df = ts_df.set_index("date")
+#     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
+
+#     cov_cols = available_future + base_past
+#     if cov_cols:
+#         ts_df[cov_cols] = ts_df[cov_cols].fillna(0)
+
+#     return ts_df
+
+
+# def get_train_val_data_with_covariates(
+#     ts_df: pd.DataFrame,
+#     store: int,
+#     item: int,
+#     split_point: float,
+#     min_train_data_points: int,
+# ) -> Optional[Dict[str, Any]]:
+#     """
+#     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
+#     and splits them consistently into train/validation sets.
+
+#     Future covariates are now determined dynamically:
+#     - Calendar covariates listed in FUTURE_COV_COLS (static)
+#     - Cluster medians (store_cluster_median_*, item_cluster_median_*)
+#     - PARAFAC latent factors (parafac_*), or any other *_covariate_* prefix.
+#     """
+
+#     try:
+#         # ------------------------------------------------------------------
+#         # Basic validation of target availability
+#         # ------------------------------------------------------------------
+#         total_len = len(ts_df)
+#         train_len_approx = int(total_len * split_point)
+
+#         train_df_subset = ts_df.iloc[:train_len_approx]
+#         non_missing_target = train_df_subset[TARGET_COL].count()
+
+#         if non_missing_target < min_train_data_points:
+#             logger.warning(
+#                 f"S{store}/I{item}: Insufficient training data "
+#                 f"({non_missing_target} < {min_train_data_points}). Skipping."
+#             )
+#             return None
+
+#         train_std = train_df_subset[TARGET_COL].std()
+#         if train_std == 0 or np.isnan(train_std):
+#             logger.warning(
+#                 f"S{store}/I{item}: Target has zero or NaN variance. Skipping."
+#             )
+#             return None
+
+#         # ------------------------------------------------------------------
+#         # Build full TimeSeries from DataFrame
+#         # ------------------------------------------------------------------
+#         full_ts = TimeSeries.from_dataframe(
+#             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
+#         )
+
+#         # Target
+#         target_ts = full_ts[TARGET_COL]
+
+#         # ------------------------------------------------------------------
+#         # Past covariates (static list)
+#         # ------------------------------------------------------------------
+#         valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
+#         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
+
+#         # ------------------------------------------------------------------
+#         # Dynamic detection of future covariates
+#         # ------------------------------------------------------------------
+
+#         # Static calendar-based covariates
+#         base_future_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+
+#         # Dynamic cluster / PARAFAC covariates
+#         dynamic_future_cols = [
+#             c
+#             for c in ts_df.columns
+#             if (
+#                 c.startswith("store_cluster_median_")
+#                 or c.startswith("item_cluster_median_")
+#             )
+#         ]
+
+#         # Merge both lists, ensure uniqueness
+#         valid_f_cols = sorted(set(base_future_cols + dynamic_future_cols))
+
+#         future_covs_ts = full_ts[valid_f_cols] if len(valid_f_cols) else None
+
+#         # ------------------------------------------------------------------
+#         # Train–Validation Split
+#         # ------------------------------------------------------------------
+#         train_target, val_target = target_ts.split_before(split_point)
+
+#         if len(train_target) == 0 or len(val_target) == 0:
+#             logger.warning(
+#                 f"S{store}/I{item}: Empty train or validation split."
+#             )
+#             return None
+
+#         # Past covariates
+#         if past_covs_ts is not None:
+#             train_past, val_past = past_covs_ts.split_before(split_point)
+#         else:
+#             train_past, val_past = None, None
+
+#         # Future covariates
+#         if future_covs_ts is not None:
+#             train_future, val_future = future_covs_ts.split_before(split_point)
+#         else:
+#             train_future, val_future = None, None
+
+#         # ------------------------------------------------------------------
+#         # 6. Logging
+#         # ------------------------------------------------------------------
+#         logger.info(
+#             f"S{store}/I{item}: Data prepared. "
+#             f"Train={len(train_target)}, Val={len(val_target)}, "
+#             f"Past Dim={past_covs_ts.n_components if past_covs_ts else 0}, "
+#             f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}"
+#         )
+
+#         # ------------------------------------------------------------------
+#         # 7. Return time series dictionary
+#         # ------------------------------------------------------------------
+#         return {
+#             "train_target": train_target,
+#             "val_target": val_target,
+#             "train_past": train_past,
+#             "val_past": val_past,
+#             "train_future": train_future,
+#             "val_future": val_future,
+#             "full_past": past_covs_ts,
+#             "full_future": future_covs_ts,
+#         }
+
+#     except Exception as e:
+#         logger.error(
+#             f"store:{store},item:{item},Error preparing train/val data: {e}"
+#         )
+#         logger.error(traceback.format_exc())
+#         return None
 
 
 def prepare_store_item_series(
@@ -736,194 +1104,3 @@ def eval_model_with_covariates(
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
     return metrics_df
-
-
-# def eval_model_with_covariates(
-#     modelType: str,
-#     model: ForecastingModel,
-#     store: int,
-#     item: int,
-#     data_dict: Dict[str, Any],
-#     metrics_df: pd.DataFrame,
-#     no_past_covs: bool = False,
-#     no_future_covs: bool = False,
-# ) -> pd.DataFrame:
-#     """
-#     Evaluate a model handling scaling for targets and covariates independently,
-#     ensuring no data leakage from validation into training via scalers.
-#     """
-
-#     # Which models support which types of covariates
-#     supports_past = modelType in {
-#         "NBEATS",
-#         "TFT",
-#         "TSMIXER",
-#         "BLOCK_RNN",
-#         "TCN",
-#         "TIDE",
-#     }
-#     supports_future = modelType in {
-#         "TFT",
-#         "TSMIXER",
-#         "TIDE",
-#     }
-
-#     try:
-#         train_target = data_dict["train_target"]
-#         val_target = data_dict["val_target"]
-#         forecast_horizon = len(val_target)
-
-#         # --- TARGET SCALER ---
-#         target_scaler = Scaler(RobustScaler())
-#         train_target_scaled = target_scaler.fit_transform(train_target)
-#         val_target_scaled = target_scaler.transform(val_target)
-
-#         # --- PAST COVARIATES SCALER ---
-#         train_past_scaled = None
-#         val_past_scaled = None
-#         past_covs_scaled_full = None
-
-#         if supports_past and data_dict.get("train_past") is not None:
-#             past_scaler = Scaler(RobustScaler())
-
-#             # Fit on training past covariates
-#             train_past_scaled = past_scaler.fit_transform(
-#                 data_dict["train_past"]
-#             )
-
-#             # Transform validation slice if present
-#             if data_dict.get("val_past") is not None:
-#                 val_past_scaled = past_scaler.transform(data_dict["val_past"])
-
-#             # Transform the full past covariate history for prediction
-#             if data_dict.get("full_past") is not None:
-#                 past_covs_scaled_full = past_scaler.transform(
-#                     data_dict["full_past"]
-#                 )
-
-#         # --- FUTURE COVARIATES SCALER ---
-#         future_covs_scaled_full = None
-#         val_future_scaled = None
-#         if (
-#             supports_future
-#             and data_dict.get("full_future") is not None
-#             and data_dict.get("train_future") is not None
-#         ):
-#             future_scaler = Scaler(RobustScaler())
-#             # Fit on train_future only (no leakage)
-#             future_scaler.fit(data_dict["train_future"])
-#             # Transform full history and validation slice
-#             future_covs_scaled_full = future_scaler.transform(
-#                 data_dict["full_future"]
-#             )
-#             if data_dict.get("val_future") is not None:
-#                 val_future_scaled = future_scaler.transform(
-#                     data_dict["val_future"]
-#                 )
-
-#         # --- MODEL FITTING ---
-#         logger.debug(f"Fitting {modelType} S{store}/I{item}...")
-
-#         fit_kwargs: Dict[str, Any] = {
-#             "series": train_target_scaled,
-#             "val_series": val_target_scaled,
-#         }
-
-#         if (
-#             supports_past
-#             and train_past_scaled is not None
-#             and not no_past_covs
-#         ):
-#             fit_kwargs["past_covariates"] = train_past_scaled
-#             if val_past_scaled is not None:
-#                 fit_kwargs["val_past_covariates"] = val_past_scaled
-
-#         if (
-#             supports_future
-#             and future_covs_scaled_full is not None
-#             and not no_future_covs
-#         ):
-#             # Darts uses the history; for validation consistency, pass val slice too
-#             fit_kwargs["future_covariates"] = future_covs_scaled_full
-#             if val_future_scaled is not None:
-#                 fit_kwargs["val_future_covariates"] = val_future_scaled
-
-#         model.fit(**fit_kwargs)
-
-#         # --- FORECASTING ---
-#         logger.debug(
-#             f"Predicting {modelType} S{store}/I{item} (n={forecast_horizon})..."
-#         )
-
-#         predict_kwargs: Dict[str, Any] = {"n": forecast_horizon}
-
-#         # IMPORTANT: for prediction, covariates must extend up to the forecast horizon
-#         if (
-#             supports_past
-#             and past_covs_scaled_full is not None
-#             and not no_past_covs
-#         ):
-#             predict_kwargs["past_covariates"] = past_covs_scaled_full
-
-#         if (
-#             supports_future
-#             and future_covs_scaled_full is not None
-#             and not no_future_covs
-#         ):
-#             predict_kwargs["future_covariates"] = future_covs_scaled_full
-
-#         forecast_scaled = model.predict(**predict_kwargs)
-
-#         # --- 6. INVERSE TRANSFORM & METRICS ---
-#         forecast = target_scaler.inverse_transform(forecast_scaled)
-
-#         metrics = calculate_metrics(train_target, val_target, forecast)
-
-#         new_row_dict = {
-#             "Model": modelType,
-#             "Store": store,
-#             "Item": item,
-#             "RMSSE": metrics["rmsse"],
-#             "MASE": metrics["mase"],
-#             "SMAPE": metrics["smape"],
-#             "MARRE": metrics["marre"],
-#             "RMSE": metrics["rmse"],
-#             "MAE": metrics["mae"],
-#             "OPE": metrics["ope"],
-#         }
-
-#         new_row = pd.DataFrame([new_row_dict])
-
-#         # Downcast floats to save memory
-#         cols_to_downcast = [
-#             c for c in new_row.columns if c not in ["Model", "Store", "Item"]
-#         ]
-#         for col in cols_to_downcast:
-#             new_row[col] = pd.to_numeric(new_row[col], downcast="float")
-
-#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-#         logger.info(
-#             f"FINISHED {modelType} S{store}/I{item}. SMAPE: {metrics['smape']:.4f}"
-#         )
-
-#     except Exception as e:
-#         logger.error(
-#             f"Error fitting/evaluating {modelType} for S{store}/I{item}: {e}"
-#         )
-#         # logger.error(traceback.format_exc())
-#         nan_row_dict = {
-#             "Model": modelType,
-#             "Store": store,
-#             "Item": item,
-#             "RMSSE": np.nan,
-#             "MASE": np.nan,
-#             "SMAPE": np.nan,
-#             "MARRE": np.nan,
-#             "RMSE": np.nan,
-#             "MAE": np.nan,
-#             "OPE": np.nan,
-#         }
-#         new_row = pd.DataFrame([nan_row_dict])
-#         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
-
-#     return metrics_df
