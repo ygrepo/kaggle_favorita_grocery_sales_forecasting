@@ -38,6 +38,7 @@ DROPOUT=0.5
 PATIENCE=10
 NO_PAST_COVS="False"
 NO_FUTURE_COVS="False"
+XL_DESIGN="True"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --patience) PATIENCE="$2"; shift 2 ;;
     --no_past_covs) NO_PAST_COVS="$2"; shift 2 ;;
     --no_future_covs) NO_FUTURE_COVS="$2"; shift 2 ;;
+    --xl_design) XL_DESIGN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -119,6 +121,7 @@ echo "N epochs: $N_EPOCHS" | tee -a "$LOG_FILE"
 echo "N: $N" | tee -a "$LOG_FILE"
 echo "Dropout: $DROPOUT" | tee -a "$LOG_FILE"
 echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
+echo "XL design: $XL_DESIGN" | tee -a "$LOG_FILE"
 echo "No past covs: $NO_PAST_COVS" | tee -a "$LOG_FILE"
 echo "No future covs: $NO_FUTURE_COVS" | tee -a "$LOG_FILE"
 echo "Metrics dir: $METRICS_DIR" | tee -a "$LOG_FILE"
@@ -154,7 +157,8 @@ python "${SCRIPT_DIR}/time_series_covariates.py" \
   --dropout "$DROPOUT" \
   --patience "$PATIENCE" \
   --no_past_covs "$NO_PAST_COVS" \
-  --no_future_covs "$NO_FUTURE_COVS"
+  --no_future_covs "$NO_FUTURE_COVS" \
+  --xl_design "$XL_DESIGN"
 
 EXIT_CODE=${PIPESTATUS[0]}
 

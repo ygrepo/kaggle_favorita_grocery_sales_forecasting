@@ -149,6 +149,7 @@ def process_store_item(
                 torch_kwargs,
                 args.n_epochs,
                 args.dropout,
+                args.xl_design,
             )
 
             logger.info(
@@ -213,6 +214,7 @@ def parse_args():
     parser.add_argument("--n_epochs", type=int, default=15)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--patience", type=int, default=8)
+    parser.add_argument("--xl_design", type=str2bool, default=False)
     parser.add_argument("--no_past_covs", type=str2bool, default=False)
     parser.add_argument("--no_future_covs", type=str2bool, default=False)
     return parser.parse_args()
@@ -232,6 +234,7 @@ def main():
     logger.info(f"Number of workers: {args.num_workers}")
     logger.info(f"Dropout: {args.dropout}")
     logger.info(f"Patience: {args.patience}")
+    logger.info(f"XL design: {args.xl_design}")
     logger.info(f"No past covs: {args.no_past_covs}")
     logger.info(f"No future covs: {args.no_future_covs}")
     logger.info(f"N epochs: {args.n_epochs}")
