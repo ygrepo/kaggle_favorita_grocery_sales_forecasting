@@ -105,14 +105,19 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
 
 def create_model(
     model_type: ModelType,
-    batch_size: int = 64,  # smaller is fine per series
+    batch_size: int = 64,
     torch_kwargs: Optional[Dict[str, Any]] = None,
     n_epochs: int = 300,
-    dropout: float = 0.5,  # strong regularisation
+    dropout: float = 0.5,
 ) -> ForecastingModel:
     """
-    Factory to create a Darts model instance (classical or deep learning)
-    tuned for short, per-series time series.
+    Factory for classical and deep learning models.
+
+    Deep learning configurations are 'medium-sized' and explicitly tuned for:
+      - short per-series data (~200–300 time steps),
+      - up to 300 epochs with early stopping,
+      - strong regularization (dropout + weight decay),
+      - no global parameter sharing (one model per (store, item)).
     """
     if torch_kwargs is None:
         torch_kwargs = {}
@@ -133,73 +138,105 @@ def create_model(
         return KalmanForecaster(dim_x=1, random_state=42)
 
     # =====================================================================
-    # Deep Learning Models (per-series, SMALL)
+    # Deep Learning Models (per-series, medium capacity + strong reg)
     # =====================================================================
 
-    # Shared config
+    # Shared configuration for all DL models
     base_kwargs = dict(
-        input_chunk_length=40,  # a bit more than your 30, still short
-        output_chunk_length=1,
+        input_chunk_length=40,  # ~6 weeks of context for next-day growth
+        output_chunk_length=1,  # 1-step ahead forecasting
         n_epochs=n_epochs,
         batch_size=batch_size,
         random_state=42,
         save_checkpoints=False,
         force_reset=True,
-        optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
+        optimizer_kwargs={
+            "lr": 1e-3,
+            "weight_decay": 1e-4,  # important for per-series overfitting control
+        },
         **torch_kwargs,
     )
 
+    # -------------------------
+    # N-BEATS (medium)
+    # -------------------------
     if model_type == ModelType.NBEATS:
-        # Much smaller than your 10 stacks x 512 width
+        # Medium architecture: smaller than your original (10 stacks x 512),
+        # but not tiny. Good compromise for short per-series data.
         return NBEATSModel(
             generic_architecture=True,
-            num_stacks=2,
+            num_stacks=4,  # medium: more expressiveness than 2, far less than 10
             num_blocks=1,
             num_layers=2,
-            layer_widths=64,
+            layer_widths=128,  # medium width
+            # dropout is supported in newer Darts; if your version does not support it,
+            # you can safely remove this argument.
+            dropout=dropout,
             **base_kwargs,
         )
 
+    # -------------------------
+    # TFT (medium)
+    # -------------------------
     if model_type == ModelType.TFT:
-        # Tiny TFT for per-series data
+        # Medium-size TFT: enough capacity to model covariates + nonlinearity,
+        # but not the huge original configs from papers.
         return TFTModel(
-            hidden_size=16,
-            lstm_layers=1,
+            hidden_size=32,  # medium
+            lstm_layers=1,  # deep stacks are overkill per-series
             dropout=dropout,
-            num_attention_heads=2,
+            num_attention_heads=4,  # medium number of heads
             add_relative_index=True,
             **base_kwargs,
         )
 
+    # -------------------------
+    # TSMixer (medium)
+    # -------------------------
     if model_type == ModelType.TSMIXER:
+        # TSMixer is lightweight; a moderate hidden_size is cheap
+        # and handles multiple covariates well.
         return TSMixerModel(
-            hidden_size=32,
+            hidden_size=64,  # medium
             dropout=dropout,
             **base_kwargs,
         )
 
+    # -------------------------
+    # BlockRNN (medium)
+    # -------------------------
     if model_type == ModelType.BLOCK_RNN:
+        # Modest LSTM capacity; more than tiny, smaller than your 64x2 config.
         return BlockRNNModel(
             model="LSTM",
-            hidden_dim=16,
-            n_rnn_layers=1,
+            hidden_dim=32,  # medium
+            n_rnn_layers=1,  # deeper layers are not justified per-series
             dropout=dropout,
             **base_kwargs,
         )
 
+    # -------------------------
+    # TCN (medium)
+    # -------------------------
     if model_type == ModelType.TCN:
+        # TCN with moderate number of channels; good at local patterns
+        # without exploding parameter count.
         return TCNModel(
             kernel_size=3,
-            num_filters=16,  # down from 64
+            num_filters=32,  # medium (between 16 and 64)
             dilation_base=2,
             weight_norm=True,
             dropout=dropout,
             **base_kwargs,
         )
 
+    # -------------------------
+    # TiDE (medium)
+    # -------------------------
     if model_type == ModelType.TIDE:
+        # TiDE with medium hidden size; handles many covariates robustly.
         return TiDEModel(
-            hidden_size=32,
+            hidden_size=64,  # medium
             dropout=dropout,
             use_layer_norm=True,
             **base_kwargs,
