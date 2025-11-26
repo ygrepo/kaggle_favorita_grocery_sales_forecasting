@@ -121,7 +121,7 @@ def create_model(
         n_epochs: Number of epochs for deep learning models.
         dropout: Dropout rate for deep learning models.
         xl_design: If True, use larger 'XL' deep learning architectures.
-                   If False, use the original (baseline) architectures.
+                   If False, use the medium-sized architectures.
 
     Returns:
         ForecastingModel instance.
@@ -165,7 +165,7 @@ def create_model(
             **torch_kwargs,
         )
     else:
-        # Original configuration (unchanged)
+        # Medium Config
         base_kwargs = dict(
             input_chunk_length=30,
             output_chunk_length=1,
@@ -182,7 +182,7 @@ def create_model(
     # -------------------------
     if model_type == ModelType.NBEATS:
         if xl_design:
-            # XL: larger and deeper than original
+            # XL: larger and deeper than Medium
             return NBEATSModel(
                 generic_architecture=True,
                 num_stacks=16,
@@ -193,7 +193,7 @@ def create_model(
                 **base_kwargs,
             )
         else:
-            # Original design
+            # Medium design
             return NBEATSModel(
                 generic_architecture=True,
                 num_stacks=10,
@@ -208,6 +208,7 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TFT:
         if xl_design:
+            # XL: larger and deeper than Medium
             return TFTModel(
                 hidden_size=128,
                 lstm_layers=2,
@@ -217,7 +218,7 @@ def create_model(
                 **base_kwargs,
             )
         else:
-            # Original design
+            # Medium design
             return TFTModel(
                 hidden_size=64,
                 lstm_layers=1,
@@ -232,13 +233,14 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TSMIXER:
         if xl_design:
+            # XL: larger and deeper than Medium
             return TSMixerModel(
                 hidden_size=128,
                 dropout=dropout,
                 **base_kwargs,
             )
         else:
-            # Original design
+            # Medium design
             return TSMixerModel(
                 hidden_size=64,
                 dropout=dropout,
@@ -250,6 +252,7 @@ def create_model(
     # -------------------------
     if model_type == ModelType.BLOCK_RNN:
         if xl_design:
+            # XL: larger and deeper than Medium
             return BlockRNNModel(
                 model="LSTM",
                 hidden_dim=128,
@@ -258,7 +261,7 @@ def create_model(
                 **base_kwargs,
             )
         else:
-            # Original design
+            # Medium design
             return BlockRNNModel(
                 model="LSTM",
                 hidden_dim=64,
@@ -272,6 +275,7 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TCN:
         if xl_design:
+            # XL: larger and deeper than Medium
             return TCNModel(
                 kernel_size=3,
                 num_filters=128,
@@ -281,7 +285,7 @@ def create_model(
                 **base_kwargs,
             )
         else:
-            # Original design
+            # Medium design
             return TCNModel(
                 kernel_size=3,
                 num_filters=64,
@@ -296,6 +300,7 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TIDE:
         if xl_design:
+            # XL: larger and deeper than Medium
             return TiDEModel(
                 hidden_size=128,
                 dropout=dropout,
@@ -303,7 +308,7 @@ def create_model(
                 **base_kwargs,
             )
         else:
-            # Original design
+            # Medium design
             return TiDEModel(
                 hidden_size=64,
                 dropout=dropout,
@@ -314,402 +319,119 @@ def create_model(
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
-# def create_model(
-#     model_type: ModelType,
-#     batch_size: int = 32,
-#     torch_kwargs: Optional[Dict[str, Any]] = None,
-#     n_epochs: int = 100,
-#     dropout: float = 0.1,
-# ) -> ForecastingModel:
-#     """
-#     Factory to create a Darts model instance (classical or deep learning).
-
-#     Args:
-#         model_type: ModelType enum value
-#         batch_size: Batch size for deep learning models
-#         torch_kwargs: PyTorch/Lightning kwargs for deep learning models
-#         n_epochs: Number of epochs for deep learning models
-#         dropout: Dropout rate for deep learning models
-
-#     Returns:
-#         ForecastingModel instance
-#     """
-#     if torch_kwargs is None:
-#         torch_kwargs = {}
-
-#     # =====================================================================
-#     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
-#     # =====================================================================
-
-#     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
-#         return ExponentialSmoothing()
-
-#     if model_type == ModelType.AUTO_ARIMA:
-#         return AutoARIMA()
-
-#     if model_type == ModelType.THETA:
-#         return Theta(season_mode=SeasonalityMode.ADDITIVE)
-
-#     if model_type == ModelType.KALMAN:
-#         return KalmanForecaster(dim_x=1, random_state=42)
-
-#     # =====================================================================
-#     # Deep Learning Models
-#     # =====================================================================
-
-#     # Base configuration shared by all deep learning models
-#     base_kwargs = dict(
-#         input_chunk_length=30,
-#         output_chunk_length=1,
-#         n_epochs=n_epochs,
-#         batch_size=batch_size,
-#         random_state=42,
-#         save_checkpoints=False,
-#         force_reset=True,
-#         **torch_kwargs,
-#     )
-
-#     if model_type == ModelType.NBEATS:
-#         return NBEATSModel(
-#             generic_architecture=True,
-#             num_stacks=10,
-#             num_blocks=1,
-#             num_layers=4,
-#             layer_widths=512,
-#             **base_kwargs,
-#         )
-
-#     if model_type == ModelType.TFT:
-#         return TFTModel(
-#             hidden_size=64,
-#             lstm_layers=1,
-#             dropout=dropout,
-#             num_attention_heads=4,
-#             add_relative_index=True,
-#             **base_kwargs,
-#         )
-
-#     if model_type == ModelType.TSMIXER:
-#         return TSMixerModel(
-#             hidden_size=64,
-#             dropout=dropout,
-#             **base_kwargs,
-#         )
-
-#     if model_type == ModelType.BLOCK_RNN:
-#         return BlockRNNModel(
-#             model="LSTM",
-#             hidden_dim=64,
-#             n_rnn_layers=2,
-#             dropout=dropout,
-#             **base_kwargs,
-#         )
-
-#     if model_type == ModelType.TCN:
-#         return TCNModel(
-#             kernel_size=3,
-#             num_filters=64,
-#             dilation_base=2,
-#             weight_norm=True,
-#             dropout=dropout,
-#             **base_kwargs,
-#         )
-
-#     if model_type == ModelType.TIDE:
-#         return TiDEModel(
-#             hidden_size=64,
-#             dropout=dropout,
-#             use_layer_norm=True,
-#             **base_kwargs,
-#         )
-
-#     raise ValueError(f"Unsupported model type: {model_type}")
-
-
-# def prepare_store_item_series(
-#     df: pd.DataFrame,
-#     store: int,
-#     item: int,
-#     store_medians_fn: Path,
-#     item_medians_fn: Path,
-#     store_assign_fn: Path,
-#     item_assign_fn: Path,
-# ) -> pd.DataFrame:
-#     """
-#     Memory-safe preparation of the (store, item) time series.
-#     Loads only the cluster-median rows needed for this specific (store, item).
-#     """
-
-#     # ----------------------------------------------------------------------
-#     # Extract base series (already filtered)
-#     # ----------------------------------------------------------------------
-#     mask = (df["store"] == store) & (df["item"] == item)
-#     series_df = df[mask].copy()
-
-#     if series_df.empty:
-#         logger.warning(f"No data for store {store}, item {item}")
-#         return pd.DataFrame()
-
-#     series_df = series_df.sort_values("date")
-#     dates = series_df["date"].unique()
-
-#     # ----------------------------------------------------------------------
-#     # Load cluster assignments only for the current store and item
-#     # ----------------------------------------------------------------------
-#     store_assign = pd.read_csv(store_assign_fn)
-#     item_assign = pd.read_csv(item_assign_fn)
-
-#     store_clusters = (
-#         store_assign.loc[store_assign["store"] == store, "cluster_id"]
-#         .drop_duplicates()
-#         .tolist()
-#     )
-
-#     item_clusters = (
-#         item_assign.loc[item_assign["item"] == item, "cluster_id"]
-#         .drop_duplicates()
-#         .tolist()
-#     )
-
-#     # ----------------------------------------------------------------------
-#     # Load only the necessary cluster median rows
-#     #  This avoids loading giant full-sized tables.
-#     # ----------------------------------------------------------------------
-#     store_medians = pd.read_parquet(
-#         store_medians_fn,
-#         filters=[
-#             ("store_cluster_id", "in", store_clusters),
-#             ("date", "in", dates.tolist()),
-#         ],
-#         columns=["date", "store_cluster_id", "store_cluster_median"],
-#     )
-
-#     item_medians = pd.read_parquet(
-#         item_medians_fn,
-#         filters=[
-#             ("item_cluster_id", "in", item_clusters),
-#             ("date", "in", dates.tolist()),
-#         ],
-#         columns=["date", "item_cluster_id", "item_cluster_median"],
-#     )
-
-#     # ----------------------------------------------------------------------
-#     # Pivot cluster medians wide (1 row per date)
-#     # ----------------------------------------------------------------------
-#     if not store_medians.empty:
-#         store_medians_wide = (
-#             store_medians.pivot(
-#                 index="date",
-#                 columns="store_cluster_id",
-#                 values="store_cluster_median",
-#             )
-#             .add_prefix("store_cluster_median_")
-#             .reset_index()
-#         )
-#         series_df = series_df.merge(store_medians_wide, on="date", how="left")
-
-#     if not item_medians.empty:
-#         item_medians_wide = (
-#             item_medians.pivot(
-#                 index="date",
-#                 columns="item_cluster_id",
-#                 values="item_cluster_median",
-#             )
-#             .add_prefix("item_cluster_median_")
-#             .reset_index()
-#         )
-#         series_df = series_df.merge(item_medians_wide, on="date", how="left")
-
-#     # ----------------------------------------------------------------------
-#     # Select covariates
-#     # ----------------------------------------------------------------------
-#     # base cov lists
-#     base_future = [c for c in FUTURE_COV_COLS if c in series_df.columns]
-#     base_past = [c for c in PAST_COV_COLS if c in series_df.columns]
-
-#     # dynamically detect cluster future covariates
-#     cluster_cols = [
-#         c
-#         for c in series_df.columns
-#         if c.startswith("store_cluster_median_")
-#         or c.startswith("item_cluster_median_")
-#     ]
-
-#     available_future = sorted(set(base_future + cluster_cols))
-
-#     cols_to_keep = ["date", TARGET_COL] + available_future + base_past
-#     ts_df = series_df[cols_to_keep].copy()
-
-#     # (rest of your function unchanged)
-#     for col in ts_df.columns:
-#         if col != "date":
-#             ts_df[col] = pd.to_numeric(ts_df[col], errors="coerce")
-
-#     ts_df = ts_df.set_index("date")
-#     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
-
-#     cov_cols = available_future + base_past
-#     if cov_cols:
-#         ts_df[cov_cols] = ts_df[cov_cols].fillna(0)
-
-#     return ts_df
-
-
-# def get_train_val_data_with_covariates(
-#     ts_df: pd.DataFrame,
-#     store: int,
-#     item: int,
-#     split_point: float,
-#     min_train_data_points: int,
-# ) -> Optional[Dict[str, Any]]:
-#     """
-#     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
-#     and splits them consistently into train/validation sets.
-
-#     Future covariates are now determined dynamically:
-#     - Calendar covariates listed in FUTURE_COV_COLS (static)
-#     - Cluster medians (store_cluster_median_*, item_cluster_median_*)
-#     - PARAFAC latent factors (parafac_*), or any other *_covariate_* prefix.
-#     """
-
-#     try:
-#         # ------------------------------------------------------------------
-#         # Basic validation of target availability
-#         # ------------------------------------------------------------------
-#         total_len = len(ts_df)
-#         train_len_approx = int(total_len * split_point)
-
-#         train_df_subset = ts_df.iloc[:train_len_approx]
-#         non_missing_target = train_df_subset[TARGET_COL].count()
-
-#         if non_missing_target < min_train_data_points:
-#             logger.warning(
-#                 f"S{store}/I{item}: Insufficient training data "
-#                 f"({non_missing_target} < {min_train_data_points}). Skipping."
-#             )
-#             return None
-
-#         train_std = train_df_subset[TARGET_COL].std()
-#         if train_std == 0 or np.isnan(train_std):
-#             logger.warning(
-#                 f"S{store}/I{item}: Target has zero or NaN variance. Skipping."
-#             )
-#             return None
-
-#         # ------------------------------------------------------------------
-#         # Build full TimeSeries from DataFrame
-#         # ------------------------------------------------------------------
-#         full_ts = TimeSeries.from_dataframe(
-#             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
-#         )
-
-#         # Target
-#         target_ts = full_ts[TARGET_COL]
-
-#         # ------------------------------------------------------------------
-#         # Past covariates (static list)
-#         # ------------------------------------------------------------------
-#         valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
-#         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
-
-#         # ------------------------------------------------------------------
-#         # Dynamic detection of future covariates
-#         # ------------------------------------------------------------------
-
-#         # Static calendar-based covariates
-#         base_future_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
-
-#         # Dynamic cluster / PARAFAC covariates
-#         dynamic_future_cols = [
-#             c
-#             for c in ts_df.columns
-#             if (
-#                 c.startswith("store_cluster_median_")
-#                 or c.startswith("item_cluster_median_")
-#             )
-#         ]
-
-#         # Merge both lists, ensure uniqueness
-#         valid_f_cols = sorted(set(base_future_cols + dynamic_future_cols))
-
-#         future_covs_ts = full_ts[valid_f_cols] if len(valid_f_cols) else None
-
-#         # ------------------------------------------------------------------
-#         # Train–Validation Split
-#         # ------------------------------------------------------------------
-#         train_target, val_target = target_ts.split_before(split_point)
-
-#         if len(train_target) == 0 or len(val_target) == 0:
-#             logger.warning(
-#                 f"S{store}/I{item}: Empty train or validation split."
-#             )
-#             return None
-
-#         # Past covariates
-#         if past_covs_ts is not None:
-#             train_past, val_past = past_covs_ts.split_before(split_point)
-#         else:
-#             train_past, val_past = None, None
-
-#         # Future covariates
-#         if future_covs_ts is not None:
-#             train_future, val_future = future_covs_ts.split_before(split_point)
-#         else:
-#             train_future, val_future = None, None
-
-#         # ------------------------------------------------------------------
-#         # 6. Logging
-#         # ------------------------------------------------------------------
-#         logger.info(
-#             f"S{store}/I{item}: Data prepared. "
-#             f"Train={len(train_target)}, Val={len(val_target)}, "
-#             f"Past Dim={past_covs_ts.n_components if past_covs_ts else 0}, "
-#             f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}"
-#         )
-
-#         # ------------------------------------------------------------------
-#         # 7. Return time series dictionary
-#         # ------------------------------------------------------------------
-#         return {
-#             "train_target": train_target,
-#             "val_target": val_target,
-#             "train_past": train_past,
-#             "val_past": val_past,
-#             "train_future": train_future,
-#             "val_future": val_future,
-#             "full_past": past_covs_ts,
-#             "full_future": future_covs_ts,
-#         }
-
-#     except Exception as e:
-#         logger.error(
-#             f"store:{store},item:{item},Error preparing train/val data: {e}"
-#         )
-#         logger.error(traceback.format_exc())
-#         return None
-
-
 def prepare_store_item_series(
     df: pd.DataFrame,
     store: int,
     item: int,
+    store_medians_fn: Path,
+    item_medians_fn: Path,
+    store_assign_fn: Path,
+    item_assign_fn: Path,
 ) -> pd.DataFrame:
     """
-    Prepare time series DataFrame including target and all available covariates
-    for a specific store-item combination.
+    Memory-safe preparation of the (store, item) time series.
+    Loads only the cluster-median rows needed for this specific (store, item).
     """
 
+    # ----------------------------------------------------------------------
+    # Extract base series (already filtered)
+    # ----------------------------------------------------------------------
     mask = (df["store"] == store) & (df["item"] == item)
     series_df = df[mask].copy()
 
-    if len(series_df) == 0:
+    if series_df.empty:
         logger.warning(f"No data for store {store}, item {item}")
         return pd.DataFrame()
 
     series_df = series_df.sort_values("date")
+    dates = series_df["date"].unique()
+
+    # ----------------------------------------------------------------------
+    # Load cluster assignments only for the current store and item
+    # ----------------------------------------------------------------------
+    if store_assign_fn is not None:
+        store_assign = pd.read_csv(store_assign_fn)
+        store_clusters = (
+            store_assign.loc[store_assign["store"] == store, "cluster_id"]
+            .drop_duplicates()
+            .tolist()
+        )
+
+    if item_assign_fn is not None:
+        item_assign = pd.read_csv(item_assign_fn)
+        item_clusters = (
+            item_assign.loc[item_assign["item"] == item, "cluster_id"]
+            .drop_duplicates()
+            .tolist()
+        )
+
+    # ----------------------------------------------------------------------
+    # Load only the necessary cluster median rows
+    #  This avoids loading giant full-sized tables.
+    # ----------------------------------------------------------------------
+    if store_medians_fn is not None:
+        store_medians = pd.read_parquet(
+            store_medians_fn,
+            filters=[
+                ("store_cluster_id", "in", store_clusters),
+                ("date", "in", dates.tolist()),
+            ],
+            columns=["date", "store_cluster_id", "store_cluster_median"],
+        )
+
+    if item_medians_fn is not None:
+        item_medians = pd.read_parquet(
+            item_medians_fn,
+            filters=[
+                ("item_cluster_id", "in", item_clusters),
+                ("date", "in", dates.tolist()),
+            ],
+            columns=["date", "item_cluster_id", "item_cluster_median"],
+        )
+
+    # ----------------------------------------------------------------------
+    # Pivot cluster medians wide (1 row per date)
+    # ----------------------------------------------------------------------
+    if store_medians_fn is not None and not store_medians.empty:
+        store_medians_wide = (
+            store_medians.pivot(
+                index="date",
+                columns="store_cluster_id",
+                values="store_cluster_median",
+            )
+            .add_prefix("store_cluster_median_")
+            .reset_index()
+        )
+        series_df = series_df.merge(store_medians_wide, on="date", how="left")
+
+    if item_medians_fn is not None and not item_medians.empty:
+        item_medians_wide = (
+            item_medians.pivot(
+                index="date",
+                columns="item_cluster_id",
+                values="item_cluster_median",
+            )
+            .add_prefix("item_cluster_median_")
+            .reset_index()
+        )
+        series_df = series_df.merge(item_medians_wide, on="date", how="left")
+
+    # ----------------------------------------------------------------------
+    # Select covariates
+    # ----------------------------------------------------------------------
 
     # Determine which requested covariate columns actually exist in the data
     available_future = [c for c in FUTURE_COV_COLS if c in series_df.columns]
+    # dynamically detect cluster future covariates
+    cluster_cols = [
+        c
+        for c in series_df.columns
+        if c.startswith("store_cluster_median_")
+        or c.startswith("item_cluster_median_")
+    ]
+
+    available_future = sorted(set(available_future + cluster_cols))
+
     available_past = [c for c in PAST_COV_COLS if c in series_df.columns]
 
     cols_to_keep = ["date", TARGET_COL] + available_future + available_past
@@ -725,14 +447,58 @@ def prepare_store_item_series(
     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
 
     # Handle NaNs:
-    # 1. Target: Darts handles internal NaNs reasonably well, but leading/trailing might be issues.
-    # 2. Covariates: Must be filled. A safe default for standardized features is 0 (mean).
     cov_cols = available_future + available_past
     if cov_cols:
         # Fill covariate NaNs with 0 (assuming they will be robustly scaled later, 0 is reasonable center)
         ts_df[cov_cols] = ts_df[cov_cols].fillna(0)
 
     return ts_df
+
+
+# def prepare_store_item_series(
+#     df: pd.DataFrame,
+#     store: int,
+#     item: int,
+# ) -> pd.DataFrame:
+#     """
+#     Prepare time series DataFrame including target and all available covariates
+#     for a specific store-item combination.
+#     """
+
+#     mask = (df["store"] == store) & (df["item"] == item)
+#     series_df = df[mask].copy()
+
+#     if len(series_df) == 0:
+#         logger.warning(f"No data for store {store}, item {item}")
+#         return pd.DataFrame()
+
+#     series_df = series_df.sort_values("date")
+
+#     # Determine which requested covariate columns actually exist in the data
+#     available_future = [c for c in FUTURE_COV_COLS if c in series_df.columns]
+#     available_past = [c for c in PAST_COV_COLS if c in series_df.columns]
+
+#     cols_to_keep = ["date", TARGET_COL] + available_future + available_past
+
+#     ts_df = series_df[cols_to_keep].copy()
+
+#     # Ensure numeric types
+#     for col in ts_df.columns:
+#         if col != "date":
+#             ts_df[col] = pd.to_numeric(ts_df[col], errors="coerce")
+
+#     ts_df = ts_df.set_index("date")
+#     ts_df = ts_df.replace([np.inf, -np.inf], np.nan)
+
+#     # Handle NaNs:
+#     # 1. Target: Darts handles internal NaNs reasonably well, but leading/trailing might be issues.
+#     # 2. Covariates: Must be filled. A safe default for standardized features is 0 (mean).
+#     cov_cols = available_future + available_past
+#     if cov_cols:
+#         # Fill covariate NaNs with 0 (assuming they will be robustly scaled later, 0 is reasonable center)
+#         ts_df[cov_cols] = ts_df[cov_cols].fillna(0)
+
+#     return ts_df
 
 
 def get_train_val_data_with_covariates(
@@ -745,9 +511,17 @@ def get_train_val_data_with_covariates(
     """
     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
     and splits them consistently into train/validation sets.
+
+    Future covariates are now determined dynamically:
+    - Calendar covariates listed in FUTURE_COV_COLS (static)
+    - Cluster medians (store_cluster_median_*, item_cluster_median_*)
+    - PARAFAC latent factors (parafac_*), or any other *_covariate_* prefix.
     """
+
     try:
-        # Check minimum data requirements on the raw dataframe first
+        # ------------------------------------------------------------------
+        # Basic validation of target availability
+        # ------------------------------------------------------------------
         total_len = len(ts_df)
         train_len_approx = int(total_len * split_point)
 
@@ -756,18 +530,21 @@ def get_train_val_data_with_covariates(
 
         if non_missing_target < min_train_data_points:
             logger.warning(
-                f"S{store}/I{item}: Insufficient training data ({non_missing_target} < {min_train_data_points}). Skipping."
+                f"S{store}/I{item}: Insufficient training data "
+                f"({non_missing_target} < {min_train_data_points}). Skipping."
             )
             return None
 
         train_std = train_df_subset[TARGET_COL].std()
         if train_std == 0 or np.isnan(train_std):
             logger.warning(
-                f"S{store}/I{item}: Target has zero or NaN variance in training set. Skipping."
+                f"S{store}/I{item}: Target has zero or NaN variance. Skipping."
             )
             return None
 
-        # --- Create Darts TimeSeries ---
+        # ------------------------------------------------------------------
+        # Build full TimeSeries from DataFrame
+        # ------------------------------------------------------------------
         full_ts = TimeSeries.from_dataframe(
             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
         )
@@ -775,40 +552,70 @@ def get_train_val_data_with_covariates(
         # Target
         target_ts = full_ts[TARGET_COL]
 
-        # Past covariates
+        # ------------------------------------------------------------------
+        # Past covariates (static list)
+        # ------------------------------------------------------------------
         valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
 
-        # Future covariates
-        valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
-        future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
+        # ------------------------------------------------------------------
+        # Dynamic detection of future covariates
+        # ------------------------------------------------------------------
 
-        # --- Split target ---
+        # Static calendar-based covariates
+        base_future_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+
+        # Dynamic cluster / PARAFAC covariates
+        dynamic_future_cols = [
+            c
+            for c in ts_df.columns
+            if (
+                c.startswith("store_cluster_median_")
+                or c.startswith("item_cluster_median_")
+            )
+        ]
+
+        # Merge both lists, ensure uniqueness
+        valid_f_cols = sorted(set(base_future_cols + dynamic_future_cols))
+
+        future_covs_ts = full_ts[valid_f_cols] if len(valid_f_cols) else None
+
+        # ------------------------------------------------------------------
+        # Train–Validation Split
+        # ------------------------------------------------------------------
         train_target, val_target = target_ts.split_before(split_point)
 
-        if len(val_target) == 0 or len(train_target) == 0:
+        if len(train_target) == 0 or len(val_target) == 0:
             logger.warning(
-                f"S{store}/I{item}: Data split resulted in empty train or validation set."
+                f"S{store}/I{item}: Empty train or validation split."
             )
             return None
 
-        # --- Split covariates consistently ---
-        train_past, val_past = (None, None)
+        # Past covariates
         if past_covs_ts is not None:
             train_past, val_past = past_covs_ts.split_before(split_point)
+        else:
+            train_past, val_past = None, None
 
-        train_future, val_future = (None, None)
+        # Future covariates
         if future_covs_ts is not None:
             train_future, val_future = future_covs_ts.split_before(split_point)
+        else:
+            train_future, val_future = None, None
 
+        # ------------------------------------------------------------------
+        # 6. Logging
+        # ------------------------------------------------------------------
         logger.info(
-            f"S{store}/I{item}: Data prepared. Train len: {len(train_target)}, Val len: {len(val_target)}"
+            f"S{store}/I{item}: Data prepared. "
+            f"Train={len(train_target)}, Val={len(val_target)}, "
+            f"Past Dim={past_covs_ts.n_components if past_covs_ts else 0}, "
+            f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}"
         )
-        if past_covs_ts is not None:
-            logger.debug(f"Past covs dim: {past_covs_ts.n_components}")
-        if future_covs_ts is not None:
-            logger.debug(f"Future covs dim: {future_covs_ts.n_components}")
 
+        # ------------------------------------------------------------------
+        # 7. Return time series dictionary
+        # ------------------------------------------------------------------
         return {
             "train_target": train_target,
             "val_target": val_target,
@@ -826,6 +633,99 @@ def get_train_val_data_with_covariates(
         )
         logger.error(traceback.format_exc())
         return None
+
+
+# def get_train_val_data_with_covariates(
+#     ts_df: pd.DataFrame,
+#     store: int,
+#     item: int,
+#     split_point: float,
+#     min_train_data_points: int,
+# ) -> Optional[Dict[str, Any]]:
+#     """
+#     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
+#     and splits them consistently into train/validation sets.
+#     """
+#     try:
+#         # Check minimum data requirements on the raw dataframe first
+#         total_len = len(ts_df)
+#         train_len_approx = int(total_len * split_point)
+
+#         train_df_subset = ts_df.iloc[:train_len_approx]
+#         non_missing_target = train_df_subset[TARGET_COL].count()
+
+#         if non_missing_target < min_train_data_points:
+#             logger.warning(
+#                 f"S{store}/I{item}: Insufficient training data ({non_missing_target} < {min_train_data_points}). Skipping."
+#             )
+#             return None
+
+#         train_std = train_df_subset[TARGET_COL].std()
+#         if train_std == 0 or np.isnan(train_std):
+#             logger.warning(
+#                 f"S{store}/I{item}: Target has zero or NaN variance in training set. Skipping."
+#             )
+#             return None
+
+#         # --- Create Darts TimeSeries ---
+#         full_ts = TimeSeries.from_dataframe(
+#             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
+#         )
+
+#         # Target
+#         target_ts = full_ts[TARGET_COL]
+
+#         # Past covariates
+#         valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
+#         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
+
+#         # Future covariates
+#         valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+#         future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
+
+#         # --- Split target ---
+#         train_target, val_target = target_ts.split_before(split_point)
+
+#         if len(val_target) == 0 or len(train_target) == 0:
+#             logger.warning(
+#                 f"S{store}/I{item}: Data split resulted in empty train or validation set."
+#             )
+#             return None
+
+#         # --- Split covariates consistently ---
+#         train_past, val_past = (None, None)
+#         if past_covs_ts is not None:
+#             train_past, val_past = past_covs_ts.split_before(split_point)
+
+#         train_future, val_future = (None, None)
+#         if future_covs_ts is not None:
+#             train_future, val_future = future_covs_ts.split_before(split_point)
+
+#         logger.info(
+#             f"S{store}/I{item}: Data prepared. Train len: {len(train_target)}, Val len: {len(val_target)}"
+#         )
+#         if past_covs_ts is not None:
+#             logger.debug(f"Past covs dim: {past_covs_ts.n_components}")
+#         if future_covs_ts is not None:
+#             logger.debug(f"Future covs dim: {future_covs_ts.n_components}")
+
+#         return {
+#             "train_target": train_target,
+#             "val_target": val_target,
+#             "train_past": train_past,
+#             "val_past": val_past,
+#             "train_future": train_future,
+#             "val_future": val_future,
+#             "full_past": past_covs_ts,
+#             "full_future": future_covs_ts,
+#         }
+
+#     except Exception as e:
+#         logger.error(
+#             f"store:{store},item:{item},Error preparing train/val data: {e}"
+#         )
+#         logger.error(traceback.format_exc())
+#         return None
 
 
 def calculate_rmsse(

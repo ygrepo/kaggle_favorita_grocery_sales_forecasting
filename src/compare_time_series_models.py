@@ -6,7 +6,7 @@ paths = {
         "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_ml_metrics.csv"
     ),
     "dl_no_covs": Path(
-        "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_dl_no_covs_metrics.csv"
+        "output/metrics/20251125_2013_2014_store_2000_item_cyc_features_dl_no_covs_metrics.csv"
     ),
     "dl_past": Path(
         "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_dl_past_covs_metrics.csv"
@@ -31,7 +31,7 @@ comparison_df.index.name = "Setting"
 comparison_df = comparison_df.reset_index()
 
 # Save to CSV
-output_path = Path("../output/metrics/compare_time_series_models.csv")
+output_path = Path("../output/metrics/20251125_compare_time_series_models.csv")
 output_path.parent.mkdir(parents=True, exist_ok=True)
 comparison_df.to_csv(output_path, index=False)
 

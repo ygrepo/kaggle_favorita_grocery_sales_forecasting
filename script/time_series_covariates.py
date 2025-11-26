@@ -102,7 +102,15 @@ def process_store_item(
     """Train ALL requested models for a single store-item pair with covariates."""
     try:
         # Prepare DataFrame with target and all covariates
-        ts_df = prepare_store_item_series(df, store, item)
+        ts_df = prepare_store_item_series(
+            df,
+            store,
+            item,
+            args.store_medians_fn,
+            args.item_medians_fn,
+            args.store_assign_fn,
+            args.item_assign_fn,
+        )
         if ts_df.empty:
             return metrics_df
 
@@ -188,6 +196,10 @@ def parse_args():
     )
 
     parser.add_argument("--data_fn", type=Path, default="")
+    parser.add_argument("--store_medians_fn", type=Path, default=None)
+    parser.add_argument("--item_medians_fn", type=Path, default=None)
+    parser.add_argument("--store_assign_fn", type=Path, default=None)
+    parser.add_argument("--item_assign_fn", type=Path, default=None)
     parser.add_argument("--model_dir", type=Path, default="")
     parser.add_argument(
         "--models",
@@ -242,6 +254,10 @@ def main():
     logger.info(f"Min train data points: {args.min_train_data_points}")
     logger.info(f"Limit to first N combinations: {args.N}")
     logger.info(f"Data fn: {args.data_fn}")
+    logger.info(f"Store medians fn: {args.store_medians_fn}")
+    logger.info(f"Item medians fn: {args.item_medians_fn}")
+    logger.info(f"Store assign fn: {args.store_assign_fn}")
+    logger.info(f"Item assign fn: {args.item_assign_fn}")
     logger.info(f"Model dir: {args.model_dir}")
     logger.info(f"Metrics fn: {args.metrics_fn}")
     logger.info(f"Log fn: {args.log_fn}")

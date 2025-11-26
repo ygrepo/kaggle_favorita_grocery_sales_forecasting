@@ -16,6 +16,11 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parquet"
+STORE_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
+STORE_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_store_assignments.csv"
+ITEM_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
+ITEM_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_item_assignments.csv"
+
 DATE=$(date +"%Y%m%d")
 
 MODEL_DIR="${PROJECT_ROOT}/output/models"
@@ -49,6 +54,10 @@ LOG_LEVEL="DEBUG"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data_fn) DATA_FN="$2"; shift 2 ;;
+    --store_median_fn) STORE_MEDIAN_FN="$2"; shift 2 ;;
+    --store_assign_fn) STORE_ASSIGN_FN="$2"; shift 2 ;;
+    --item_median_fn) ITEM_MEDIAN_FN="$2"; shift 2 ;;
+    --item_assign_fn) ITEM_ASSIGN_FN="$2"; shift 2 ;;
     --model_dir) MODEL_DIR="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
     --metrics_fn) METRICS_FN="$2"; shift 2 ;;
@@ -114,6 +123,10 @@ echo "Project root: $PROJECT_ROOT" | tee -a "$LOG_FILE"
 echo "Logging to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "Log level: $LOG_LEVEL" | tee -a "$LOG_FILE"
 echo "Data fn: $DATA_FN" | tee -a "$LOG_FILE"
+echo "Store median fn: $STORE_MEDIAN_FN" | tee -a "$LOG_FILE"
+echo "Store assign fn: $STORE_ASSIGN_FN" | tee -a "$LOG_FILE"
+echo "Item median fn: $ITEM_MEDIAN_FN" | tee -a "$LOG_FILE"
+echo "Item assign fn: $ITEM_ASSIGN_FN" | tee -a "$LOG_FILE"
 echo "Models: $MODELS" | tee -a "$LOG_FILE"
 echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Model dir (parent): $MODEL_DIR" | tee -a "$LOG_FILE"
@@ -143,6 +156,10 @@ set +e  # allow error handling below
 
 python "${SCRIPT_DIR}/time_series_covariates.py" \
   --data_fn "$DATA_FN" \
+  --store_medians_fn "$STORE_MEDIAN_FN" \
+  --store_assign_fn "$STORE_ASSIGN_FN" \
+  --item_medians_fn "$ITEM_MEDIAN_FN" \
+  --item_assign_fn "$ITEM_ASSIGN_FN" \
   --model_dir "$MODEL_DIR" \
   --models "$MODELS" \
   --metrics_fn "$METRICS_FN" \
