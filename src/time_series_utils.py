@@ -398,7 +398,7 @@ def prepare_store_item_series(
             store_medians.pivot(
                 index="date",
                 columns="store_cluster_id",
-                values="store_cluster_median",
+                values="store_median",
             )
             .add_prefix("store_cluster_median_")
             .reset_index()
@@ -410,7 +410,7 @@ def prepare_store_item_series(
             item_medians.pivot(
                 index="date",
                 columns="item_cluster_id",
-                values="item_cluster_median",
+                values="item_median",
             )
             .add_prefix("item_cluster_median_")
             .reset_index()
