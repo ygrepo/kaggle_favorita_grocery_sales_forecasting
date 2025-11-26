@@ -377,7 +377,7 @@ def prepare_store_item_series(
                 ("store_cluster_id", "in", store_clusters),
                 ("date", "in", dates.tolist()),
             ],
-            columns=["date", "store_cluster_id", "store_cluster_median"],
+            columns=["date", "store_cluster_id", "store_median"],
         )
 
     if item_medians_fn is not None:
@@ -387,7 +387,7 @@ def prepare_store_item_series(
                 ("item_cluster_id", "in", item_clusters),
                 ("date", "in", dates.tolist()),
             ],
-            columns=["date", "item_cluster_id", "item_cluster_median"],
+            columns=["date", "item_cluster_id", "item_median"],
         )
 
     # ----------------------------------------------------------------------
