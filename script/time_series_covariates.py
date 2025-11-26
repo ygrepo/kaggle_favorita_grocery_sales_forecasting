@@ -20,6 +20,7 @@ from darts.utils.callbacks import TFMProgressBar
 import torch
 from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
 from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.loggers import TensorBoardLogger
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -51,7 +52,7 @@ def generate_torch_kwargs(
     """Return trainer kwargs + torch_metrics for a specific GPU."""
     # Increase patience slightly as models with covariates might take longer to converge
     early_stopper = EarlyStopping(
-        monitor="train_smape",
+        monitor="val_smape",
         min_delta=0.001,
         patience=patience,
         verbose=True,
@@ -74,15 +75,31 @@ def generate_torch_kwargs(
         {"smape": SymmetricMeanAbsolutePercentageError()}
     )
 
-    return {
+    torch_kwargs = {
         "pl_trainer_kwargs": {
             "accelerator": accelerator,
             "devices": devices,
-            "callbacks": callbacks,
+            "callbacks": [
+                early_stopper,
+                TFMProgressBar(enable_train_bar_only=True),
+            ],
             "default_root_dir": str(working_dir),
+            # optionally:
+            "logger": TensorBoardLogger(save_dir=str(working_dir), name="tft"),
         },
         "torch_metrics": metrics,
     }
+    return torch_kwargs
+
+    # return {
+    #     "pl_trainer_kwargs": {
+    #         "accelerator": accelerator,
+    #         "devices": devices,
+    #         "callbacks": callbacks,
+    #         "default_root_dir": str(working_dir),
+    #     },
+    #     "torch_metrics": metrics,
+    # }
 
 
 # ---------------------------------------------------------------------
