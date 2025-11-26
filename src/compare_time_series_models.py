@@ -6,8 +6,8 @@ paths = {
         "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_ml_metrics.csv"
     ),
     "dl_no_covs": Path(
-        "output/metrics/20251126_2013_2014_store_2000_item_cyc_features_TFT_no_covs_metrics.csv"
-        #        "output/metrics/20251125_2013_2014_store_2000_item_cyc_features_dl_no_covs_metrics.csv"
+        # "output/metrics/20251126_2013_2014_store_2000_item_cyc_features_TFT_no_covs_metrics.csv"
+        "output/metrics/20251125_2013_2014_store_2000_item_cyc_features_dl_no_covs_metrics.csv"
     ),
     "dl_past": Path(
         #        "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_dl_past_covs_metrics.csv"
@@ -18,17 +18,15 @@ paths = {
         "output/metrics/20251126_2013_2014_store_2000_item_cyc_features_TFT_future_covs_metrics.csv"
     ),
     "dl_past_future": Path(
-        # "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_dl_past_future_covs_metrics.csv"
-        "output/metrics/20251126_2013_2014_store_2000_item_cyc_features_TFT_past_future_covs_metrics.csv"
+        "output/metrics/20251124_2013_2014_store_2000_item_cyc_features_dl_past_future_covs_metrics.csv"
+        # "output/metrics/20251126_2013_2014_store_2000_item_cyc_features_TFT_past_future_covs_metrics.csv"
     ),
 }
 
 dfs = {k: pd.read_csv(v) for k, v in paths.items()}
 
-df = dfs["dl_no_covs"]
-print(df.head())
-print(df.query("Model == 'TFT'").head())
 dfs["dl_no_covs"] = dfs["dl_no_covs"].query("Model == 'TFT'")
+dfs["dl_past_future"] = dfs["dl_past_future"].query("Model == 'TFT'")
 
 # Compute mean metrics per setting
 metrics = ["RMSSE", "SMAPE", "MARRE"]
