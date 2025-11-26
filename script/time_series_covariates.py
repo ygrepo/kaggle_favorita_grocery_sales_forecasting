@@ -53,17 +53,12 @@ def generate_torch_kwargs(
     """Return trainer kwargs + torch_metrics for a specific GPU."""
     # Increase patience slightly as models with covariates might take longer to converge
     early_stopper = EarlyStopping(
-        monitor="val_smape",
+        monitor="val_loss",
         min_delta=0.001,
         patience=patience,
         verbose=True,
         mode="min",
     )
-    callbacks = [
-        early_stopper,
-        TFMProgressBar(enable_train_bar_only=True),
-    ]
-
     if gpu_id is not None and torch.cuda.is_available():
         accelerator = "gpu"
         devices = [gpu_id]
