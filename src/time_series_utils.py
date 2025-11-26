@@ -35,6 +35,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from src.utils import (
     get_logger,
+    read_csv_or_parquet,
 )
 
 logger = get_logger(__name__)
@@ -350,7 +351,7 @@ def prepare_store_item_series(
     # Load cluster assignments only for the current store and item
     # ----------------------------------------------------------------------
     if store_assign_fn is not None:
-        store_assign = pd.read_csv(store_assign_fn)
+        store_assign = read_csv_or_parquet(store_assign_fn)
         store_clusters = (
             store_assign.loc[store_assign["store"] == store, "cluster_id"]
             .drop_duplicates()
@@ -358,7 +359,7 @@ def prepare_store_item_series(
         )
 
     if item_assign_fn is not None:
-        item_assign = pd.read_csv(item_assign_fn)
+        item_assign = read_csv_or_parquet(item_assign_fn)
         item_clusters = (
             item_assign.loc[item_assign["item"] == item, "cluster_id"]
             .drop_duplicates()
