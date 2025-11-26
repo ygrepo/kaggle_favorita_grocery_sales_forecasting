@@ -21,6 +21,7 @@ import torch
 from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning import seed_everything
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -90,16 +91,6 @@ def generate_torch_kwargs(
         "torch_metrics": metrics,
     }
     return torch_kwargs
-
-    # return {
-    #     "pl_trainer_kwargs": {
-    #         "accelerator": accelerator,
-    #         "devices": devices,
-    #         "callbacks": callbacks,
-    #         "default_root_dir": str(working_dir),
-    #     },
-    #     "torch_metrics": metrics,
-    # }
 
 
 # ---------------------------------------------------------------------
@@ -246,11 +237,15 @@ def parse_args():
     parser.add_argument("--xl_design", type=str2bool, default=False)
     parser.add_argument("--no_past_covs", type=str2bool, default=False)
     parser.add_argument("--no_future_covs", type=str2bool, default=False)
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for reproducibility"
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    seed_everything(args.seed)
 
     # Parse model list
     model_types = parse_models_arg(args.models)
