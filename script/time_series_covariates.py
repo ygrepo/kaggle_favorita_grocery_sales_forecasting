@@ -53,7 +53,7 @@ def generate_torch_kwargs(
     """Return trainer kwargs + torch_metrics for a specific GPU."""
     # Increase patience slightly as models with covariates might take longer to converge
     early_stopper = EarlyStopping(
-        monitor="val_loss",
+        monitor="val_smape",
         min_delta=0.001,
         patience=patience,
         verbose=True,

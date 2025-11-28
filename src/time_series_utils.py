@@ -423,6 +423,7 @@ def prepare_store_item_series(
 
     # Determine which requested covariate columns actually exist in the data
     available_future = [c for c in FUTURE_COV_COLS if c in series_df.columns]
+
     # dynamically detect cluster future covariates
     cluster_cols = [
         c
@@ -431,9 +432,9 @@ def prepare_store_item_series(
         or c.startswith("item_cluster_median_")
     ]
 
-    available_future = sorted(set(available_future + cluster_cols))
-
-    available_past = [c for c in PAST_COV_COLS if c in series_df.columns]
+    available_past = [
+        c for c in PAST_COV_COLS if c in series_df.columns
+    ] + cluster_cols
 
     cols_to_keep = ["date", TARGET_COL] + available_future + available_past
 
@@ -508,32 +509,25 @@ def get_train_val_data_with_covariates(
         target_ts = full_ts[TARGET_COL]
 
         # ------------------------------------------------------------------
-        # Past covariates (static list)
+        # Past covariates: rolling/ewm + cluster medians (observed)
         # ------------------------------------------------------------------
-        valid_p_cols = [c for c in PAST_COV_COLS if c in ts_df.columns]
+        cluster_cols = [
+            c
+            for c in ts_df.columns
+            if c.startswith("store_cluster_median_")
+            or c.startswith("item_cluster_median_")
+        ]
+
+        valid_p_cols = [
+            c for c in PAST_COV_COLS if c in ts_df.columns
+        ] + cluster_cols
         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
 
         # ------------------------------------------------------------------
-        # Dynamic detection of future covariates
+        # Future covariates: only things truly known in advance (calendar, etc.)
         # ------------------------------------------------------------------
-
-        # Static calendar-based covariates
-        base_future_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
-
-        # Dynamic cluster / PARAFAC covariates
-        dynamic_future_cols = [
-            c
-            for c in ts_df.columns
-            if (
-                c.startswith("store_cluster_median_")
-                or c.startswith("item_cluster_median_")
-            )
-        ]
-
-        # Merge both lists, ensure uniqueness
-        valid_f_cols = sorted(set(base_future_cols + dynamic_future_cols))
-
-        future_covs_ts = full_ts[valid_f_cols] if len(valid_f_cols) else None
+        valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+        future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
 
         # ------------------------------------------------------------------
         # Train–Validation Split
