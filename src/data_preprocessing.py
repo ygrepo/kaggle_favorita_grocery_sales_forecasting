@@ -116,7 +116,7 @@ def select_extreme_and_median_neighbors(
     # logger.info(f"Found {len(grouped)} unique groups")
 
     if M == 0 and m == 0 and med == 0:
-        # logger.info("No selection criteria specified, returning all groups")
+        logger.info("No selection criteria specified, returning all groups")
         idxs = sorted_grouped[group_column].values
         # np.unique is not needed here, 'values' is already unique
         # logger.info(f"Selected {len(idxs)} groups")
@@ -124,7 +124,7 @@ def select_extreme_and_median_neighbors(
 
     # Get extremes
     if m > 0:
-        # logger.info(f"Selecting {m} bottom groups")
+        logger.info(f"Selecting {m} bottom groups")
         bottom_m = sorted_grouped.head(m)
         bottom_records = bottom_m[group_column].values
         # logger.info(f"Selected {len(bottom_records)} bottom groups")
@@ -132,16 +132,17 @@ def select_extreme_and_median_neighbors(
         bottom_records = np.array([])
 
     if M > 0:
-        # logger.info(f"Selecting {M} top groups")
+        logger.info(f"Selecting {M} top groups")
         top_M = sorted_grouped.tail(M)
         top_records = top_M[group_column].values
         # logger.info(f"Selected {len(top_records)} top groups")
     else:
+        logger.info("Not selecting any top groups")
         top_records = np.array([])
 
     # Find median-centered groups
     if med > 0:
-        # logger.info(f"Selecting {2*med} median groups")
+        logger.info(f"Selecting {2*med} median groups")
         median_val = grouped["total"].median()
 
         grouped_with_dist = grouped.copy()
@@ -164,8 +165,9 @@ def select_extreme_and_median_neighbors(
 
         # **REFINEMENT 2: Remove redundant np.unique**
         med_records = median_neighbors[group_column].values
-        # logger.info(f"Selected {len(med_records)} median groups")
+        logger.info(f"Selected {len(med_records)} median groups")
     else:
+        logger.info("Not selecting any median groups")
         med_records = np.array([])
 
     all_records = np.concatenate(
@@ -173,5 +175,5 @@ def select_extreme_and_median_neighbors(
     )
     # Final unique call is still good defensive programming
     all_records = np.unique(all_records)
-    # logger.info(f"Total unique groups: {len(all_records)}")
+    logger.info(f"Total unique groups: {len(all_records)}")
     return all_records
