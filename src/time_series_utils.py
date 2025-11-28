@@ -759,8 +759,8 @@ def eval_model_with_covariates(
     item: int,
     data_dict: Dict[str, Any],
     metrics_df: pd.DataFrame,
-    no_past_covs: bool = False,
-    no_future_covs: bool = False,
+    past_covs: bool = False,
+    future_covs: bool = False,
 ) -> pd.DataFrame:
     """
     Evaluate a model handling scaling for targets and covariates independently,
@@ -812,7 +812,7 @@ def eval_model_with_covariates(
         if (
             supports_past
             and data_dict.get("train_past") is not None
-            and not no_past_covs
+            and past_covs
         ):
             past_scaler = Scaler(RobustScaler())
 
@@ -838,7 +838,7 @@ def eval_model_with_covariates(
             supports_future
             and data_dict.get("full_future") is not None
             and data_dict.get("train_future") is not None
-            and not no_future_covs
+            and future_covs
         ):
             future_scaler = Scaler(RobustScaler())
             # Fit on train_future only (no leakage)
@@ -865,11 +865,7 @@ def eval_model_with_covariates(
             fit_kwargs["val_series"] = val_target_scaled
 
         # Add past covariates if supported
-        if (
-            supports_past
-            and train_past_scaled is not None
-            and not no_past_covs
-        ):
+        if supports_past and train_past_scaled is not None and past_covs:
             fit_kwargs["past_covariates"] = train_past_scaled
             if supports_val_series and val_past_scaled is not None:
                 fit_kwargs["val_past_covariates"] = val_past_scaled
@@ -878,7 +874,7 @@ def eval_model_with_covariates(
         if (
             supports_future
             and future_covs_scaled_full is not None
-            and not no_future_covs
+            and future_covs
         ):
             fit_kwargs["future_covariates"] = future_covs_scaled_full
             if supports_val_series and val_future_scaled is not None:
@@ -898,14 +894,14 @@ def eval_model_with_covariates(
         if (
             supports_past
             and past_covs_scaled_full is not None
-            and not no_past_covs
+            and past_covs
         ):
             predict_kwargs["past_covariates"] = past_covs_scaled_full
 
         if (
             supports_future
             and future_covs_scaled_full is not None
-            and not no_future_covs
+            and future_covs
         ):
             predict_kwargs["future_covariates"] = future_covs_scaled_full
 

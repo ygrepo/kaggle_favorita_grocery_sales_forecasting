@@ -176,8 +176,8 @@ def process_store_item(
                 item,
                 data_dict,
                 metrics_df,
-                args.no_past_covs,
-                args.no_future_covs,
+                args.past_covs,
+                args.future_covs,
             )
 
         return metrics_df
@@ -230,8 +230,8 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--xl_design", type=str2bool, default=False)
-    parser.add_argument("--no_past_covs", type=str2bool, default=False)
-    parser.add_argument("--no_future_covs", type=str2bool, default=False)
+    parser.add_argument("--past_covs", type=str2bool, default=True)
+    parser.add_argument("--future_covs", type=str2bool, default=True)
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
@@ -254,8 +254,8 @@ def main():
     logger.info(f"Dropout: {args.dropout}")
     logger.info(f"Patience: {args.patience}")
     logger.info(f"XL design: {args.xl_design}")
-    logger.info(f"No past covs: {args.no_past_covs}")
-    logger.info(f"No future covs: {args.no_future_covs}")
+    logger.info(f"Past covs: {args.past_covs}")
+    logger.info(f"Future covs: {args.future_covs}")
     logger.info(f"N epochs: {args.n_epochs}")
     logger.info(f"Split point: {args.split_point}")
     logger.info(f"Min train data points: {args.min_train_data_points}")

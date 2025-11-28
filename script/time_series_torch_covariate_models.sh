@@ -41,8 +41,8 @@ BATCH_SIZE=8192
 NUM_WORKERS=8
 DROPOUT=0.5
 PATIENCE=10
-NO_PAST_COVS="True"
-NO_FUTURE_COVS="False"
+PAST_COVS="False"
+FUTURE_COVS="False"
 XL_DESIGN="True"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
@@ -70,8 +70,8 @@ while [[ $# -gt 0 ]]; do
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
     --dropout) DROPOUT="$2"; shift 2 ;;
     --patience) PATIENCE="$2"; shift 2 ;;
-    --no_past_covs) NO_PAST_COVS="$2"; shift 2 ;;
-    --no_future_covs) NO_FUTURE_COVS="$2"; shift 2 ;;
+    --past_covs) PAST_COVS="$2"; shift 2 ;;
+    --future_covs) FUTURE_COVS="$2"; shift 2 ;;
     --xl_design) XL_DESIGN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
@@ -98,7 +98,7 @@ mkdir -p "$METRICS_DIR"
 
 # If metrics_fn wasn't explicitly set, derive it from METRICS_DIR
 if [[ -z "$METRICS_FN" ]]; then
-  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_TFT_past_covs_metrics.csv"
+  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_TFT_no_covs_metrics.csv"
 fi
 
 # Create separate MODEL_DIRS for each model type
@@ -135,8 +135,8 @@ echo "N: $N" | tee -a "$LOG_FILE"
 echo "Dropout: $DROPOUT" | tee -a "$LOG_FILE"
 echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
 echo "XL design: $XL_DESIGN" | tee -a "$LOG_FILE"
-echo "No past covs: $NO_PAST_COVS" | tee -a "$LOG_FILE"
-echo "No future covs: $NO_FUTURE_COVS" | tee -a "$LOG_FILE"
+echo "Past covs: $PAST_COVS" | tee -a "$LOG_FILE"
+echo "Future covs: $FUTURE_COVS" | tee -a "$LOG_FILE"
 echo "Metrics dir: $METRICS_DIR" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 
@@ -173,8 +173,8 @@ python "${SCRIPT_DIR}/time_series_covariates.py" \
   --num_workers "$NUM_WORKERS" \
   --dropout "$DROPOUT" \
   --patience "$PATIENCE" \
-  --no_past_covs "$NO_PAST_COVS" \
-  --no_future_covs "$NO_FUTURE_COVS" \
+  --past_covs "$PAST_COVS" \
+  --future_covs "$FUTURE_COVS" \
   --xl_design "$XL_DESIGN"
 
 EXIT_CODE=${PIPESTATUS[0]}
