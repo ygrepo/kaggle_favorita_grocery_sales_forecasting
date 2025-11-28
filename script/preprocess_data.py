@@ -202,7 +202,7 @@ def main():
             m=args.store_bottom_n,
             med=args.store_med_n,
         )
-        if store_ids:
+    if store_ids.size > 0:
             data_df = data_df[data_df["store"].isin(store_ids)]
         logger.info(f"Stores after selection: {data_df['store'].nunique()}")
 
@@ -217,7 +217,7 @@ def main():
             m=args.item_bottom_n,
             med=args.item_med_n,
         )
-        if item_ids:
+        if item_ids.size:
             data_df = data_df[data_df["item"].isin(item_ids)]
         logger.info(f"Items after selection: {data_df['item'].nunique()}")
 
