@@ -39,8 +39,8 @@ ITEM_BOTTOM_N=700
 # ITEM_BOTTOM_N=6
 NROWS=0
 
-ITEM_FN="${OUTPUT_DATA_DIR}/items.csv"
-STORE_FN="${OUTPUT_DATA_DIR}/stores.csv"
+ITEM_FN="${DATA_DIR}/items.csv"
+STORE_FN="${DATA_DIR}/stores.csv"
 GROUP_STORE_COLUMN="store"
 GROUP_ITEM_COLUMN="item"
 VALUE_COLUMN="unit_sales"
