@@ -54,6 +54,7 @@ echo "Split point: $SPLIT_POINT" | tee -a "$LOG_FILE"
 echo "Min train data points: $MIN_TRAIN_DATA_POINTS" | tee -a "$LOG_FILE"
 echo "Models: $MODELS" | tee -a "$LOG_FILE"
 echo "N: $N" | tee -a "$LOG_FILE"
+echo "XL design: $XL_DESIGN" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 
 set +e
@@ -64,6 +65,7 @@ python "${SCRIPT_DIR}/benchmark_time_series_models.py" \
   --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \
   --models "$MODELS" \
   --N "$N" \
+  --xl_design "$XL_DESIGN" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL"
 
