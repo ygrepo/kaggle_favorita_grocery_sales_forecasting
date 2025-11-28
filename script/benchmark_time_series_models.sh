@@ -22,6 +22,7 @@ SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
 MODELS="EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN"
 N=10
+XL_DESIGN="False"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --min_train_data_points) MIN_TRAIN_DATA_POINTS="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
     --N) N="$2"; shift 2 ;;
+    --xl_design) XL_DESIGN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;

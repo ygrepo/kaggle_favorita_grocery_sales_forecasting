@@ -161,7 +161,6 @@ def create_model(
             random_state=42,
             save_checkpoints=False,
             force_reset=True,
-            # safe defaults; remove if you want to keep optimizer fully external
             optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
             **torch_kwargs,
         )
@@ -324,10 +323,10 @@ def prepare_store_item_series(
     df: pd.DataFrame,
     store: int,
     item: int,
-    store_medians_fn: Path,
-    item_medians_fn: Path,
-    store_assign_fn: Path,
-    item_assign_fn: Path,
+    store_medians_fn: Path | None = None,
+    item_medians_fn: Path | None = None,
+    store_assign_fn: Path | None = None,
+    item_assign_fn: Path | None = None,
 ) -> pd.DataFrame:
     """
     Memory-safe preparation of the (store, item) time series.

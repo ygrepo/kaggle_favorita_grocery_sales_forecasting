@@ -90,6 +90,12 @@ def parse_args():
         help="Limit to first N combinations",
     )
     parser.add_argument(
+        "--xl_design",
+        type=bool,
+        default=False,
+        help="Use the XL design for the models",
+    )
+    parser.add_argument(
         "--log_fn",
         type=Path,
         default="",
@@ -119,13 +125,22 @@ def process_store_item_combination(
     min_train_data_points: int,
     metrics_df: pd.DataFrame,
     model_types: List[ModelType],
+    xl_design: bool,
 ) -> pd.DataFrame:
     """Process a single store-item combination."""
 
     logger.info(f"Processing store {store}, item {item}")
 
     # Prepare the time series data with all features
-    ts_df = prepare_store_item_series(df, store, item)
+    ts_df = prepare_store_item_series(
+        df,
+        store,
+        item,
+        store_medians_fn=None,
+        item_medians_fn=None,
+        store_assign_fn=None,
+        item_assign_fn=None,
+    )
     if ts_df.empty:
         logger.warning(f"No data for store {store}, item {item}")
         return metrics_df
@@ -147,7 +162,7 @@ def process_store_item_combination(
 
     # Train all models using the covariate-aware evaluation
     for mtype in model_types:
-        model = create_model(mtype)
+        model = create_model(mtype, xl_design=xl_design)
 
         # Classical models don't support covariates, but eval_model_with_covariates
         # will handle this by only using the target series
@@ -193,6 +208,7 @@ def main():
         logger.info(f"  Split point: {args.split_point}")
         logger.info(f"  Min train data points: {args.min_train_data_points}")
         logger.info(f"  N: {args.N}")
+        logger.info(f"  XL design: {args.xl_design}")
 
         # Load raw data
         logger.info("Loading raw data...")
@@ -249,6 +265,7 @@ def main():
                 args.min_train_data_points,
                 metrics_df,
                 model_types,
+                args.xl_design,
             )
 
         logger.info(f"Saving results to {output_metrics_fn}")
