@@ -279,6 +279,7 @@ def main():
         logger.warning("No GPUs detected — running on CPU")
 
     df = load_raw_data(args.data_fn)
+    df.drop(columns=["class", "cluster", "family"], inplace=True)
     logger.info("Loaded data head:")
     logger.info(df.head())
 
