@@ -41,9 +41,9 @@ BATCH_SIZE=8192
 NUM_WORKERS=8
 DROPOUT=0.5
 PATIENCE=10
-PAST_COVS="True"
-FUTURE_COVS="False"
-XL_DESIGN="True"
+PAST_COVS="False"
+FUTURE_COVS="True"
+XL_DESIGN="False"
 
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
@@ -98,7 +98,7 @@ mkdir -p "$METRICS_DIR"
 
 # If metrics_fn wasn't explicitly set, derive it from METRICS_DIR
 if [[ -z "$METRICS_FN" ]]; then
-  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_dl_past_covs_metrics.csv"
+  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_dl_future_covs_metrics.csv"
 fi
 
 # Create separate MODEL_DIRS for each model type

@@ -258,7 +258,7 @@ def create_model(
         if xl_design:
             # XL: larger and deeper than Medium
             return BlockRNNModel(
-                model="LSTM",
+                model="GRU",
                 hidden_dim=128,
                 n_rnn_layers=3,
                 dropout=dropout,
@@ -267,7 +267,7 @@ def create_model(
         else:
             # Medium design
             return BlockRNNModel(
-                model="LSTM",
+                model="GRU",
                 hidden_dim=64,
                 n_rnn_layers=2,
                 dropout=dropout,
