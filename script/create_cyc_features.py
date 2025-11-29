@@ -82,6 +82,7 @@ def main():
         create_cyclical_features(
             df, window_size=args.window_size, output_path=output_fn
         )
+        df.drop(columns=["class", "cluster"], inplace=True)
         logger.info("Completed successfully")
     except Exception as e:
         logger.error(f"Error: {e}")
