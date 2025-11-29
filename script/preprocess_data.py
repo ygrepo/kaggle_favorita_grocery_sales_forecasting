@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import LabelEncoder
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -349,6 +350,27 @@ def main():
 
         data_df = data_df.merge(items, on="item", how="left")
         logger.info(f"Items after metadata merge: {data_df['item'].nunique()}")
+
+        # ------------------------------------------------------------------
+        # Categorical encodings for cluster / class for future TFT use
+        # ------------------------------------------------------------------
+
+        # Encode item class (high-cardinality categorical) -> integer IDs
+        if "class" in data_df.columns:
+            logger.info("Encoding item 'class' to 'class_id'")
+            le_class = LabelEncoder()
+            # Ensure we treat class as string labels before encoding
+            data_df["class_id"] = le_class.fit_transform(
+                data_df["class"].astype(str)
+            )
+
+        # Encode cluster (low-cardinality categorical) -> integer IDs
+        if "cluster" in data_df.columns:
+            logger.info("Encoding 'cluster' to 'cluster_id'")
+            le_cluster = LabelEncoder()
+            data_df["cluster_id"] = le_cluster.fit_transform(
+                data_df["cluster"].astype(str)
+            )
 
         # ------------------------------------------------------------------
         # Create store_item identifier and growth_rate
