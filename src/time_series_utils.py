@@ -537,6 +537,19 @@ def get_train_val_data_with_covariates(
             columns=static_cols_present, errors="ignore"
         )
 
+        # Ensure unique date index (required by Darts TimeSeries)
+        # ts_df should already have date as index from prepare_store_item_series
+        if ts_df_dynamic.index.has_duplicates:
+            logger.warning(
+                f"S{store}/I{item}: Duplicate dates detected ({ts_df_dynamic.index.name}). "
+                "Keeping the first occurrence per date."
+            )
+            ts_df_dynamic = ts_df_dynamic[
+                ~ts_df_dynamic.index.duplicated(keep="first")
+            ]
+            # Alternative: aggregate with mean instead of keeping first:
+            # ts_df_dynamic = ts_df_dynamic.groupby(ts_df_dynamic.index).mean()
+
         full_ts = TimeSeries.from_dataframe(
             ts_df_dynamic, fill_missing_dates=True, freq="D", fillna_value=0
         )
