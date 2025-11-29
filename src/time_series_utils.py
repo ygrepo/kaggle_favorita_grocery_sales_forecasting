@@ -559,6 +559,9 @@ def get_train_val_data_with_covariates(
 
         # Attach static covariates to the target TimeSeries
         if static_cov_df is not None:
+            logger.info(
+                f"Attaching static covariates: {static_cov_df.columns}"
+            )
             target_ts = target_ts.with_static_covariates(static_cov_df)
 
         # ------------------------------------------------------------------
@@ -630,7 +633,6 @@ def get_train_val_data_with_covariates(
             "val_future": val_future,
             "full_past": past_covs_ts,
             "full_future": future_covs_ts,
-            # Optional: if you ever need static_cov_df later, you can also return it
             "static_covariates": static_cov_df,
         }
 
