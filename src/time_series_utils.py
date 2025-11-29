@@ -40,6 +40,10 @@ from src.utils import (
 
 logger = get_logger(__name__)
 
+# Static covariates: constant for a given (store, item) series
+STATIC_COV_COLS = ["store", "item", "cluster_id", "class_id"]
+
+
 # Define Covariate Groups globally for easy modification
 # Future: Known in advance (calendar features)
 # Note: Raw 'dayofweek', 'weekofmonth', 'monthofyear' excluded to avoid multicollinearity with sin/cos versions.
@@ -435,7 +439,17 @@ def prepare_store_item_series(
         c for c in PAST_COV_COLS if c in series_df.columns
     ] + cluster_cols
 
-    cols_to_keep = ["date", TARGET_COL] + available_future + available_past
+    # Keep static covariates if present
+    static_cols_present = [
+        c for c in STATIC_COV_COLS if c in series_df.columns
+    ]
+
+    cols_to_keep = (
+        ["date", TARGET_COL]
+        + static_cols_present
+        + available_future
+        + available_past
+    )
 
     ts_df = series_df[cols_to_keep].copy()
 
@@ -471,6 +485,8 @@ def get_train_val_data_with_covariates(
     - Calendar covariates listed in FUTURE_COV_COLS (static)
     - Cluster medians (store_cluster_median_*, item_cluster_median_*)
     - PARAFAC latent factors (parafac_*), or any other *_covariate_* prefix.
+
+    Additionally, store, item, cluster_id, and class_id are used as static covariates.
     """
 
     try:
@@ -498,38 +514,65 @@ def get_train_val_data_with_covariates(
             return None
 
         # ------------------------------------------------------------------
-        # Build full TimeSeries from DataFrame
+        # Extract static covariates (one vector per (store, item))
         # ------------------------------------------------------------------
+        static_cov_df = None
+        static_cols_present = [
+            c for c in STATIC_COV_COLS if c in ts_df.columns
+        ]
+
+        if static_cols_present:
+            # Take first row; should be constant across time for the series
+            static_values = {
+                col: ts_df[col].iloc[0] for col in static_cols_present
+            }
+            # 1 x n_static DataFrame (index arbitrary)
+            static_cov_df = pd.DataFrame([static_values])
+
+        # ------------------------------------------------------------------
+        # Build full TimeSeries from DataFrame (excluding static cols)
+        # ------------------------------------------------------------------
+        # Drop static columns so they are not treated as dynamic covariates
+        ts_df_dynamic = ts_df.drop(
+            columns=static_cols_present, errors="ignore"
+        )
+
         full_ts = TimeSeries.from_dataframe(
-            ts_df, fill_missing_dates=True, freq="D", fillna_value=0
+            ts_df_dynamic, fill_missing_dates=True, freq="D", fillna_value=0
         )
 
         # Target
         target_ts = full_ts[TARGET_COL]
+
+        # Attach static covariates to the target TimeSeries
+        if static_cov_df is not None:
+            target_ts = target_ts.with_static_covariates(static_cov_df)
 
         # ------------------------------------------------------------------
         # Past covariates: rolling/ewm + cluster medians (observed)
         # ------------------------------------------------------------------
         cluster_cols = [
             c
-            for c in ts_df.columns
+            for c in ts_df_dynamic.columns
             if c.startswith("store_cluster_median_")
             or c.startswith("item_cluster_median_")
         ]
 
         valid_p_cols = [
-            c for c in PAST_COV_COLS if c in ts_df.columns
+            c for c in PAST_COV_COLS if c in ts_df_dynamic.columns
         ] + cluster_cols
         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
 
         # ------------------------------------------------------------------
         # Future covariates: only things truly known in advance (calendar, etc.)
         # ------------------------------------------------------------------
-        valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+        valid_f_cols = [
+            c for c in FUTURE_COV_COLS if c in ts_df_dynamic.columns
+        ]
         future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
 
         # ------------------------------------------------------------------
-        # Train–Validation Split
+        # Train–Validation Split (static covs are carried automatically)
         # ------------------------------------------------------------------
         train_target, val_target = target_ts.split_before(split_point)
 
@@ -552,17 +595,18 @@ def get_train_val_data_with_covariates(
             train_future, val_future = None, None
 
         # ------------------------------------------------------------------
-        # 6. Logging
+        # Logging
         # ------------------------------------------------------------------
         logger.info(
             f"S{store}/I{item}: Data prepared. "
             f"Train={len(train_target)}, Val={len(val_target)}, "
             f"Past Dim={past_covs_ts.n_components if past_covs_ts else 0}, "
-            f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}"
+            f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}, "
+            f"Static Dim={static_cov_df.shape[1] if static_cov_df is not None else 0}"
         )
 
         # ------------------------------------------------------------------
-        # 7. Return time series dictionary
+        # Return time series dictionary
         # ------------------------------------------------------------------
         return {
             "train_target": train_target,
@@ -573,6 +617,8 @@ def get_train_val_data_with_covariates(
             "val_future": val_future,
             "full_past": past_covs_ts,
             "full_future": future_covs_ts,
+            # Optional: if you ever need static_cov_df later, you can also return it
+            "static_covariates": static_cov_df,
         }
 
     except Exception as e:
@@ -581,6 +627,133 @@ def get_train_val_data_with_covariates(
         )
         logger.error(traceback.format_exc())
         return None
+
+
+# def get_train_val_data_with_covariates(
+#     ts_df: pd.DataFrame,
+#     store: int,
+#     item: int,
+#     split_point: float,
+#     min_train_data_points: int,
+# ) -> Optional[Dict[str, Any]]:
+#     """
+#     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
+#     and splits them consistently into train/validation sets.
+
+#     Future covariates are now determined dynamically:
+#     - Calendar covariates listed in FUTURE_COV_COLS (static)
+#     - Cluster medians (store_cluster_median_*, item_cluster_median_*)
+#     - PARAFAC latent factors (parafac_*), or any other *_covariate_* prefix.
+#     """
+
+#     try:
+#         # ------------------------------------------------------------------
+#         # Basic validation of target availability
+#         # ------------------------------------------------------------------
+#         total_len = len(ts_df)
+#         train_len_approx = int(total_len * split_point)
+
+#         train_df_subset = ts_df.iloc[:train_len_approx]
+#         non_missing_target = train_df_subset[TARGET_COL].count()
+
+#         if non_missing_target < min_train_data_points:
+#             logger.warning(
+#                 f"S{store}/I{item}: Insufficient training data "
+#                 f"({non_missing_target} < {min_train_data_points}). Skipping."
+#             )
+#             return None
+
+#         train_std = train_df_subset[TARGET_COL].std()
+#         if train_std == 0 or np.isnan(train_std):
+#             logger.warning(
+#                 f"S{store}/I{item}: Target has zero or NaN variance. Skipping."
+#             )
+#             return None
+
+#         # ------------------------------------------------------------------
+#         # Build full TimeSeries from DataFrame
+#         # ------------------------------------------------------------------
+#         full_ts = TimeSeries.from_dataframe(
+#             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
+#         )
+
+#         # Target
+#         target_ts = full_ts[TARGET_COL]
+
+#         # ------------------------------------------------------------------
+#         # Past covariates: rolling/ewm + cluster medians (observed)
+#         # ------------------------------------------------------------------
+#         cluster_cols = [
+#             c
+#             for c in ts_df.columns
+#             if c.startswith("store_cluster_median_")
+#             or c.startswith("item_cluster_median_")
+#         ]
+
+#         valid_p_cols = [
+#             c for c in PAST_COV_COLS if c in ts_df.columns
+#         ] + cluster_cols
+#         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
+
+#         # ------------------------------------------------------------------
+#         # Future covariates: only things truly known in advance (calendar, etc.)
+#         # ------------------------------------------------------------------
+#         valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
+#         future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
+
+#         # ------------------------------------------------------------------
+#         # Train–Validation Split
+#         # ------------------------------------------------------------------
+#         train_target, val_target = target_ts.split_before(split_point)
+
+#         if len(train_target) == 0 or len(val_target) == 0:
+#             logger.warning(
+#                 f"S{store}/I{item}: Empty train or validation split."
+#             )
+#             return None
+
+#         # Past covariates
+#         if past_covs_ts is not None:
+#             train_past, val_past = past_covs_ts.split_before(split_point)
+#         else:
+#             train_past, val_past = None, None
+
+#         # Future covariates
+#         if future_covs_ts is not None:
+#             train_future, val_future = future_covs_ts.split_before(split_point)
+#         else:
+#             train_future, val_future = None, None
+
+#         # ------------------------------------------------------------------
+#         # 6. Logging
+#         # ------------------------------------------------------------------
+#         logger.info(
+#             f"S{store}/I{item}: Data prepared. "
+#             f"Train={len(train_target)}, Val={len(val_target)}, "
+#             f"Past Dim={past_covs_ts.n_components if past_covs_ts else 0}, "
+#             f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}"
+#         )
+
+#         # ------------------------------------------------------------------
+#         # 7. Return time series dictionary
+#         # ------------------------------------------------------------------
+#         return {
+#             "train_target": train_target,
+#             "val_target": val_target,
+#             "train_past": train_past,
+#             "val_past": val_past,
+#             "train_future": train_future,
+#             "val_future": val_future,
+#             "full_past": past_covs_ts,
+#             "full_future": future_covs_ts,
+#         }
+
+#     except Exception as e:
+#         logger.error(
+#             f"store:{store},item:{item},Error preparing train/val data: {e}"
+#         )
+#         logger.error(traceback.format_exc())
+#         return None
 
 
 def calculate_rmsse(
@@ -891,11 +1064,7 @@ def eval_model_with_covariates(
         predict_kwargs: Dict[str, Any] = {"n": forecast_horizon}
 
         # IMPORTANT: for prediction, covariates must extend up to the forecast horizon
-        if (
-            supports_past
-            and past_covs_scaled_full is not None
-            and past_covs
-        ):
+        if supports_past and past_covs_scaled_full is not None and past_covs:
             predict_kwargs["past_covariates"] = past_covs_scaled_full
 
         if (
