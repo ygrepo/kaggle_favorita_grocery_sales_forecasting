@@ -133,6 +133,25 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
         ) from e
 
 
+# Helper: choose lags depending on xl_design and covariate flags
+def _lags_for_regression(
+    xl_design: bool, past_covs: bool, future_covs: bool
+) -> tuple[int, Optional[int], Optional[tuple[int, int]]]:
+    """
+    Returns (lags, lags_past_covariates, lags_future_covariates)
+    based on xl_design, past_covs, future_covs.
+    """
+    if xl_design:
+        lags = 60
+        lags_past = 60 if past_covs else None
+        lags_future = (30, 30) if future_covs else None
+    else:
+        lags = 30
+        lags_past = 30 if past_covs else None
+        lags_future = (15, 15) if future_covs else None
+    return lags, lags_past, lags_future
+
+
 def create_model(
     model_type: ModelType,
     batch_size: int = 32,
@@ -140,6 +159,8 @@ def create_model(
     n_epochs: int = 100,
     dropout: float = 0.1,
     xl_design: bool = False,
+    past_covs: bool = False,
+    future_covs: bool = False,
 ) -> ForecastingModel:
     """
     Factory to create a Darts model instance (classical or deep learning).
@@ -175,13 +196,17 @@ def create_model(
     if model_type == ModelType.KALMAN:
         return KalmanForecaster(dim_x=1, random_state=42)
 
+    lags, lags_past, lags_future = _lags_for_regression(
+        xl_design, past_covs, future_covs
+    )
+
     if model_type == ModelType.LINEAR_REGRESSION:
         if xl_design:
             # XL: using longer history and more covariate lags
             return LinearRegressionModel(
-                lags=60,
-                lags_past_covariates=60,
-                lags_future_covariates=(30, 30),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 output_chunk_length=1,
                 use_static_covariates=True,
                 # Linear regression does not have hyperparameters besides fit_intercept, etc.
@@ -189,9 +214,9 @@ def create_model(
         else:
             # Medium
             return LinearRegressionModel(
-                lags=30,
-                lags_past_covariates=30,
-                lags_future_covariates=(15, 15),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 output_chunk_length=1,
                 use_static_covariates=True,
             )
@@ -205,9 +230,9 @@ def create_model(
         if xl_design:
             # XL: more history + more covariate lags
             return LightGBMModel(
-                lags=60,
-                lags_past_covariates=60,
-                lags_future_covariates=(30, 30),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 output_chunk_length=1,
                 use_static_covariates=True,
                 random_state=42,
@@ -215,9 +240,9 @@ def create_model(
         else:
             # Medium config
             return LightGBMModel(
-                lags=30,
-                lags_past_covariates=30,
-                lags_future_covariates=(15, 15),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 output_chunk_length=1,
                 use_static_covariates=True,
                 random_state=42,
@@ -227,9 +252,9 @@ def create_model(
         if xl_design:
             # XL: more history + larger forest
             return RandomForest(
-                lags=60,
-                lags_past_covariates=60,
-                lags_future_covariates=(30, 30),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 n_estimators=500,
                 max_depth=None,
                 n_jobs=-1,
@@ -239,9 +264,9 @@ def create_model(
         else:
             # Medium config
             return RandomForest(
-                lags=30,
-                lags_past_covariates=30,
-                lags_future_covariates=(15, 15),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 n_estimators=200,
                 max_depth=None,
                 n_jobs=-1,
@@ -253,9 +278,9 @@ def create_model(
         if xl_design:
             # XL: more history + slightly larger booster
             return XGBModel(
-                lags=60,
-                lags_past_covariates=60,
-                lags_future_covariates=(30, 30),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 output_chunk_length=1,
                 use_static_covariates=True,
                 random_state=42,
@@ -265,9 +290,9 @@ def create_model(
         else:
             # Medium config
             return XGBModel(
-                lags=30,
-                lags_past_covariates=30,
-                lags_future_covariates=(15, 15),
+                lags=lags,
+                lags_past_covariates=lags_past,
+                lags_future_covariates=lags_future,
                 output_chunk_length=1,
                 use_static_covariates=True,
                 random_state=42,
