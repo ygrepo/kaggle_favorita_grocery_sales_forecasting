@@ -17,6 +17,9 @@ from darts.models import (
     ExponentialSmoothing,
     Theta,
     KalmanForecaster,
+    LightGBMModel,
+    RandomForest,
+    LinearRegressionModel,
 )
 from darts.utils.utils import SeasonalityMode
 
@@ -100,6 +103,10 @@ class ModelType(str, Enum):
     AUTO_ARIMA = "AUTO_ARIMA"
     THETA = "THETA"
     KALMAN = "KALMAN"
+    # Tree-based regression models
+    LIGHTGBM = "LIGHTGBM"
+    RANDOM_FOREST = "RANDOM_FOREST"
+    LINEAR_REGRESSION = "LINEAR_REGRESSION"
     # Deep learning models
     NBEATS = "NBEATS"
     TFT = "TFT"
@@ -165,6 +172,80 @@ def create_model(
 
     if model_type == ModelType.KALMAN:
         return KalmanForecaster(dim_x=1, random_state=42)
+
+    if model_type == ModelType.LINEAR_REGRESSION:
+        if xl_design:
+            # XL: using longer history and more covariate lags
+            return LinearRegressionModel(
+                lags=60,
+                lags_past_covariates=60,
+                lags_future_covariates=(30, 30),
+                output_chunk_length=1,
+                use_static_covariates=True,
+                # Linear regression does not have hyperparameters besides fit_intercept, etc.
+            )
+        else:
+            # Medium
+            return LinearRegressionModel(
+                lags=30,
+                lags_past_covariates=30,
+                lags_future_covariates=(15, 15),
+                output_chunk_length=1,
+                use_static_covariates=True,
+            )
+    # ---------------------------------------------------------------------
+    # Tree-based Regression Models (LightGBM, RandomForest)
+    # Use lags + covariate lags so they can exploit past & future covariates
+    # and static covariates embedded in the target series.
+    # ---------------------------------------------------------------------
+
+    if model_type == ModelType.LIGHTGBM:
+        if xl_design:
+            # XL: more history + more covariate lags
+            return LightGBMModel(
+                lags=60,
+                lags_past_covariates=60,
+                lags_future_covariates=(30, 30),
+                output_chunk_length=1,
+                use_static_covariates=True,
+                random_state=42,
+            )
+        else:
+            # Medium config
+            return LightGBMModel(
+                lags=30,
+                lags_past_covariates=30,
+                lags_future_covariates=(15, 15),
+                output_chunk_length=1,
+                use_static_covariates=True,
+                random_state=42,
+            )
+
+    if model_type == ModelType.RANDOM_FOREST:
+        if xl_design:
+            # XL: more history + larger forest
+            return RandomForest(
+                lags=60,
+                lags_past_covariates=60,
+                lags_future_covariates=(30, 30),
+                n_estimators=500,
+                max_depth=None,
+                n_jobs=-1,
+                use_static_covariates=True,
+                random_state=42,
+            )
+        else:
+            # Medium config
+            return RandomForest(
+                lags=30,
+                lags_past_covariates=30,
+                lags_future_covariates=(15, 15),
+                n_estimators=200,
+                max_depth=None,
+                n_jobs=-1,
+                use_static_covariates=True,
+                random_state=42,
+            )
 
     # =====================================================================
     # Deep Learning Models
@@ -660,133 +741,6 @@ def get_train_val_data_with_covariates(
         return None
 
 
-# def get_train_val_data_with_covariates(
-#     ts_df: pd.DataFrame,
-#     store: int,
-#     item: int,
-#     split_point: float,
-#     min_train_data_points: int,
-# ) -> Optional[Dict[str, Any]]:
-#     """
-#     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
-#     and splits them consistently into train/validation sets.
-
-#     Future covariates are now determined dynamically:
-#     - Calendar covariates listed in FUTURE_COV_COLS (static)
-#     - Cluster medians (store_cluster_median_*, item_cluster_median_*)
-#     - PARAFAC latent factors (parafac_*), or any other *_covariate_* prefix.
-#     """
-
-#     try:
-#         # ------------------------------------------------------------------
-#         # Basic validation of target availability
-#         # ------------------------------------------------------------------
-#         total_len = len(ts_df)
-#         train_len_approx = int(total_len * split_point)
-
-#         train_df_subset = ts_df.iloc[:train_len_approx]
-#         non_missing_target = train_df_subset[TARGET_COL].count()
-
-#         if non_missing_target < min_train_data_points:
-#             logger.warning(
-#                 f"S{store}/I{item}: Insufficient training data "
-#                 f"({non_missing_target} < {min_train_data_points}). Skipping."
-#             )
-#             return None
-
-#         train_std = train_df_subset[TARGET_COL].std()
-#         if train_std == 0 or np.isnan(train_std):
-#             logger.warning(
-#                 f"S{store}/I{item}: Target has zero or NaN variance. Skipping."
-#             )
-#             return None
-
-#         # ------------------------------------------------------------------
-#         # Build full TimeSeries from DataFrame
-#         # ------------------------------------------------------------------
-#         full_ts = TimeSeries.from_dataframe(
-#             ts_df, fill_missing_dates=True, freq="D", fillna_value=0
-#         )
-
-#         # Target
-#         target_ts = full_ts[TARGET_COL]
-
-#         # ------------------------------------------------------------------
-#         # Past covariates: rolling/ewm + cluster medians (observed)
-#         # ------------------------------------------------------------------
-#         cluster_cols = [
-#             c
-#             for c in ts_df.columns
-#             if c.startswith("store_cluster_median_")
-#             or c.startswith("item_cluster_median_")
-#         ]
-
-#         valid_p_cols = [
-#             c for c in PAST_COV_COLS if c in ts_df.columns
-#         ] + cluster_cols
-#         past_covs_ts = full_ts[valid_p_cols] if valid_p_cols else None
-
-#         # ------------------------------------------------------------------
-#         # Future covariates: only things truly known in advance (calendar, etc.)
-#         # ------------------------------------------------------------------
-#         valid_f_cols = [c for c in FUTURE_COV_COLS if c in ts_df.columns]
-#         future_covs_ts = full_ts[valid_f_cols] if valid_f_cols else None
-
-#         # ------------------------------------------------------------------
-#         # Train–Validation Split
-#         # ------------------------------------------------------------------
-#         train_target, val_target = target_ts.split_before(split_point)
-
-#         if len(train_target) == 0 or len(val_target) == 0:
-#             logger.warning(
-#                 f"S{store}/I{item}: Empty train or validation split."
-#             )
-#             return None
-
-#         # Past covariates
-#         if past_covs_ts is not None:
-#             train_past, val_past = past_covs_ts.split_before(split_point)
-#         else:
-#             train_past, val_past = None, None
-
-#         # Future covariates
-#         if future_covs_ts is not None:
-#             train_future, val_future = future_covs_ts.split_before(split_point)
-#         else:
-#             train_future, val_future = None, None
-
-#         # ------------------------------------------------------------------
-#         # 6. Logging
-#         # ------------------------------------------------------------------
-#         logger.info(
-#             f"S{store}/I{item}: Data prepared. "
-#             f"Train={len(train_target)}, Val={len(val_target)}, "
-#             f"Past Dim={past_covs_ts.n_components if past_covs_ts else 0}, "
-#             f"Future Dim={future_covs_ts.n_components if future_covs_ts else 0}"
-#         )
-
-#         # ------------------------------------------------------------------
-#         # 7. Return time series dictionary
-#         # ------------------------------------------------------------------
-#         return {
-#             "train_target": train_target,
-#             "val_target": val_target,
-#             "train_past": train_past,
-#             "val_past": val_past,
-#             "train_future": train_future,
-#             "val_future": val_future,
-#             "full_past": past_covs_ts,
-#             "full_future": future_covs_ts,
-#         }
-
-#     except Exception as e:
-#         logger.error(
-#             f"store:{store},item:{item},Error preparing train/val data: {e}"
-#         )
-#         logger.error(traceback.format_exc())
-#         return None
-
-
 def calculate_rmsse(
     train_vals: np.ndarray,
     val_vals: np.ndarray,
@@ -979,11 +933,16 @@ def eval_model_with_covariates(
         "BLOCK_RNN",
         "TCN",
         "TIDE",
+        "RANDOM_FOREST",
+        "LINEAR_REGRESSION",
     }
     supports_future = modelType in {
         "TFT",
         "TSMIXER",
         "TIDE",
+        "RANDOM_FOREST",
+        "LIGHTGBM",
+        "LINEAR_REGRESSION",
     }
 
     # Which models support validation series during training (deep learning models)
@@ -994,8 +953,7 @@ def eval_model_with_covariates(
         "BLOCK_RNN",
         "TCN",
         "TIDE",
-        "TRANSFORMER",
-        "NHITS",
+        "LIGHTGBM",
     }
 
     try:
