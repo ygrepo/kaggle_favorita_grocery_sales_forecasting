@@ -171,7 +171,6 @@ python "${SCRIPT_DIR}/train_forecasting_models.py" \
   --log_level "$LOG_LEVEL" \
   --n_epochs "$N_EPOCHS" \
   --batch_size "$BATCH_SIZE" \
-  --num_workers "$NUM_WORKERS" \
   --dropout "$DROPOUT" \
   --patience "$PATIENCE" \
   --past_covs "$PAST_COVS" \
