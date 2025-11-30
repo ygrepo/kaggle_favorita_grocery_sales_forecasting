@@ -41,7 +41,18 @@ from src.utils import (
 logger = get_logger(__name__)
 
 # Static covariates: constant for a given (store, item) series
-STATIC_COV_COLS = ["store", "item", "cluster_id", "class_id"]
+STATIC_COV_COLS = [
+    "store",
+    "item",
+    "city_id",
+    "state_id",
+    "cluster_id",
+    "class_id",
+    "type_B",
+    "type_C",
+    "type_D",
+    "type_E",
+]
 
 
 # Define Covariate Groups globally for easy modification
@@ -58,6 +69,10 @@ FUTURE_COV_COLS = [
     "paycycle_cos",
     "season_sin",
     "season_cos",
+    "is_holiday_any",
+    "is_holiday_national",
+    "is_holiday_regional",
+    "is_holiday_local",
 ]
 
 # Past: Only known up to present time (lagged/rolling features of target)
@@ -66,6 +81,7 @@ PAST_COV_COLS = [
     "unit_sales_ewm_decay",
     "growth_rate_rolling_median",
     "growth_rate_ewm_decay",
+    "transactions",
 ]
 
 TARGET_COL = "growth_rate"

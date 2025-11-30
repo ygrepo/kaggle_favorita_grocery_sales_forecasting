@@ -236,6 +236,8 @@ def main():
         # ------------------------------------------------------------------
         stores = pd.read_csv(store_fn)
         stores.rename(columns={"store_nbr": "store"}, inplace=True)
+        stores["city_id"] = stores["city"].astype("category").cat.codes
+        stores["state_id"] = stores["state"].astype("category").cat.codes
         logger.info(f"Store metadata rows: {len(stores)}")
 
         # ------------------------------------------------------------------
