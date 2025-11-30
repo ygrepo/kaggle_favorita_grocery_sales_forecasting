@@ -18,7 +18,7 @@ from darts.models import (
     Theta,
     KalmanForecaster,
     LightGBMModel,
-    RandomForest,
+    RandomForestModel,
     LinearRegressionModel,
     XGBModel,
 )
@@ -221,7 +221,7 @@ def create_model(
                 use_static_covariates=True,
             )
     # ---------------------------------------------------------------------
-    # Tree-based Regression Models (LightGBM, RandomForest)
+    # Tree-based Regression Models (LightGBM, RandomForestModel)
     # Use lags + covariate lags so they can exploit past & future covariates
     # and static covariates embedded in the target series.
     # ---------------------------------------------------------------------
@@ -251,7 +251,7 @@ def create_model(
     if model_type == ModelType.RANDOM_FOREST:
         if xl_design:
             # XL: more history + larger forest
-            return RandomForest(
+            return RandomForestModel(
                 lags=lags,
                 lags_past_covariates=lags_past,
                 lags_future_covariates=lags_future,
@@ -263,7 +263,7 @@ def create_model(
             )
         else:
             # Medium config
-            return RandomForest(
+            return RandomForestModel(
                 lags=lags,
                 lags_past_covariates=lags_past,
                 lags_future_covariates=lags_future,
