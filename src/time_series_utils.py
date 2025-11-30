@@ -20,6 +20,7 @@ from darts.models import (
     LightGBMModel,
     RandomForest,
     LinearRegressionModel,
+    XGBModel,
 )
 from darts.utils.utils import SeasonalityMode
 
@@ -107,6 +108,7 @@ class ModelType(str, Enum):
     LIGHTGBM = "LIGHTGBM"
     RANDOM_FOREST = "RANDOM_FOREST"
     LINEAR_REGRESSION = "LINEAR_REGRESSION"
+    XGBOOST = "XGBOOST"
     # Deep learning models
     NBEATS = "NBEATS"
     TFT = "TFT"
@@ -245,6 +247,31 @@ def create_model(
                 n_jobs=-1,
                 use_static_covariates=True,
                 random_state=42,
+            )
+
+    if model_type == ModelType.XGBOOST:
+        if xl_design:
+            # XL: more history + slightly larger booster
+            return XGBModel(
+                lags=60,
+                lags_past_covariates=60,
+                lags_future_covariates=(30, 30),
+                output_chunk_length=1,
+                use_static_covariates=True,
+                random_state=42,
+                # You can pass xgboost-specific params via keyword args:
+                # objective="reg:squarederror", max_depth=8, n_estimators=500, learning_rate=0.05
+            )
+        else:
+            # Medium config
+            return XGBModel(
+                lags=30,
+                lags_past_covariates=30,
+                lags_future_covariates=(15, 15),
+                output_chunk_length=1,
+                use_static_covariates=True,
+                random_state=42,
+                # objective="reg:squarederror", max_depth=6, n_estimators=300, learning_rate=0.1
             )
 
     # =====================================================================
@@ -935,6 +962,7 @@ def eval_model_with_covariates(
         "TIDE",
         "RANDOM_FOREST",
         "LINEAR_REGRESSION",
+        "XGBOOST",
     }
     supports_future = modelType in {
         "TFT",
@@ -943,6 +971,7 @@ def eval_model_with_covariates(
         "RANDOM_FOREST",
         "LIGHTGBM",
         "LINEAR_REGRESSION",
+        "XGBOOST",
     }
 
     # Which models support validation series during training (deep learning models)
