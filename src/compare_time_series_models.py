@@ -84,8 +84,26 @@ def main():
         "ml_no_covs": Path(
             "output/metrics/20251130_2013_2014_store_2000_item_cyc_features_ml_no_covs_metrics.csv"
         ),
+        "ml_past_covs": Path(
+            "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_ml_past_covs_metrics.csv"
+        ),
+        "ml_future_covs": Path(
+            "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_ml_future_covs_metrics.csv"
+        ),
+        "ml_past_future_covs": Path(
+            "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_ml_past_future_covs_metrics.csv"
+        ),
         "dl_no_covs": Path(
             "output/metrics/20251130_2013_2014_store_2000_item_cyc_features_dl_no_covs_metrics.csv"
+        ),
+        "dl_past_covs": Path(
+            "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_dl_past_covs_metrics.csv"
+        ),
+        "dl_future_covs": Path(
+            "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_dl_future_covs_metrics.csv"
+        ),
+        "dl_past_future_covs": Path(
+            "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_dl_past_future_covs_metrics.csv"
         ),
     }
 
