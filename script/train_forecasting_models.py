@@ -226,6 +226,8 @@ def process_store_item(
                 n_epochs=n_epochs,
                 dropout=dropout,
                 xl_design=args.xl_design,
+                past_covs=args.past_covs,
+                future_covs=args.future_covs,
             )
 
             logger.info(
@@ -481,20 +483,30 @@ def main():
         logger.info("Summary of results:")
         for model_name in metrics_df["Model"].unique():
             model_metrics = metrics_df[metrics_df["Model"] == model_name]
-            successful_runs = model_metrics.dropna(subset=["SMAPE"]).shape[0]
+            successful_runs = model_metrics.dropna(
+                subset=[
+                    "SMAPE",
+                    "RMSSE",
+                    "MARRE",
+                ]
+            ).shape[0]
             total_runs = len(model_metrics)
             logger.info(
                 f"  {model_name}: {successful_runs}/{total_runs} successful runs"
             )
 
             if successful_runs > 0:
-                clean = model_metrics.dropna(subset=["SMAPE", "RMSSE"])
+                clean = model_metrics.dropna(
+                    subset=["SMAPE", "RMSSE", "MARRE"]
+                )
                 if len(clean) > 0:
                     smape_mean = clean["SMAPE"].mean()
                     rmsse_mean = clean["RMSSE"].mean()
+                    marre_mean = clean["MARRE"].mean()
                     logger.info(
                         f"    Mean SMAPE: {smape_mean:.4f}, "
-                        f"Mean RMSSE: {rmsse_mean:.4f}"
+                        f"Mean RMSSE: {rmsse_mean:.4f}, "
+                        f"Mean MARRE: {marre_mean:.4f}"
                     )
     else:
         logger.warning("No successful model runs completed!")
