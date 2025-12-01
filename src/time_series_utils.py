@@ -184,7 +184,7 @@ def create_model(
     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
     # =====================================================================
 
-    logger.info(f"past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}"): {model_type.value}")
+    logger.info(f"Creating model: {model_type.value}, past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}")
     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
         return ExponentialSmoothing()
 
