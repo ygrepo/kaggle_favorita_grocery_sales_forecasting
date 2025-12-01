@@ -137,18 +137,15 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
 def _lags_for_regression(
     xl_design: bool, past_covs: bool, future_covs: bool
 ) -> tuple[int, Optional[int], Optional[tuple[int, int]]]:
-    """
-    Returns (lags, lags_past_covariates, lags_future_covariates)
-    based on xl_design, past_covs, future_covs.
-    """
     if xl_design:
         lags = 60
         lags_past = 60 if past_covs else None
-        lags_future = (30, 30) if future_covs else None
+        # Use only same-time or past "future covariates" (no positive lags)
+        lags_future = (15, 0) if future_covs else None  # lags -15..-1
     else:
         lags = 30
         lags_past = 30 if past_covs else None
-        lags_future = (15, 15) if future_covs else None
+        lags_future = (15, 0) if future_covs else None  # lags -15..-1
     return lags, lags_past, lags_future
 
 
@@ -184,7 +181,9 @@ def create_model(
     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
     # =====================================================================
 
-    logger.info(f"Creating model: {model_type.value}, past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}")
+    logger.info(
+        f"Creating model: {model_type.value}, past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}"
+    )
     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
         return ExponentialSmoothing()
 
