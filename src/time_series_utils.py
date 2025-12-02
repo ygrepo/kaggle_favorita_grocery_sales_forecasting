@@ -284,7 +284,6 @@ def create_model(
                 output_chunk_length=1,
                 use_static_covariates=True,
                 random_state=42,
-                # You can pass xgboost-specific params via keyword args:
                 # objective="reg:squarederror", max_depth=8, n_estimators=500, learning_rate=0.05
             )
         else:

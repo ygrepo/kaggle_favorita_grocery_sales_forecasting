@@ -426,7 +426,9 @@ def main():
     if args.N > 0:
         if args.sample:
             logger.info(f"Sampling {args.N} random combinations")
-            unique_combinations = unique_combinations.sample(args.N)
+            unique_combinations = unique_combinations.sample(
+                args.N, random_state=args.seed
+            )
         else:
             logger.info(f"Limiting to first {args.N} combinations")
             unique_combinations = unique_combinations.head(args.N)
