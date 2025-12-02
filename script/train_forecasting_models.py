@@ -275,6 +275,12 @@ def parse_args():
     parser.add_argument("--item_assign_fn", type=Path, default=None)
     parser.add_argument("--model_dir", type=Path, default="models")
     parser.add_argument("--metrics_fn", type=Path, default="")
+    parser.add_argument(
+        "--sample",
+        type=str2bool,
+        default=False,
+        help="Sample N random (store,item) pairs instead of taking first N",
+    )
     parser.add_argument("--log_fn", type=Path, default="")
     parser.add_argument(
         "--log_level",
@@ -418,8 +424,12 @@ def main():
     # Unique (store, item) pairs
     unique_combinations = df[["store", "item"]].drop_duplicates()
     if args.N > 0:
-        logger.info(f"Limiting to first {args.N} combinations")
-        unique_combinations = unique_combinations.head(args.N)
+        if args.sample:
+            logger.info(f"Sampling {args.N} random combinations")
+            unique_combinations = unique_combinations.sample(args.N)
+        else:
+            logger.info(f"Limiting to first {args.N} combinations")
+            unique_combinations = unique_combinations.head(args.N)
 
     logger.info(
         f"Starting processing of {len(unique_combinations)} (store,item) pairs..."

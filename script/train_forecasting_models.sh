@@ -36,7 +36,8 @@ METRICS_FN=""
 
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
-N=0
+N=100
+SAMPLE="True"
 N_EPOCHS=300
 BATCH_SIZE=64
 NUM_WORKERS=8
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --split_point) SPLIT_POINT="$2"; shift 2 ;;
     --min_train_data_points) MIN_TRAIN_DATA_POINTS="$2"; shift 2 ;;
     --N) N="$2"; shift 2 ;;
+    --sample) SAMPLE="$2"; shift 2 ;;
     --n_epochs) N_EPOCHS="$2"; shift 2 ;;
     --batch_size) BATCH_SIZE="$2"; shift 2 ;;
     --num_workers) NUM_WORKERS="$2"; shift 2 ;;
@@ -133,6 +135,7 @@ echo "Batch size: $BATCH_SIZE" | tee -a "$LOG_FILE"
 echo "Model dir (parent): $MODEL_DIR" | tee -a "$LOG_FILE"
 echo "N epochs: $N_EPOCHS" | tee -a "$LOG_FILE"
 echo "N: $N" | tee -a "$LOG_FILE"
+echo "Sample: $SAMPLE" | tee -a "$LOG_FILE"
 echo "Dropout: $DROPOUT" | tee -a "$LOG_FILE"
 echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
 echo "XL design: $XL_DESIGN" | tee -a "$LOG_FILE"
@@ -167,6 +170,7 @@ python "${SCRIPT_DIR}/train_forecasting_models.py" \
   --split_point "$SPLIT_POINT" \
   --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \
   --N "$N" \
+  --sample "$SAMPLE" \
   --log_fn "$LOG_FILE" \
   --log_level "$LOG_LEVEL" \
   --n_epochs "$N_EPOCHS" \
