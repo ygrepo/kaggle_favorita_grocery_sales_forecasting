@@ -987,6 +987,7 @@ def eval_model_with_covariates(
         "RANDOM_FOREST",
         "LINEAR_REGRESSION",
         "XGBOOST",
+        "LIGHTGBM",
     }
     supports_future = modelType in {
         "TFT",
