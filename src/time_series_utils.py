@@ -390,7 +390,7 @@ def create_model(
                 hidden_size=128,
                 ff_size=256,
                 activation="LeakyReLU",
-                n_blocks=16,
+                num_blocks=16,
                 dropout=dropout,
                 **base_kwargs,
             )
@@ -400,7 +400,7 @@ def create_model(
                 hidden_size=64,
                 ff_size=128,
                 activation="LeakyReLU",
-                n_blocks=8,
+                num_blocks=8,
                 dropout=dropout,
                 **base_kwargs,
             )
