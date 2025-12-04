@@ -363,9 +363,9 @@ def create_model(
             # XL: larger and deeper than Medium
             return TFTModel(
                 hidden_size=128,
-                lstm_layers=2,
+                lstm_layers=4,
                 dropout=dropout,
-                num_attention_heads=8,
+                num_attention_heads=12,
                 add_relative_index=True,
                 **base_kwargs,
             )
@@ -373,9 +373,9 @@ def create_model(
             # Medium design
             return TFTModel(
                 hidden_size=64,
-                lstm_layers=1,
+                lstm_layers=2,
                 dropout=dropout,
-                num_attention_heads=4,
+                num_attention_heads=10,
                 add_relative_index=True,
                 **base_kwargs,
             )
@@ -388,6 +388,9 @@ def create_model(
             # XL: larger and deeper than Medium
             return TSMixerModel(
                 hidden_size=128,
+                ff_size=256,
+                activation="LeakyReLU",
+                n_blocks=16,
                 dropout=dropout,
                 **base_kwargs,
             )
@@ -395,6 +398,9 @@ def create_model(
             # Medium design
             return TSMixerModel(
                 hidden_size=64,
+                ff_size=128,
+                activation="LeakyReLU",
+                n_blocks=8,
                 dropout=dropout,
                 **base_kwargs,
             )
@@ -429,7 +435,7 @@ def create_model(
         if xl_design:
             # XL: larger and deeper than Medium
             return TCNModel(
-                kernel_size=3,
+                kernel_size=2,  # used to be 3
                 num_filters=128,
                 dilation_base=7,  # used to be 2
                 weight_norm=True,
@@ -439,7 +445,7 @@ def create_model(
         else:
             # Medium design
             return TCNModel(
-                kernel_size=3,
+                kernel_size=2,  # used to be 3
                 num_filters=64,
                 dilation_base=7,  # used to be 2
                 weight_norm=True,
