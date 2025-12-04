@@ -437,8 +437,6 @@ def main():
         f"Starting processing of {len(unique_combinations)} (store,item) pairs..."
     )
 
-    logger.info("Unique combinations head:")
-    logger.info(unique_combinations.head())
     # Metrics dataframe
     metrics_cols = [
         "Model",
