@@ -431,7 +431,7 @@ def create_model(
             return TCNModel(
                 kernel_size=3,
                 num_filters=128,
-                dilation_base=2,
+                dilation_base=7,  # used to be 2
                 weight_norm=True,
                 dropout=dropout,
                 **base_kwargs,
@@ -441,7 +441,7 @@ def create_model(
             return TCNModel(
                 kernel_size=3,
                 num_filters=64,
-                dilation_base=2,
+                dilation_base=7,  # used to be 2
                 weight_norm=True,
                 dropout=dropout,
                 **base_kwargs,
@@ -496,6 +496,13 @@ def prepare_store_item_series(
         return pd.DataFrame()
 
     series_df = series_df.sort_values("date")
+    if len(series_df) < 30:
+        logger.warning(
+            f"Insufficient data for store {store}, item {item}. "
+            f"Found {len(series_df)} rows, need at least 30."
+        )
+        return pd.DataFrame()
+
     dates = series_df["date"].unique()
 
     # ----------------------------------------------------------------------
@@ -1010,10 +1017,55 @@ def eval_model_with_covariates(
         "LIGHTGBM",
     }
 
+    # ------------------------------------------------------------------
+    # Helper to append a NaN row in a consistent way
+    # ------------------------------------------------------------------
+    def _append_nan_row(reason: str) -> pd.DataFrame:
+        logger.warning(f"Skipping {modelType} for S{store}/I{item}: {reason}")
+        nan_row_dict = {
+            "Model": modelType,
+            "Store": store,
+            "Item": item,
+            "RMSSE": np.nan,
+            "MASE": np.nan,
+            "SMAPE": np.nan,
+            "MARRE": np.nan,
+            "RMSE": np.nan,
+            "MAE": np.nan,
+            "OPE": np.nan,
+        }
+        new_row = pd.DataFrame([nan_row_dict])
+        return pd.concat([metrics_df, new_row], ignore_index=True)
+
     try:
         train_target = data_dict["train_target"]
         val_target = data_dict["val_target"]
         forecast_horizon = len(val_target)
+
+        # ------------------------------------------------------------------
+        # Guard against too-short training series for models like NBEATS
+        # ------------------------------------------------------------------
+        # For most Darts DL models, the minimum length is roughly:
+        #   input_chunk_length + output_chunk_length
+        # We infer it from attributes if they exist; otherwise default to 1.
+        input_chunk_length = getattr(model, "input_chunk_length", None)
+        output_chunk_length = getattr(model, "output_chunk_length", 1)
+
+        if input_chunk_length is not None:
+            # Use a conservative minimum required length
+            min_required_length = int(input_chunk_length) + int(
+                max(output_chunk_length, 1)
+            )
+        else:
+            # Fallback if the model does not expose these attributes
+            min_required_length = 1
+
+        if len(train_target) < min_required_length:
+            reason = (
+                f"training series too short (len={len(train_target)}) "
+                f"< required={min_required_length}"
+            )
+            return _append_nan_row(reason)
 
         # --- TARGET SCALER ---
         target_scaler = Scaler(RobustScaler())
