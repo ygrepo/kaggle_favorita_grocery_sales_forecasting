@@ -436,9 +436,6 @@ def main():
     logger.info(
         f"Starting processing of {len(unique_combinations)} (store,item) pairs..."
     )
-    unique_combinations = unique_combinations.query(
-        "store == 49 and item == 1503854"
-    )
 
     logger.info("Unique combinations head:")
     logger.info(unique_combinations.head())
