@@ -84,9 +84,9 @@ def main():
         # "ml_no_covs": Path(
         #     "output/metrics/20251130_2013_2014_store_2000_item_cyc_features_ml_no_covs_metrics.csv"
         # ),
-        # "ml_past_covs": Path(
-        #     "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_ml_past_covs_metrics.csv"
-        # ),
+        "ml_past_covs": Path(
+            "output/metrics/20251205_2013_2014_store_2000_item_cyc_features_all_ml_past_covs_metrics.csv"
+        ),
         # "ml_future_covs": Path(
         #     "output/metrics/20251201_2013_2014_store_2000_item_cyc_features_ml_future_covs_metrics.csv"
         # ),
