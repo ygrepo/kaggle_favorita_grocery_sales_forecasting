@@ -865,6 +865,32 @@ def calculate_rmsse(
     return rmse_forecast / (rmse_naive + epsilon)
 
 
+def compute_rmsse_scale_from_train(
+    train_vals: np.ndarray,
+    epsilon: float = np.finfo(float).eps,
+) -> float:
+    """
+    Compute the RMSSE scale (denominator) from training values only:
+    rmse_naive = sqrt(mean((train[t] - train[t-1])^2))
+    """
+    train_vals = np.asarray(train_vals).flatten()
+
+    if train_vals is None or len(train_vals) < 2:
+        return np.nan
+
+    if np.any(np.isnan(train_vals)):
+        return np.nan
+
+    naive_train_sq_errors = np.square(train_vals[1:] - train_vals[:-1])
+    rmse_naive = np.sqrt(np.mean(naive_train_sq_errors))
+
+    if rmse_naive == 0:
+        # Avoid division by zero downstream; use epsilon so RMSSE ≈ rmse_forecast/epsilon
+        rmse_naive = epsilon
+
+    return float(rmse_naive)
+
+
 class RMSSEMetric(Metric):
     """
     RMSSE as a torchmetrics.Metric using a fixed scale (rmse_naive)
