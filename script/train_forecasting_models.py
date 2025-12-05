@@ -73,7 +73,7 @@ def generate_torch_kwargs(
     Tree-based / classical models ignore this.
     """
     early_stopper = EarlyStopping(
-        monitor="val_smape",
+        monitor="train_smape",
         min_delta=0.001,
         patience=patience,
         verbose=True,

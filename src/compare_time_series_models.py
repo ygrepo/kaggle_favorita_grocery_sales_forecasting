@@ -102,6 +102,9 @@ def main():
         "tcn_future_covs": Path(
             "output/metrics/20251205_2013_2014_store_2000_item_cyc_features_tcn_all_dl_future_covs_metrics.csv"
         ),
+        "tcn_past_future_covs": Path(
+            "output/metrics/20251205_2013_2014_store_2000_item_cyc_features_tcn_all_dl_past_future_covs_metrics.csv"
+        ),
         "dl_past_future_covs": Path(
             "output/metrics/20251204_2013_2014_store_2000_item_cyc_features_all_dl_past_future_covs_metrics.csv"
         ),
