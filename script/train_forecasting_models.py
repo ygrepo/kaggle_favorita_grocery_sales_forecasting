@@ -26,10 +26,12 @@ from tqdm import tqdm
 # Optional DL / GPU imports (used only for deep-learning models)
 import torch
 from darts.utils.callbacks import TFMProgressBar
-from torchmetrics import SymmetricMeanAbsolutePercentageError, MetricCollection
+from torchmetrics import SymmetricMeanAbsolutePercentageError
+from torchmetrics import MetricCollection
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning import seed_everything
+
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -51,6 +53,8 @@ from src.time_series_utils import (
     eval_model_with_covariates,
     FUTURE_COV_COLS,
     PAST_COV_COLS,
+    compute_rmsse_scale_from_train,
+    RMSSEMetric,
 )
 
 logger = get_logger(__name__)
@@ -64,22 +68,30 @@ logger = get_logger(__name__)
 def generate_torch_kwargs(
     gpu_id: Optional[int],
     working_dir: Path,
+    train_series: TimeSeries,  # Darts TimeSeries (train portion)
     patience: int = 8,
 ) -> Dict:
     """
     Return pl_trainer_kwargs + torch_metrics dict to pass into create_model()
-    for deep-learning models.
-
-    Tree-based / classical models ignore this.
+    with early stopping on val_rmsse.
     """
+
+    # Get numpy training values from Darts series
+    train_vals = train_series.univariate_values()  # shape [N], np.ndarray
+
+    # Compute RMSSE scale (rmse_naive) using your logic
+    rmse_naive = compute_rmsse_scale_from_train(train_vals)
+
+    # Early stopping on val_rmsse
     early_stopper = EarlyStopping(
-        monitor="train_smape",
-        min_delta=0.001,
+        monitor="val_rmsse",
+        min_delta=0.0001,
         patience=patience,
         verbose=True,
         mode="min",
     )
 
+    # Device selection
     if gpu_id is not None and torch.cuda.is_available():
         accelerator = "gpu"
         devices = [gpu_id]
@@ -88,8 +100,11 @@ def generate_torch_kwargs(
         accelerator = "auto"
         devices = "auto"
 
+    # Torch metrics: RMSSE (you can add others if you want)
     metrics = MetricCollection(
-        {"smape": SymmetricMeanAbsolutePercentageError()}
+        {
+            "rmsse": RMSSEMetric(rmse_naive),
+        }
     )
 
     torch_kwargs = {
@@ -101,11 +116,62 @@ def generate_torch_kwargs(
                 TFMProgressBar(enable_train_bar_only=True),
             ],
             "default_root_dir": str(working_dir),
-            "logger": TensorBoardLogger(save_dir=str(working_dir), name="tft"),
+            "logger": TensorBoardLogger(
+                save_dir=str(working_dir),
+                name="tcn_rmsse",  # or dynamic per model
+            ),
         },
         "torch_metrics": metrics,
     }
+
     return torch_kwargs
+
+
+# def generate_torch_kwargs(
+#     gpu_id: Optional[int],
+#     working_dir: Path,
+#     patience: int = 8,
+# ) -> Dict:
+#     """
+#     Return pl_trainer_kwargs + torch_metrics dict to pass into create_model()
+#     for deep-learning models.
+
+#     Tree-based / classical models ignore this.
+#     """
+#     early_stopper = EarlyStopping(
+#         monitor="train_smape",
+#         min_delta=0.001,
+#         patience=patience,
+#         verbose=True,
+#         mode="min",
+#     )
+
+#     if gpu_id is not None and torch.cuda.is_available():
+#         accelerator = "gpu"
+#         devices = [gpu_id]
+#         logger.debug(f"Using GPU {gpu_id}")
+#     else:
+#         accelerator = "auto"
+#         devices = "auto"
+
+#     metrics = MetricCollection(
+#         {"smape": SymmetricMeanAbsolutePercentageError()}
+#     )
+
+#     torch_kwargs = {
+#         "pl_trainer_kwargs": {
+#             "accelerator": accelerator,
+#             "devices": devices,
+#             "callbacks": [
+#                 early_stopper,
+#                 TFMProgressBar(enable_train_bar_only=True),
+#             ],
+#             "default_root_dir": str(working_dir),
+#             "logger": TensorBoardLogger(save_dir=str(working_dir), name="tft"),
+#         },
+#         "torch_metrics": metrics,
+#     }
+#     return torch_kwargs
 
 
 # Helper: which models are deep-learning?
@@ -207,6 +273,7 @@ def process_store_item(
                 torch_kwargs = generate_torch_kwargs(
                     gpu_id=gpu_id,
                     working_dir=model_dir,
+                    train_series=data_dict["train_target"],
                     patience=args.patience,
                 )
                 batch_size = args.batch_size

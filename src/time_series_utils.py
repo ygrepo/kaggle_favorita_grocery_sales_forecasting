@@ -9,6 +9,9 @@ from darts.models.forecasting.forecasting_model import ForecastingModel
 from darts.metrics import rmse, mae, ope, smape, marre
 from sklearn.preprocessing import RobustScaler
 from darts.dataprocessing.transformers import Scaler
+import torch
+from torch import Tensor
+from torchmetrics import Metric
 import traceback
 
 # Classical models
@@ -860,6 +863,64 @@ def calculate_rmsse(
         return np.inf if rmse_forecast > 0 else np.nan
 
     return rmse_forecast / (rmse_naive + epsilon)
+
+
+class RMSSEMetric(Metric):
+    """
+    RMSSE as a torchmetrics.Metric using a fixed scale (rmse_naive)
+    computed from the training data.
+
+    rmsse = sqrt(mean((y - y_hat)^2)) / rmse_naive
+    """
+
+    full_state_update: bool = False
+
+    def __init__(self, rmse_naive: float, epsilon: float = 1e-12):
+        super().__init__()
+        # This is your denominator
+        self.rmse_naive = (
+            float(rmse_naive) if rmse_naive is not None else float("nan")
+        )
+        self.epsilon = float(epsilon)
+
+        self.add_state(
+            "squared_error",
+            default=torch.tensor(0.0),
+            dist_reduce_fx="sum",
+        )
+        self.add_state(
+            "n_obs",
+            default=torch.tensor(0),
+            dist_reduce_fx="sum",
+        )
+
+    def update(self, preds: Tensor, target: Tensor) -> None:
+        """
+        preds, target: typically [batch, output_chunk_length, channels]
+        We just flatten them and accumulate squared errors.
+        """
+        if preds.numel() == 0 or target.numel() == 0:
+            return
+
+        # Ensure same shape
+        # (Darts should already ensure this, but be defensive)
+        min_len = min(preds.numel(), target.numel())
+        preds_flat = preds.reshape(-1)[:min_len]
+        target_flat = target.reshape(-1)[:min_len]
+
+        se = (target_flat - preds_flat) ** 2
+        self.squared_error += se.sum()
+        self.n_obs += torch.tensor(min_len, device=target.device)
+
+    def compute(self) -> Tensor:
+        if self.n_obs == 0:
+            return torch.tensor(float("nan"))
+
+        mse = self.squared_error / self.n_obs
+        rmse_forecast = torch.sqrt(mse)
+
+        denom = self.rmse_naive if self.rmse_naive > 0 else self.epsilon
+        return rmse_forecast / denom
 
 
 def calculate_mase(
