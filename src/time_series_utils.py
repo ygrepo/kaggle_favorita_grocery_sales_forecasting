@@ -1161,6 +1161,10 @@ def eval_model_with_covariates(
             )
             return _append_nan_row(reason)
 
+        logger.debug(
+            f"input_chunk_length: {input_chunk_length}, output_chunk_length: {output_chunk_length}"
+        )
+
         # --- TARGET SCALER ---
         target_scaler = Scaler(RobustScaler())
         train_target_scaled = target_scaler.fit_transform(train_target)

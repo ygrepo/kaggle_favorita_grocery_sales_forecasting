@@ -128,52 +128,6 @@ def generate_torch_kwargs(
     return torch_kwargs
 
 
-# def generate_torch_kwargs(
-#     gpu_id: Optional[int],
-#     working_dir: Path,
-#     patience: int = 8,
-# ) -> Dict:
-#     """
-#     Return pl_trainer_kwargs + torch_metrics dict to pass into create_model()
-#     for deep-learning models.
-
-#     Tree-based / classical models ignore this.
-#     """
-#     early_stopper = EarlyStopping(
-#         monitor="train_smape",
-#         min_delta=0.001,
-#         patience=patience,
-#         verbose=True,
-#         mode="min",
-#     )
-
-#     if gpu_id is not None and torch.cuda.is_available():
-#         accelerator = "gpu"
-#         devices = [gpu_id]
-#         logger.debug(f"Using GPU {gpu_id}")
-#     else:
-#         accelerator = "auto"
-#         devices = "auto"
-
-#     metrics = MetricCollection(
-#         {"smape": SymmetricMeanAbsolutePercentageError()}
-#     )
-
-#     torch_kwargs = {
-#         "pl_trainer_kwargs": {
-#             "accelerator": accelerator,
-#             "devices": devices,
-#             "callbacks": [
-#                 early_stopper,
-#                 TFMProgressBar(enable_train_bar_only=True),
-#             ],
-#             "default_root_dir": str(working_dir),
-#             "logger": TensorBoardLogger(save_dir=str(working_dir), name="tft"),
-#         },
-#         "torch_metrics": metrics,
-#     }
-#     return torch_kwargs
-
 
 # Helper: which models are deep-learning?
 DL_MODELS = {
