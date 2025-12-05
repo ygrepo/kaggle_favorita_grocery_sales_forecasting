@@ -28,8 +28,9 @@ mkdir -p "$MODEL_DIR"
 
 # Multiple models by default
 #MODELS="TFT"
-MODELS="LIGHTGBM,EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN,XGBOOST,RANDOM_FOREST,LINEAR_REGRESSION"
+#MODELS="LIGHTGBM,EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN,XGBOOST,RANDOM_FOREST,LINEAR_REGRESSION"
 #MODELS="NBEATS,TFT,TSMIXER,TCN,BLOCK_RNN,TIDE"
+MODELS="TCN"
 
 METRICS_DIR=""
 METRICS_FN=""
@@ -41,7 +42,7 @@ SAMPLE="True"
 N_EPOCHS=300
 BATCH_SIZE=64
 NUM_WORKERS=8
-DROPOUT=0.5
+DROPOUT=0.2
 PATIENCE=10
 PAST_COVS="False"
 FUTURE_COVS="True"
@@ -101,7 +102,7 @@ mkdir -p "$METRICS_DIR"
 
 # If metrics_fn wasn't explicitly set, derive it from METRICS_DIR
 if [[ -z "$METRICS_FN" ]]; then
-  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_all_ml_future_covs_metrics.csv"
+  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_all_dl_future_covs_metrics.csv"
 fi
 
 # Create separate MODEL_DIRS for each model type

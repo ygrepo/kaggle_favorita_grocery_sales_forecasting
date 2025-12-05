@@ -446,8 +446,9 @@ def create_model(
             # Medium design
             return TCNModel(
                 kernel_size=2,  # used to be 3
-                num_filters=64,
-                dilation_base=7,  # used to be 2
+                num_filters=16,
+                dilation_base=2,  # used to be 2
+                num_layers=2,
                 weight_norm=True,
                 dropout=dropout,
                 **base_kwargs,
