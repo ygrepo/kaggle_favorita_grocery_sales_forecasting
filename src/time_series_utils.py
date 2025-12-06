@@ -763,7 +763,7 @@ def build_global_train_val_lists(
             item=item,
             split_point=split_point,
             min_train_data_points=min_train_data_points,
-            exclude_cluster_covs=True,
+            exclude_cluster_covs=False,
         )
 
         if data_dict is None:
@@ -1697,14 +1697,8 @@ def eval_global_model_with_covariates(
 
     - Fits the model ONCE on all training series.
     - Then predicts and computes metrics for each (store, item).
-
-    Returns:
-        Updated metrics_df with one row per (store, item).
     """
 
-    # ----------------------------------------------------------------------
-    # Helper to append a NaN row in a consistent way
-    # ----------------------------------------------------------------------
     def _append_nan_row(store: int, item: int, reason: str) -> None:
         nonlocal metrics_df
         logger.warning(f"Skipping {model_type} for S{store}/I{item}: {reason}")
@@ -1723,7 +1717,9 @@ def eval_global_model_with_covariates(
         new_row = pd.DataFrame([nan_row_dict])
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
-    # Guard: local models are not supported in the global path
+    # ------------------------------------------------------------------ #
+    # Guard: local-only models cannot be trained as global models
+    # ------------------------------------------------------------------ #
     if model_type.supports_local:
         logger.error(
             f"Model {model_type.value} is local-only in Darts and cannot be "
@@ -1731,11 +1727,16 @@ def eval_global_model_with_covariates(
         )
         return metrics_df
 
-    # ----------------------------------------------------------------------
+    # Decide once whether we require past/future covariates globally
+    needs_past = model_type.supports_past and past_covs
+    needs_future = model_type.supports_future and future_covs
+
+    # ------------------------------------------------------------------ #
     # 1) Preprocess all series: scaling + checks
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     train_targets_scaled: List[TimeSeries] = []
     val_targets_scaled: List[TimeSeries] = []
+
     train_pasts_scaled: List[TimeSeries] = []
     val_pasts_scaled: List[TimeSeries] = []
     full_pasts_scaled: List[TimeSeries] = []
@@ -1744,10 +1745,8 @@ def eval_global_model_with_covariates(
     val_futures_scaled: List[TimeSeries] = []
     full_futures_scaled: List[TimeSeries] = []
 
-    # Metadata per VALID series (only those included in the global fit)
     valid_series_meta: List[Dict[str, Any]] = []
 
-    # For global min-length checks, read model attributes once
     input_chunk_length = getattr(model, "input_chunk_length", None)
     output_chunk_length = getattr(model, "output_chunk_length", 1)
     if input_chunk_length is not None:
@@ -1770,9 +1769,7 @@ def eval_global_model_with_covariates(
                 _append_nan_row(store, item, "empty validation series")
                 continue
 
-            # --------------------------------------------------------------
-            # Length / variance guards (same as local version)
-            # --------------------------------------------------------------
+            # Length / variance guards
             if len(train_target) < min_required_length:
                 reason = (
                     f"training series too short (len={len(train_target)}) "
@@ -1790,25 +1787,38 @@ def eval_global_model_with_covariates(
                 )
                 continue
 
-            # --------------------------------------------------------------
-            # TARGET SCALER (per series)
-            # --------------------------------------------------------------
+            # If we intend to use past/future covariates globally,
+            # drop series that do not have them.
+            if needs_past and data_dict.get("train_past") is None:
+                _append_nan_row(
+                    store,
+                    item,
+                    "missing past covariates for global model",
+                )
+                continue
+
+            if needs_future and data_dict.get("train_future") is None:
+                _append_nan_row(
+                    store,
+                    item,
+                    "missing future covariates for global model",
+                )
+                continue
+
+            # -------------------------- TARGET SCALER --------------------------
             target_scaler = Scaler(RobustScaler())
             train_target_scaled = target_scaler.fit_transform(train_target)
             val_target_scaled = target_scaler.transform(val_target)
 
-            # --------------------------------------------------------------
-            # PAST COVARIATES SCALER (per series)
-            # --------------------------------------------------------------
+            train_targets_scaled.append(train_target_scaled)
+            val_targets_scaled.append(val_target_scaled)
+
+            # ------------------------ PAST COVARIATES --------------------------
             train_past_scaled = None
             val_past_scaled = None
             full_past_scaled = None
 
-            if (
-                model_type.supports_past
-                and data_dict.get("train_past") is not None
-                and past_covs
-            ):
+            if needs_past:
                 past_scaler = Scaler(RobustScaler())
                 train_past_scaled = past_scaler.fit_transform(
                     data_dict["train_past"]
@@ -1824,19 +1834,16 @@ def eval_global_model_with_covariates(
                         data_dict["full_past"]
                     )
 
-            # --------------------------------------------------------------
-            # FUTURE COVARIATES SCALER (per series)
-            # --------------------------------------------------------------
+                train_pasts_scaled.append(train_past_scaled)
+                val_pasts_scaled.append(val_past_scaled)
+                full_pasts_scaled.append(full_past_scaled)
+
+            # ----------------------- FUTURE COVARIATES -------------------------
             train_future_scaled = None
             val_future_scaled = None
             full_future_scaled = None
 
-            if (
-                model_type.supports_future
-                and data_dict.get("full_future") is not None
-                and data_dict.get("train_future") is not None
-                and future_covs
-            ):
+            if needs_future:
                 future_scaler = Scaler(RobustScaler())
                 train_future_scaled = future_scaler.fit_transform(
                     data_dict["train_future"]
@@ -1847,34 +1854,14 @@ def eval_global_model_with_covariates(
                         data_dict["val_future"]
                     )
 
-                full_future_scaled = future_scaler.transform(
-                    data_dict["full_future"]
-                )
+                if data_dict.get("full_future") is not None:
+                    full_future_scaled = future_scaler.transform(
+                        data_dict["full_future"]
+                    )
 
-            # --------------------------------------------------------------
-            # Collect scaled series for global fit
-            # --------------------------------------------------------------
-            train_targets_scaled.append(train_target_scaled)
-            val_targets_scaled.append(val_target_scaled)
-
-            if train_past_scaled is not None:
-                train_pasts_scaled.append(train_past_scaled)
-                val_pasts_scaled.append(val_past_scaled)
-                full_pasts_scaled.append(full_past_scaled)
-            else:
-                # keep alignment by storing None placeholders if needed
-                train_pasts_scaled.append(None)
-                val_pasts_scaled.append(None)
-                full_pasts_scaled.append(None)
-
-            if train_future_scaled is not None:
                 train_futures_scaled.append(train_future_scaled)
                 val_futures_scaled.append(val_future_scaled)
                 full_futures_scaled.append(full_future_scaled)
-            else:
-                train_futures_scaled.append(None)
-                val_futures_scaled.append(None)
-                full_futures_scaled.append(None)
 
             valid_series_meta.append(
                 {
@@ -1886,11 +1873,7 @@ def eval_global_model_with_covariates(
                     "target_scaler": target_scaler,
                     "train_target_scaled": train_target_scaled,
                     "val_target_scaled": val_target_scaled,
-                    "train_past_scaled": train_past_scaled,
-                    "val_past_scaled": val_past_scaled,
                     "full_past_scaled": full_past_scaled,
-                    "train_future_scaled": train_future_scaled,
-                    "val_future_scaled": val_future_scaled,
                     "full_future_scaled": full_future_scaled,
                 }
             )
@@ -1904,9 +1887,9 @@ def eval_global_model_with_covariates(
             _append_nan_row(store, item, "exception during preprocessing")
             continue
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     # 2) Fit global model ONCE on all training series
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     if len(valid_series_meta) == 0:
         logger.warning(
             f"No valid series to fit global model {model_type}. "
@@ -1923,28 +1906,15 @@ def eval_global_model_with_covariates(
             "series": train_targets_scaled,
         }
 
-        # Validation series for early stopping, if supported
         if model_type.supports_val:
             fit_kwargs["val_series"] = val_targets_scaled
 
-        # Past covariates - pass list if any series actually has them
-        # IMPORTANT: Keep None placeholders to maintain alignment with series list
-        if (
-            model_type.supports_past
-            and past_covs
-            and any(ts is not None for ts in train_pasts_scaled)
-        ):
+        if needs_past and len(train_pasts_scaled) > 0:
             fit_kwargs["past_covariates"] = train_pasts_scaled
             if model_type.supports_val:
                 fit_kwargs["val_past_covariates"] = val_pasts_scaled
 
-        # Future covariates
-        # IMPORTANT: Keep None placeholders to maintain alignment with series list
-        if (
-            model_type.supports_future
-            and future_covs
-            and any(ts is not None for ts in train_futures_scaled)
-        ):
+        if needs_future and len(train_futures_scaled) > 0:
             fit_kwargs["future_covariates"] = train_futures_scaled
             if model_type.supports_val:
                 fit_kwargs["val_future_covariates"] = val_futures_scaled
@@ -1955,15 +1925,13 @@ def eval_global_model_with_covariates(
     except Exception as e:
         logger.error(f"Error fitting global {model_type}: {e}")
         logger.error(traceback.format_exc())
-        # If fit fails, we already appended NaNs for invalid series; but we
-        # now need to append NaNs for all valid_series_meta as well.
         for meta in valid_series_meta:
             _append_nan_row(meta["store"], meta["item"], "global fit failed")
         return metrics_df
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     # 3) Per-series prediction + metrics
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     logger.info(
         f"Predicting and computing metrics for GLOBAL {model_type.value}..."
     )
@@ -1985,19 +1953,10 @@ def eval_global_model_with_covariates(
                 "series": train_target_scaled,
             }
 
-            # IMPORTANT: for prediction, covariates must extend through horizon
-            if (
-                model_type.supports_past
-                and past_covs
-                and full_past_scaled is not None
-            ):
+            if needs_past and full_past_scaled is not None:
                 predict_kwargs["past_covariates"] = full_past_scaled
 
-            if (
-                model_type.supports_future
-                and future_covs
-                and full_future_scaled is not None
-            ):
+            if needs_future and full_future_scaled is not None:
                 predict_kwargs["future_covariates"] = full_future_scaled
 
             logger.debug(
@@ -2005,11 +1964,8 @@ def eval_global_model_with_covariates(
                 f"{list(predict_kwargs.keys())}"
             )
             forecast_scaled = model.predict(**predict_kwargs)
-
-            # Inverse-transform the forecast
             forecast = target_scaler.inverse_transform(forecast_scaled)
 
-            # Metrics in original scale
             metrics = calculate_metrics(train_target, val_target, forecast)
 
             new_row_dict = {
@@ -2024,7 +1980,6 @@ def eval_global_model_with_covariates(
                 "MAE": metrics["mae"],
                 "OPE": metrics["ope"],
             }
-
             new_row = pd.DataFrame([new_row_dict])
 
             cols_to_downcast = [
@@ -2039,8 +1994,9 @@ def eval_global_model_with_covariates(
 
             logger.info(
                 f"FINISHED GLOBAL {model_type.value} S{store}/I{item}. "
-                f"RMSSE: {metrics['rmsse']:.4f}, SMAPE: {metrics['smape']:.4f}"
-                f", MARRE: {metrics['marre']:.4f}"
+                f"RMSSE: {metrics['rmsse']:.4f}, "
+                f"SMAPE: {metrics['smape']:.4f}, "
+                f"MARRE: {metrics['marre']:.4f}"
             )
 
         except Exception as e:

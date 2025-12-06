@@ -218,14 +218,18 @@ def train(
                 future_covs=future_covs,
             )
 
-            metrics_df = eval_global_model_with_covariates(
-                mtype,
-                model,
-                meta_list,
-                metrics_df,
-                past_covs=past_covs,
-                future_covs=future_covs,
-            )
+            try:
+                metrics_df = eval_global_model_with_covariates(
+                    mtype,
+                    model,
+                    meta_list,
+                    metrics_df,
+                    past_covs=past_covs,
+                    future_covs=future_covs,
+                )
+            except Exception as e:
+                logger.error(f"Error fitting global {model_type}: {e}")
+                logger.error(traceback.format_exc())
 
         return metrics_df
 
