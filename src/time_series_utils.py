@@ -1723,6 +1723,15 @@ def eval_global_model_with_covariates(
         new_row = pd.DataFrame([nan_row_dict])
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
+    # Guard: classical/local models are not supported in the global path
+    if model_type.supports_local:
+        logger.error(
+            f"Model {model_type.value} is local-only in Darts and cannot be "
+            "trained as a global model (expects a single TimeSeries, not a list)."
+        )
+        # Option 1: just return metrics_df unchanged:
+        return metrics_df
+
     # ----------------------------------------------------------------------
     # 1) Preprocess all series: scaling + checks
     # ----------------------------------------------------------------------

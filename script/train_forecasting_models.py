@@ -172,8 +172,20 @@ def train(
             past_covs=past_covs,
             future_covs=future_covs,
         )
+
+        # Split requested models into global-capable vs local-only
+        global_model_types = [m for m in model_types if m.supports_global]
+        local_only_model_types = [m for m in model_types if m.supports_local]
+
+        if local_only_model_types:
+            logger.warning(
+                "The following models are local-only in Darts and will be "
+                "skipped in the GLOBAL pipeline: "
+                f"{[m.value for m in local_only_model_types]}"
+            )
+
         # Train each model requested
-        for mtype in model_types:
+        for mtype in global_model_types:
             logger.info(f"=== Starting model {mtype.value} ===")
 
             if not mtype.supports_local:
