@@ -763,7 +763,7 @@ def build_global_train_val_lists(
             item=item,
             split_point=split_point,
             min_train_data_points=min_train_data_points,
-            exclude_cluster_covs=False,
+            exclude_cluster_covs=True,
         )
 
         if data_dict is None:
