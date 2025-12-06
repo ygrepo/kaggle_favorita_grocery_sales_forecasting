@@ -432,7 +432,7 @@ def main():
     ]
     metrics_df = pd.DataFrame(columns=metrics_cols)
     train(
-        df=unique_combinations,
+        df=df,
         model_types=model_types,
         split_point=args.split_point,
         min_train_data_points=args.min_train_data_points,
