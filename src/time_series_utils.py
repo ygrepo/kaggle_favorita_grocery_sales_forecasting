@@ -1722,8 +1722,11 @@ def eval_global_model_with_covariates(
     else:
         min_required_length = 1
 
-    for store, item, data_dict in series_meta:
+    for meta in series_meta:
         try:
+            store = meta["store"]
+            item = meta["item"]
+            data_dict = meta["data_dict"]
             train_target: TimeSeries = data_dict["train_target"]
             val_target: TimeSeries = data_dict["val_target"]
             forecast_horizon = len(val_target)
