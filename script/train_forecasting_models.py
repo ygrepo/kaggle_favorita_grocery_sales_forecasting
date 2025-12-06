@@ -442,7 +442,7 @@ def main():
         "OPE",
     ]
     metrics_df = pd.DataFrame(columns=metrics_cols)
-    train(
+    metrics_df = train(
         df=df,
         model_types=model_types,
         split_point=args.split_point,

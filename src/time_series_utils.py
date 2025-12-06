@@ -1723,13 +1723,12 @@ def eval_global_model_with_covariates(
         new_row = pd.DataFrame([nan_row_dict])
         metrics_df = pd.concat([metrics_df, new_row], ignore_index=True)
 
-    # Guard: classical/local models are not supported in the global path
+    # Guard: local models are not supported in the global path
     if model_type.supports_local:
         logger.error(
             f"Model {model_type.value} is local-only in Darts and cannot be "
             "trained as a global model (expects a single TimeSeries, not a list)."
         )
-        # Option 1: just return metrics_df unchanged:
         return metrics_df
 
     # ----------------------------------------------------------------------
@@ -2040,7 +2039,8 @@ def eval_global_model_with_covariates(
 
             logger.info(
                 f"FINISHED GLOBAL {model_type.value} S{store}/I{item}. "
-                f"SMAPE: {metrics['smape']:.4f}"
+                f"RMSSE: {metrics['rmsse']:.4f}, SMAPE: {metrics['smape']:.4f}"
+                f", MARRE: {metrics['marre']:.4f}"
             )
 
         except Exception as e:
