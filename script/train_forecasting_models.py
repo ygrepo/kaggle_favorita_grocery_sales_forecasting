@@ -410,7 +410,7 @@ def main():
     logger.info(f"Available future covariate columns: {available_future_covs}")
     available_static_covs = [c for c in STATIC_COV_COLS if c in df.columns]
     logger.info(f"Available static covariate columns: {available_static_covs}")
-    df.query("store == 12 and item == 765518", inplace=True)
+    df.query("store == 12 and item == 108952", inplace=True)
     # # Unique (store, item) pairs
     # unique_combinations = df[["store", "item"]].drop_duplicates()
     # if args.N > 0:
