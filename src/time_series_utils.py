@@ -740,6 +740,7 @@ def build_global_train_val_lists(
             item=item,
             split_point=split_point,
             min_train_data_points=min_train_data_points,
+            exclude_cluster_covs=True,
         )
 
         if data_dict is None:
@@ -957,6 +958,7 @@ def get_train_val_data_with_covariates(
     item: int,
     split_point: float,
     min_train_data_points: int,
+    exclude_cluster_covs: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Creates Darts TimeSeries objects for Target, Past Covariates, and Future Covariates,
@@ -1048,12 +1050,14 @@ def get_train_val_data_with_covariates(
         # ------------------------------------------------------------------
         # Past covariates: rolling/ewm + cluster medians (observed)
         # ------------------------------------------------------------------
-        cluster_cols = [
-            c
-            for c in ts_df_dynamic.columns
-            if c.startswith("store_cluster_median_")
-            or c.startswith("item_cluster_median_")
-        ]
+        cluster_cols = []
+        if not exclude_cluster_covs:
+            cluster_cols = [
+                c
+                for c in ts_df_dynamic.columns
+                if c.startswith("store_cluster_median_")
+                or c.startswith("item_cluster_median_")
+            ]
 
         valid_p_cols = [
             c for c in PAST_COV_COLS if c in ts_df_dynamic.columns
@@ -1893,32 +1897,26 @@ def eval_global_model_with_covariates(
             fit_kwargs["val_series"] = val_targets_scaled
 
         # Past covariates - pass list if any series actually has them
+        # IMPORTANT: Keep None placeholders to maintain alignment with series list
         if (
             model_type.supports_past
             and past_covs
             and any(ts is not None for ts in train_pasts_scaled)
         ):
-            fit_kwargs["past_covariates"] = [
-                ts for ts in train_pasts_scaled if ts is not None
-            ]
+            fit_kwargs["past_covariates"] = train_pasts_scaled
             if model_type.supports_val:
-                fit_kwargs["val_past_covariates"] = [
-                    ts for ts in val_pasts_scaled if ts is not None
-                ]
+                fit_kwargs["val_past_covariates"] = val_pasts_scaled
 
         # Future covariates
+        # IMPORTANT: Keep None placeholders to maintain alignment with series list
         if (
             model_type.supports_future
             and future_covs
             and any(ts is not None for ts in train_futures_scaled)
         ):
-            fit_kwargs["future_covariates"] = [
-                ts for ts in train_futures_scaled if ts is not None
-            ]
+            fit_kwargs["future_covariates"] = train_futures_scaled
             if model_type.supports_val:
-                fit_kwargs["val_future_covariates"] = [
-                    ts for ts in val_futures_scaled if ts is not None
-                ]
+                fit_kwargs["val_future_covariates"] = val_futures_scaled
 
         logger.debug(f"Global fit kwargs keys: {list(fit_kwargs.keys())}")
         model.fit(**fit_kwargs)
