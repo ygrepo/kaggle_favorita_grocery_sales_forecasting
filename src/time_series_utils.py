@@ -222,18 +222,31 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
 
 
 # Helper: choose lags depending on xl_design and covariate flags
+# def _lags_for_regression(
+#     xl_design: bool, past_covs: bool, future_covs: bool
+# ) -> tuple[int, Optional[int], Optional[tuple[int, int]]]:
+#     if xl_design:
+#         lags = 60
+#         lags_past = 60 if past_covs else None
+#         # Use only same-time or past "future covariates" (no positive lags)
+#         lags_future = (15, 0) if future_covs else None  # lags -15..-1
+#     else:
+#         lags = 30
+#         lags_past = 30 if past_covs else None
+#         lags_future = (15, 0) if future_covs else None  # lags -15..-1
+#     return lags, lags_past, lags_future
 def _lags_for_regression(
     xl_design: bool, past_covs: bool, future_covs: bool
 ) -> tuple[int, Optional[int], Optional[tuple[int, int]]]:
     if xl_design:
         lags = 60
         lags_past = 60 if past_covs else None
-        # Use only same-time or past "future covariates" (no positive lags)
-        lags_future = (15, 0) if future_covs else None  # lags -15..-1
+        # past 15 steps + current step
+        lags_future = (-15, 0) if future_covs else None
     else:
         lags = 30
         lags_past = 30 if past_covs else None
-        lags_future = (15, 0) if future_covs else None  # lags -15..-1
+        lags_future = (-15, 0) if future_covs else None
     return lags, lags_past, lags_future
 
 
