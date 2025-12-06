@@ -28,8 +28,8 @@ mkdir -p "$MODEL_DIR"
 
 # Multiple models by default
 #MODELS="TFT"
-MODELS="LIGHTGBM,EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN,XGBOOST,RANDOM_FOREST,LINEAR_REGRESSION"
-#MODELS="NBEATS,TFT,TSMIXER,TCN,BLOCK_RNN,TIDE"
+#MODELS="LIGHTGBM,EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN,XGBOOST,RANDOM_FOREST,LINEAR_REGRESSION"
+MODELS="NBEATS,TFT,TSMIXER,TCN,BLOCK_RNN,TIDE"
 #MODELS="TCN"
 
 METRICS_DIR=""
@@ -47,7 +47,6 @@ PATIENCE=10
 PAST_COVS="True"
 FUTURE_COVS="True"
 XL_DESIGN="False"
-
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 LOG_LEVEL="DEBUG"
 
@@ -99,10 +98,11 @@ if [[ -z "$METRICS_DIR" ]]; then
   METRICS_DIR="${PROJECT_ROOT}/output/metrics/${MODELS_SAFE_NAME}"
 fi
 mkdir -p "$METRICS_DIR"
-
+MODEL_TYPE="DL"
+SUFFIX="past_future_covs"
 # If metrics_fn wasn't explicitly set, derive it from METRICS_DIR
 if [[ -z "$METRICS_FN" ]]; then
-  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_tcn_all_dl_past_future_covs_metrics.csv"
+  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_${MODEL_TYPE}_${SUFFIX}_metrics.csv"
 fi
 
 # Create separate MODEL_DIRS for each model type
