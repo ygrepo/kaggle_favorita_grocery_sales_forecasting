@@ -171,6 +171,29 @@ class ModelType(str, Enum):
             ModelType.LIGHTGBM,
         }
 
+    @property
+    def supports_global(self) -> bool:
+        return self in {
+            ModelType.RANDOM_FOREST,
+            ModelType.LINEAR_REGRESSION,
+            ModelType.XGBOOST,
+            ModelType.NBEATS,
+            ModelType.TFT,
+            ModelType.TSMIXER,
+            ModelType.BLOCK_RNN,
+            ModelType.TCN,
+            ModelType.TIDE,
+        }
+
+    @property
+    def supports_local(self) -> bool:
+        return self in {
+            ModelType.EXPONENTIAL_SMOOTHING,
+            ModelType.AUTO_ARIMA,
+            ModelType.THETA,
+            ModelType.KALMAN,
+        }
+
 
 # Helper: which models are deep-learning?
 DL_MODELS = {

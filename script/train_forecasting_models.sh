@@ -98,11 +98,11 @@ if [[ -z "$METRICS_DIR" ]]; then
   METRICS_DIR="${PROJECT_ROOT}/output/metrics/${MODELS_SAFE_NAME}"
 fi
 mkdir -p "$METRICS_DIR"
-MODEL_TYPE="DL"
+MODEL_TYPE="ML_GLOBAL"
 SUFFIX="past_future_covs"
 # If metrics_fn wasn't explicitly set, derive it from METRICS_DIR
 if [[ -z "$METRICS_FN" ]]; then
-  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_${MODEL_TYPE}_${SUFFIX}_global_metrics.csv"
+  METRICS_FN="${METRICS_DIR}/${DATE}_2013_2014_store_2000_item_cyc_features_${MODEL_TYPE}_${SUFFIX}_metrics.csv"
 fi
 
 # Create separate MODEL_DIRS for each model type
