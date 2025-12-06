@@ -187,11 +187,6 @@ def train(
         # Train each model requested
         for mtype in global_model_types:
             logger.info(f"=== Starting model {mtype.value} ===")
-
-            if not mtype.supports_local:
-                logger.info(f"Skipping {mtype.value} ( local)")
-                continue
-
             # For DL models, we set up a model_dir and torch_kwargs
             if mtype in DL_MODELS:
                 model_dir_for_model = model_dir.resolve() / mtype.value
