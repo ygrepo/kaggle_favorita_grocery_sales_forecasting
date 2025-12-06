@@ -22,7 +22,7 @@ import traceback
 
 from darts import TimeSeries
 import pandas as pd
-
+from tqdm import tqdm
 
 # Optional DL / GPU imports (used only for deep-learning models)
 import torch
@@ -48,14 +48,12 @@ from src.time_series_utils import (
     ModelType,
     parse_models_arg,
     create_model,
-    generate_torch_kwargs_global,
-    build_global_train_val_lists,
-    eval_global_model_with_covariates,
-    compute_rmsse_scale_from_train,
-    RMSSEMetric,
+    generate_torch_kwargs,
+    prepare_store_item_series,
+    get_train_val_data_with_covariates,
+    eval_model_with_covariates,
     FUTURE_COV_COLS,
     PAST_COV_COLS,
-    STATIC_COV_COLS,
     DL_MODELS,
 )
 from src.model_utils import get_first_free_gpu
@@ -68,158 +66,138 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------
 
 
-def generate_torch_kwargs(
-    gpu_id: Optional[int],
-    working_dir: Path,
-    train_series: TimeSeries,  # Darts TimeSeries (train portion)
-    patience: int = 8,
-) -> Dict:
-    """
-    Return pl_trainer_kwargs + torch_metrics dict to pass into create_model()
-    with early stopping on val_rmsse.
-    """
-
-    # Get numpy training values from Darts series
-    train_vals = train_series.univariate_values()  # shape [N], np.ndarray
-
-    # Compute RMSSE scale (rmse_naive) using your logic
-    rmse_naive = compute_rmsse_scale_from_train(train_vals)
-
-    # Early stopping on val_rmsse
-    early_stopper = EarlyStopping(
-        monitor="val_rmsse",
-        min_delta=0.0001,
-        patience=patience,
-        verbose=True,
-        mode="min",
-    )
-
-    # Device selection
-    if gpu_id is not None and torch.cuda.is_available():
-        accelerator = "gpu"
-        devices = [gpu_id]
-        logger.debug(f"Using GPU {gpu_id}")
-    else:
-        accelerator = "auto"
-        devices = "auto"
-
-    # Torch metrics: RMSSE (you can add others if you want)
-    metrics = MetricCollection(
-        {
-            "rmsse": RMSSEMetric(rmse_naive),
-        }
-    )
-
-    torch_kwargs = {
-        "pl_trainer_kwargs": {
-            "accelerator": accelerator,
-            "devices": devices,
-            "callbacks": [
-                early_stopper,
-                TFMProgressBar(enable_train_bar_only=True),
-            ],
-            "default_root_dir": str(working_dir),
-            "logger": TensorBoardLogger(
-                save_dir=str(working_dir),
-                name="tcn_rmsse",  # or dynamic per model
-            ),
-        },
-        "torch_metrics": metrics,
-    }
-
-    return torch_kwargs
-
-
 # ---------------------------------------------------------------------
 # Per-(store, item) processing
 # ---------------------------------------------------------------------
 
 
-def train(
-    df: pd.DataFrame,
-    model_types: List[ModelType],
-    split_point: float,
-    min_train_data_points: int,
-    model_dir: Path,
-    patience: int,
-    batch_size: int,
-    n_epochs: int,
-    dropout: float,
-    past_covs: bool,
-    future_covs: bool,
-    xl_design: bool,
-    metrics_df: pd.DataFrame,
+def process_store_item(
+    store: int,
+    item: int,
     gpu_id: Optional[int],
-    store_medians_fn: Path | None,
-    item_medians_fn: Path | None,
-    store_assign_fn: Path | None,
-    item_assign_fn: Path | None,
-):
+    df: pd.DataFrame,
+    args,
+    model_types: List[ModelType],
+    metrics_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Train/evaluate ALL requested models for a single (store, item) pair.
+
+    - Prepares the time series (target + covariates + static)
+    - Splits into train/val with covariates
+    - For each model_type:
+        * if deep-learning: build torch_kwargs, then create_model(...)
+        * else: create_model(...) with torch_kwargs=None
+    - Calls eval_model_with_covariates() which handles scaling and metrics.
+    """
     try:
-        logger.info("Processing all (store, item) combinations")
-        (
-            train_targets,
-            *_,
-            meta_list,
-        ) = build_global_train_val_lists(
+        logger.info(f"Processing store={store}, item={item}")
+
+        # Prepare DataFrame with target, covariates, static covariates
+        ts_df = prepare_store_item_series(
             df,
-            split_point=split_point,
-            min_train_data_points=min_train_data_points,
-            store_medians_fn=store_medians_fn,
-            item_medians_fn=item_medians_fn,
-            store_assign_fn=store_assign_fn,
-            item_assign_fn=item_assign_fn,
-            past_covs=past_covs,
-            future_covs=future_covs,
+            store,
+            item,
+            args.store_medians_fn,
+            args.item_medians_fn,
+            args.store_assign_fn,
+            args.item_assign_fn,
         )
+        if ts_df.empty:
+            logger.warning(f"No data for store={store}, item={item}")
+            return metrics_df
+
+        # Train/Val split with TimeSeries + covariates
+        data_dict = get_train_val_data_with_covariates(
+            ts_df=ts_df,
+            store=store,
+            item=item,
+            split_point=args.split_point,
+            min_train_data_points=args.min_train_data_points,
+        )
+        if data_dict is None:
+            logger.warning(
+                f"store={store}, item={item}: No training data, skipping."
+            )
+            return metrics_df
+
+        # Covariate dimensions (for logging)
+        p_dim = (
+            data_dict["train_past"].n_components
+            if data_dict.get("train_past") is not None
+            else 0
+        )
+        f_dim = (
+            data_dict["train_future"].n_components
+            if data_dict.get("train_future") is not None
+            else 0
+        )
+        logger.info(
+            f"S{store}/I{item}: Train len={len(data_dict['train_target'])}, "
+            f"Val len={len(data_dict['val_target'])}, Past Dim={p_dim}, Future Dim={f_dim}"
+        )
+
         # Train each model requested
         for mtype in model_types:
-            logger.info(f"=== Starting model {mtype.value} ===")
+            logger.info(
+                f"=== S{store}/I{item}: Starting model {mtype.value} ==="
+            )
 
             # For DL models, we set up a model_dir and torch_kwargs
             if mtype in DL_MODELS:
-                model_dir_for_model = model_dir.resolve() / mtype.value
-                model_dir_for_model.mkdir(parents=True, exist_ok=True)
-                torch_kwargs = generate_torch_kwargs_global(
-                    gpu_id=gpu_id,
-                    working_dir=model_dir_for_model,
-                    train_series=train_targets,
-                    patience=patience,
+                model_dir = (
+                    args.model_dir.resolve()
+                    / mtype.value
+                    / f"store_{store}_item_{item}"
                 )
-                batch_size_for_model = batch_size
-                n_epochs_for_model = n_epochs
-                dropout_for_model = dropout
+                model_dir.mkdir(parents=True, exist_ok=True)
+                torch_kwargs = generate_torch_kwargs(
+                    gpu_id=gpu_id,
+                    working_dir=model_dir,
+                    train_series=data_dict["train_target"],
+                    patience=args.patience,
+                )
+                batch_size = args.batch_size
+                n_epochs = args.n_epochs
+                dropout = args.dropout
             else:
                 # Classical / tree-based models do not need PL trainer
                 torch_kwargs = None
-                batch_size_for_model = batch_size
-                n_epochs_for_model = n_epochs
-                dropout_for_model = dropout
+                batch_size = args.batch_size  # ignored by classical models
+                n_epochs = args.n_epochs  # ignored by classical models
+                dropout = args.dropout  # ignored by classical models
 
             model = create_model(
                 model_type=mtype,
-                batch_size=batch_size_for_model,
+                batch_size=batch_size,
                 torch_kwargs=torch_kwargs,
-                n_epochs=n_epochs_for_model,
-                dropout=dropout_for_model,
-                xl_design=xl_design,
-                past_covs=past_covs,
-                future_covs=future_covs,
+                n_epochs=n_epochs,
+                dropout=dropout,
+                xl_design=args.xl_design,
+                past_covs=args.past_covs,
+                future_covs=args.future_covs,
             )
 
-            metrics_df = eval_global_model_with_covariates(
+            logger.info(
+                f"[GPU {gpu_id}] Training {mtype.value} "
+                f"(Past Dim={p_dim}, Future Dim={f_dim})"
+            )
+
+            metrics_df = eval_model_with_covariates(
                 mtype,
                 model,
-                meta_list,
+                store,
+                item,
+                data_dict,
                 metrics_df,
-                past_covs=past_covs,
-                future_covs=future_covs,
+                past_covs=args.past_covs,
+                future_covs=args.future_covs,
             )
 
         return metrics_df
 
     except Exception as e:
-        logger.error(f"ERROR: {e}")
+        logger.error(f"ERROR for store={store}, item={item}: {e}")
         logger.error(traceback.format_exc())
         return metrics_df
 
@@ -354,16 +332,15 @@ def main():
     logger.info(f"Dropout (DL): {args.dropout}")
     logger.info(f"Patience (DL): {args.patience}")
 
-    # Assign GPU
-    gpu_id = get_first_free_gpu()
-
-    if gpu_id is not None:
-        torch.cuda.set_device(gpu_id)
-        logger.info(
-            f"Using GPU {gpu_id}: {torch.cuda.get_device_name(gpu_id)}"
-        )
+    # GPU info
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        for i in range(num_gpus):
+            logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
     else:
-        logger.info("Running on CPU")
+        num_gpus = 0
+        logger.warning("No GPUs detected — running on CPU")
+    logger.info(f"GPU arg: {args.gpu}")
 
     # Load data
     df = load_raw_data(args.data_fn)
@@ -383,18 +360,14 @@ def main():
     if drop_cols:
         df.drop(columns=drop_cols, inplace=True)
 
-    # Ensure date is datetime
-    df["date"] = pd.to_datetime(df["date"])
     logger.info("Loaded data head:")
     logger.info(df.head())
 
     # Log which covariates are available globally
-    available_past_covs = [c for c in PAST_COV_COLS if c in df.columns]
-    logger.info(f"Available past covariate columns: {available_past_covs}")
     available_future_covs = [c for c in FUTURE_COV_COLS if c in df.columns]
+    available_past_covs = [c for c in PAST_COV_COLS if c in df.columns]
     logger.info(f"Available future covariate columns: {available_future_covs}")
-    available_static_covs = [c for c in STATIC_COV_COLS if c in df.columns]
-    logger.info(f"Available static covariate columns: {available_static_covs}")
+    logger.info(f"Available past covariate columns: {available_past_covs}")
 
     # Unique (store, item) pairs
     unique_combinations = df[["store", "item"]].drop_duplicates()
@@ -426,26 +399,39 @@ def main():
         "OPE",
     ]
     metrics_df = pd.DataFrame(columns=metrics_cols)
-    train(
-        df=df,
-        model_types=model_types,
-        split_point=args.split_point,
-        min_train_data_points=args.min_train_data_points,
-        model_dir=args.model_dir,
-        patience=args.patience,
-        batch_size=args.batch_size,
-        n_epochs=args.n_epochs,
-        dropout=args.dropout,
-        past_covs=args.past_covs,
-        future_covs=args.future_covs,
-        xl_design=args.xl_design,
-        metrics_df=metrics_df,
-        gpu_id=gpu_id,
-        store_medians_fn=args.store_medians_fn,
-        item_medians_fn=args.item_medians_fn,
-        store_assign_fn=args.store_assign_fn,
-        item_assign_fn=args.item_assign_fn,
-    )
+
+    # Main loop
+    for idx, (store, item) in tqdm(
+        enumerate(
+            unique_combinations[["store", "item"]].itertuples(
+                index=False, name=None
+            )
+        ),
+        total=len(unique_combinations),
+        desc="Store/Item Pairs",
+    ):
+        # GPU assignment (round-robin if no explicit gpu specified)
+        if num_gpus == 0:
+            gpu_id = None
+        elif args.gpu >= 0:
+            gpu_id = args.gpu
+        else:
+            gpu_id = idx % num_gpus
+
+        metrics_df = process_store_item(
+            store=store,
+            item=item,
+            gpu_id=gpu_id,
+            df=df,
+            args=args,
+            model_types=model_types,
+            metrics_df=metrics_df,
+        )
+
+        # Periodic save for safety
+        if (idx + 1) % 10 == 0:
+            metrics_fn = Path(args.metrics_fn).resolve()
+            save_csv_or_parquet(metrics_df, metrics_fn)
 
     # Final save
     metrics_fn = Path(args.metrics_fn).resolve()

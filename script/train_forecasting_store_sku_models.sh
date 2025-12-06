@@ -159,7 +159,7 @@ export CUDA_VISIBLE_DEVICES=0,1
 
 set +e  # allow error handling below
 
-python "${SCRIPT_DIR}/train_forecasting_models.py" \
+python "${SCRIPT_DIR}/train_forecasting_store_sku_models.py" \
   --data_fn "$DATA_FN" \
   --store_medians_fn "$STORE_MEDIAN_FN" \
   --store_assign_fn "$STORE_ASSIGN_FN" \

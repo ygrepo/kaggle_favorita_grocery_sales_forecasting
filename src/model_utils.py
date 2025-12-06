@@ -95,6 +95,23 @@ def is_gpu_available():
     return torch.cuda.is_available()
 
 
+def get_first_free_gpu() -> Optional[int]:
+    if not torch.cuda.is_available():
+        return None
+
+    num_gpus = torch.cuda.device_count()
+    free_gpus = []
+
+    for i in range(num_gpus):
+        torch.cuda.set_device(i)
+        free_mem, total_mem = torch.cuda.mem_get_info(i)
+        free_gpus.append((i, free_mem))
+
+    # Pick GPU with the most free memory
+    best_gpu = max(free_gpus, key=lambda x: x[1])[0]
+    return best_gpu
+
+
 class StoreItemDataset(Dataset):
     def __init__(
         self, df, store_item_id, feature_cols, target_col, weight_col
