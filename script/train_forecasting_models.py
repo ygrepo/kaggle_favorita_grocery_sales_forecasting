@@ -411,6 +411,11 @@ def main():
     logger.info(
         f"Starting processing of {len(unique_combinations)} (store,item) pairs..."
     )
+    df.query(
+        "store in @unique_combinations['store'] and item in @unique_combinations['item']",
+        inplace=True,
+    )
+    logger.info(f"Filtered data shape: {df.shape}")
 
     # Metrics dataframe
     metrics_cols = [
