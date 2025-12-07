@@ -1747,14 +1747,48 @@ def eval_global_model_with_covariates(
 
     valid_series_meta: List[Dict[str, Any]] = []
 
-    input_chunk_length = getattr(model, "input_chunk_length", None)
-    output_chunk_length = getattr(model, "output_chunk_length", 1)
-    if input_chunk_length is not None:
-        min_required_length = int(input_chunk_length) + int(
-            max(output_chunk_length, 1)
-        )
-    else:
-        min_required_length = 1
+    min_required_length = getattr(model, "min_train_series_length", None)
+    # If that fails (some older custom models), manually calculate based on type
+    if min_required_length is None:
+        input_chunk = getattr(model, "input_chunk_length", None)
+        output_chunk = getattr(model, "output_chunk_length", 1)
+
+        # Check for Regression Lags
+        lags_dict = getattr(model, "lags", None)
+
+        if input_chunk is not None:
+            min_required_length = input_chunk + output_chunk
+        elif lags_dict is not None:
+            # If lags are present, we need at least max(lags) + output
+            # (Simplification: just ensure we have enough for 1 training sample)
+            if isinstance(lags_dict, int):
+                min_required_length = lags_dict + output_chunk
+            elif isinstance(lags_dict, (list, tuple)):
+                min_required_length = max(lags_dict) + output_chunk
+            elif isinstance(lags_dict, dict):
+                # Extract max lag from dictionary keys/values
+                all_lags = []
+                for k, v in lags_dict.items():
+                    if v is None:
+                        continue
+                    if isinstance(v, int):
+                        all_lags.append(v)
+                    elif isinstance(v, list):
+                        all_lags.extend(v)
+                min_required_length = (
+                    max(all_lags) + output_chunk if all_lags else 1
+                )
+        else:
+            min_required_length = 1
+
+    # input_chunk_length = getattr(model, "input_chunk_length", None)
+    # output_chunk_length = getattr(model, "output_chunk_length", 1)
+    # if input_chunk_length is not None:
+    #     min_required_length = int(input_chunk_length) + int(
+    #         max(output_chunk_length, 1)
+    #     )
+    # else:
+    #     min_required_length = 1
 
     for meta in series_meta:
         try:
