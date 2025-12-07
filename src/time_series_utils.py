@@ -1780,16 +1780,7 @@ def eval_global_model_with_covariates(
                 )
         else:
             min_required_length = 1
-
-    # input_chunk_length = getattr(model, "input_chunk_length", None)
-    # output_chunk_length = getattr(model, "output_chunk_length", 1)
-    # if input_chunk_length is not None:
-    #     min_required_length = int(input_chunk_length) + int(
-    #         max(output_chunk_length, 1)
-    #     )
-    # else:
-    #     min_required_length = 1
-
+    logger.info(f"min_required_length: {min_required_length}")
     for meta in series_meta:
         try:
             store = meta["store"]

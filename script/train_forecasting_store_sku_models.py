@@ -20,7 +20,6 @@ from typing import Dict, Optional, List
 
 import traceback
 
-from darts import TimeSeries
 import pandas as pd
 from tqdm import tqdm
 
