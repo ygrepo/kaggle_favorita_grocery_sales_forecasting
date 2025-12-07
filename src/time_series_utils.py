@@ -407,7 +407,7 @@ def create_model(
     else:
         # Medium Config
         base_kwargs = dict(
-            input_chunk_length=30,
+            input_chunk_length=60,
             output_chunk_length=1,
             n_epochs=n_epochs,
             batch_size=batch_size,
