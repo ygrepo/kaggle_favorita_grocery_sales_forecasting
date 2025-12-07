@@ -1923,7 +1923,9 @@ def eval_global_model_with_covariates(
         model.fit(**fit_kwargs)
 
     except Exception as e:
-        logger.error(f"Error fitting global {model_type}: {e}")
+        logger.error(
+            f"Error fitting global {model_type}-S:${store}/I:{item}: {e}"
+        )
         logger.error(traceback.format_exc())
         for meta in valid_series_meta:
             _append_nan_row(meta["store"], meta["item"], "global fit failed")
