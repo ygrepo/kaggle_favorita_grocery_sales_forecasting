@@ -410,26 +410,26 @@ def main():
     logger.info(f"Available future covariate columns: {available_future_covs}")
     available_static_covs = [c for c in STATIC_COV_COLS if c in df.columns]
     logger.info(f"Available static covariate columns: {available_static_covs}")
-    df.query("store == 49 and item == 828630", inplace=True)
+    # df.query("store == 49 and item == 828630", inplace=True)
     # Unique (store, item) pairs
-    # unique_combinations = df[["store", "item"]].drop_duplicates()
-    # if args.N > 0:
-    #     if args.sample:
-    #         logger.info(f"Sampling {args.N} random combinations")
-    #         unique_combinations = unique_combinations.sample(
-    #             args.N, random_state=args.seed
-    #         )
-    #     else:
-    #         logger.info(f"Limiting to first {args.N} combinations")
-    #         unique_combinations = unique_combinations.head(args.N)
+    unique_combinations = df[["store", "item"]].drop_duplicates()
+    if args.N > 0:
+        if args.sample:
+            logger.info(f"Sampling {args.N} random combinations")
+            unique_combinations = unique_combinations.sample(
+                args.N, random_state=args.seed
+            )
+        else:
+            logger.info(f"Limiting to first {args.N} combinations")
+            unique_combinations = unique_combinations.head(args.N)
 
-    # logger.info(
-    #     f"Starting processing of {len(unique_combinations)} (store,item) pairs..."
-    # )
-    # df.query(
-    #     "store in @unique_combinations['store'] and item in @unique_combinations['item']",
-    #     inplace=True,
-    # )
+    logger.info(
+        f"Starting processing of {len(unique_combinations)} (store,item) pairs..."
+    )
+    df.query(
+        "store in @unique_combinations['store'] and item in @unique_combinations['item']",
+        inplace=True,
+    )
     logger.info(f"Filtered data shape: {df.shape}")
 
     # Metrics dataframe
