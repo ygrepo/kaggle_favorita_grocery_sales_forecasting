@@ -1924,7 +1924,7 @@ def eval_global_model_with_covariates(
 
     except Exception as e:
         logger.error(
-            f"Error fitting global {model_type}-S:${store}/I:{item}: {e}"
+            f"Error fitting global {model_type}-S:{store}/I:{item}: {e}"
         )
         logger.error(traceback.format_exc())
         for meta in valid_series_meta:
