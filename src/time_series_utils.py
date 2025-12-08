@@ -622,10 +622,12 @@ def evaluate_model_with_covariates_optuna(
 
 def make_optuna_objective_global(
     model_type: ModelType,
+    train_series: List[TimeSeries],
     series_meta: List[Dict[str, Any]],
     past_covs: bool = True,
     future_covs: bool = True,
     xl_design: bool = False,
+    patience: int = 8,
 ) -> Callable[[optuna.Trial], float]:
     """
     Build an Optuna objective for a *global* DL model using the existing
@@ -700,11 +702,25 @@ def make_optuna_objective_global(
         else:
             weight_decay = 0.0
 
+        # Compute RMSSE scale (rmse_naive) using your logic
+        rmse_naive = compute_global_rmsse_scale_from_train_list(train_series)
+        torch_metrics = MetricCollection({"RMSSE": RMSSEMetric(rmse_naive)})
+
+        # EarlyStopping monitors "val_RMSSE"
+        es_callback = EarlyStopping(
+            monitor="val_RMSSE",
+            patience=patience,
+            mode="min",
+            verbose=False,
+        )
+
         torch_kwargs: Dict[str, Any] = {
             "input_chunk_length": input_chunk_length,
-            "optimizer_kwargs": {
-                "lr": lr,
-                "weight_decay": weight_decay,
+            "torch_metrics": torch_metrics,
+            "optimizer_kwargs": {"lr": lr, "weight_decay": weight_decay},
+            "pl_trainer_kwargs": {
+                "callbacks": [es_callback],
+                "enable_checkpointing": False,
             },
         }
 

@@ -55,6 +55,7 @@ def search(
     past_covs: bool,
     future_covs: bool,
     xl_design: bool,
+    patience: int,
     store_medians_fn: Path | None,
     item_medians_fn: Path | None,
     store_assign_fn: Path | None,
@@ -78,7 +79,7 @@ def search(
     try:
         logger.info("Processing all (store, item) combinations for HPO")
         (
-            _,
+            train_targets,
             meta_list,
         ) = build_global_train_val_lists(
             df,
@@ -109,10 +110,12 @@ def search(
 
             objective = make_optuna_objective_global(
                 model_type=mtype,
+                train_series=train_targets,
                 series_meta=meta_list,
                 past_covs=past_covs,
                 future_covs=future_covs,
                 xl_design=xl_design,
+                patience=patience,
             )
 
             study = optuna.create_study(
@@ -394,6 +397,7 @@ def main():
         min_train_data_points=args.min_train_data_points,
         past_covs=args.past_covs,
         future_covs=args.future_covs,
+        patience=args.patience,
         xl_design=args.xl_design,
         store_medians_fn=args.store_medians_fn,
         item_medians_fn=args.item_medians_fn,
