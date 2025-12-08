@@ -717,32 +717,6 @@ def make_optuna_objective_global(
     xl_design: bool = False,
     patience: int = 8,
 ) -> Callable[[optuna.Trial], float]:
-    """
-    Build an Optuna objective for a *global* DL model using the existing
-    covariate-aware pipeline (`eval_global_model_with_covariates`).
-
-    Parameters
-    ----------
-    model_type : ModelType
-        Must be a deep-learning model (in DL_MODELS).
-    series_meta : List[Dict[str, Any]]
-        List of series metadata dicts as required by
-        `eval_global_model_with_covariates`. Each dict must contain:
-          - "store": int
-          - "item": int
-          - "data_dict": dict with train/val targets + covariates
-    past_covs : bool
-        Whether to try to use past covariates.
-    future_covs : bool
-        Whether to try to use future covariates.
-    xl_design : bool
-        Whether to use XL design in `create_model`.
-
-    Returns
-    -------
-    objective : Callable[[optuna.Trial], float]
-        Optuna objective function returning mean RMSSE (to minimize).
-    """
 
     if model_type not in DL_MODELS:
         raise ValueError(
@@ -759,7 +733,6 @@ def make_optuna_objective_global(
             "disabling past_covs for HPO.",
             model_type.value,
         )
-
     if future_covs and not model_type.supports_future:
         logger.warning(
             "Model %s does not support future covariates; "
@@ -769,7 +742,7 @@ def make_optuna_objective_global(
 
     def objective(trial: optuna.Trial) -> float:
         # --------------------------------------------------------------
-        # 1) Training-level hyperparameters (torch_kwargs)
+        # 1) Training-level hyperparameters
         # --------------------------------------------------------------
         input_chunk_length = trial.suggest_int(
             "input_chunk_length", 30, 60, step=10
@@ -790,11 +763,12 @@ def make_optuna_objective_global(
         else:
             weight_decay = 0.0
 
-        # Compute RMSSE scale (rmse_naive) using your logic
+        # --------------------------------------------------------------
+        # 2) Global RMSSE scale + metrics + EarlyStopping on val_RMSSE
+        # --------------------------------------------------------------
         rmse_naive = compute_global_rmsse_scale_from_train_list(train_series)
         torch_metrics = MetricCollection({"RMSSE": RMSSEMetric(rmse_naive)})
 
-        # EarlyStopping monitors "val_RMSSE"
         es_callback = EarlyStopping(
             monitor="val_RMSSE",
             patience=patience,
@@ -802,10 +776,9 @@ def make_optuna_objective_global(
             verbose=False,
         )
 
+        # torch_kwargs: ONLY trainer/metrics-related stuff
         torch_kwargs: Dict[str, Any] = {
-            "input_chunk_length": input_chunk_length,
             "torch_metrics": torch_metrics,
-            "optimizer_kwargs": {"lr": lr, "weight_decay": weight_decay},
             "pl_trainer_kwargs": {
                 "callbacks": [es_callback],
                 "enable_checkpointing": False,
@@ -813,7 +786,7 @@ def make_optuna_objective_global(
         }
 
         # --------------------------------------------------------------
-        # 2) Model-specific architecture hyperparameters (model_kwargs)
+        # 3) Model-specific architecture hyperparameters
         # --------------------------------------------------------------
         model_kwargs: Dict[str, Any] = {}
 
@@ -875,23 +848,33 @@ def make_optuna_objective_global(
             )
 
         # --------------------------------------------------------------
-        # 3) Create the model using your factory
+        # 4) Pack everything into model_cfg
         # --------------------------------------------------------------
-        model_cfg = {"model_kwargs": model_kwargs}
+        model_cfg = {
+            "input_chunk_length": input_chunk_length,
+            "n_epochs": n_epochs,
+            "batch_size": batch_size,
+            "dropout": dropout,
+            "optimizer_kwargs": {"lr": lr, "weight_decay": weight_decay},
+            "model_kwargs": model_kwargs,
+        }
+
+        # Create model via your factory
         model: ForecastingModel = create_model(
             model_type=model_type,
-            batch_size=batch_size,
-            torch_kwargs=torch_kwargs,
+            batch_size=batch_size,  # will be overridden by cfg
+            n_epochs=n_epochs,  # idem
+            lr=lr,  # idem
+            dropout=dropout,  # idem
             model_cfg=model_cfg,
-            n_epochs=n_epochs,
-            dropout=dropout,
+            torch_kwargs=torch_kwargs,
             xl_design=xl_design,
             past_covs=use_past,
             future_covs=use_future,
         )
 
         # --------------------------------------------------------------
-        # 4) Evaluate via the global covariate-aware pipeline
+        # 5) Evaluate via the global covariate-aware pipeline
         # --------------------------------------------------------------
         score = evaluate_model_with_covariates_optuna(
             model_type=model_type,
@@ -904,6 +887,204 @@ def make_optuna_objective_global(
         return float(score)
 
     return objective
+
+
+# def make_optuna_objective_global(
+#     model_type: ModelType,
+#     train_series: List[TimeSeries],
+#     series_meta: List[Dict[str, Any]],
+#     past_covs: bool = True,
+#     future_covs: bool = True,
+#     xl_design: bool = False,
+#     patience: int = 8,
+# ) -> Callable[[optuna.Trial], float]:
+#     """
+#     Build an Optuna objective for a *global* DL model using the existing
+#     covariate-aware pipeline (`eval_global_model_with_covariates`).
+
+#     Parameters
+#     ----------
+#     model_type : ModelType
+#         Must be a deep-learning model (in DL_MODELS).
+#     series_meta : List[Dict[str, Any]]
+#         List of series metadata dicts as required by
+#         `eval_global_model_with_covariates`. Each dict must contain:
+#           - "store": int
+#           - "item": int
+#           - "data_dict": dict with train/val targets + covariates
+#     past_covs : bool
+#         Whether to try to use past covariates.
+#     future_covs : bool
+#         Whether to try to use future covariates.
+#     xl_design : bool
+#         Whether to use XL design in `create_model`.
+
+#     Returns
+#     -------
+#     objective : Callable[[optuna.Trial], float]
+#         Optuna objective function returning mean RMSSE (to minimize).
+#     """
+
+#     if model_type not in DL_MODELS:
+#         raise ValueError(
+#             f"make_optuna_objective_global currently supports only DL models; "
+#             f"got {model_type.value}"
+#         )
+
+#     use_past = past_covs and model_type.supports_past
+#     use_future = future_covs and model_type.supports_future
+
+#     if past_covs and not model_type.supports_past:
+#         logger.warning(
+#             "Model %s does not support past covariates; "
+#             "disabling past_covs for HPO.",
+#             model_type.value,
+#         )
+
+#     if future_covs and not model_type.supports_future:
+#         logger.warning(
+#             "Model %s does not support future covariates; "
+#             "disabling future_covs for HPO.",
+#             model_type.value,
+#         )
+
+#     def objective(trial: optuna.Trial) -> float:
+#         # --------------------------------------------------------------
+#         # 1) Training-level hyperparameters (torch_kwargs)
+#         # --------------------------------------------------------------
+#         input_chunk_length = trial.suggest_int(
+#             "input_chunk_length", 30, 60, step=10
+#         )
+#         n_epochs = trial.suggest_int("n_epochs", 50, 300, step=25)
+#         batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+#         dropout = trial.suggest_float("dropout", 0.0, 0.3)
+
+#         lr = trial.suggest_float("lr", 5e-4, 3e-3, log=True)
+
+#         use_weight_decay = trial.suggest_categorical(
+#             "use_weight_decay", [False, True]
+#         )
+#         if use_weight_decay:
+#             weight_decay = trial.suggest_float(
+#                 "weight_decay", 1e-6, 1e-3, log=True
+#             )
+#         else:
+#             weight_decay = 0.0
+
+#         # Compute RMSSE scale (rmse_naive) using your logic
+#         rmse_naive = compute_global_rmsse_scale_from_train_list(train_series)
+#         torch_metrics = MetricCollection({"RMSSE": RMSSEMetric(rmse_naive)})
+
+#         # EarlyStopping monitors "val_RMSSE"
+#         es_callback = EarlyStopping(
+#             monitor="val_RMSSE",
+#             patience=patience,
+#             mode="min",
+#             verbose=False,
+#         )
+
+#         torch_kwargs: Dict[str, Any] = {
+#             "input_chunk_length": input_chunk_length,
+#             "torch_metrics": torch_metrics,
+#             "optimizer_kwargs": {"lr": lr, "weight_decay": weight_decay},
+#             "pl_trainer_kwargs": {
+#                 "callbacks": [es_callback],
+#                 "enable_checkpointing": False,
+#             },
+#         }
+
+#         # --------------------------------------------------------------
+#         # 2) Model-specific architecture hyperparameters (model_kwargs)
+#         # --------------------------------------------------------------
+#         model_kwargs: Dict[str, Any] = {}
+
+#         if model_type == ModelType.NBEATS:
+#             model_kwargs["num_stacks"] = trial.suggest_int("num_stacks", 8, 16)
+#             model_kwargs["num_blocks"] = trial.suggest_int("num_blocks", 1, 3)
+#             model_kwargs["num_layers"] = trial.suggest_int("num_layers", 3, 6)
+#             model_kwargs["layer_widths"] = trial.suggest_categorical(
+#                 "layer_widths", [256, 512, 1024]
+#             )
+
+#         elif model_type == ModelType.TFT:
+#             model_kwargs["hidden_size"] = trial.suggest_categorical(
+#                 "hidden_size", [32, 64, 128]
+#             )
+#             model_kwargs["lstm_layers"] = trial.suggest_int(
+#                 "lstm_layers", 1, 4
+#             )
+#             model_kwargs["num_attention_heads"] = trial.suggest_int(
+#                 "num_attention_heads", 4, 12
+#             )
+
+#         elif model_type == ModelType.TSMIXER:
+#             model_kwargs["hidden_size"] = trial.suggest_categorical(
+#                 "hidden_size", [64, 128, 256]
+#             )
+#             model_kwargs["ff_size"] = trial.suggest_categorical(
+#                 "ff_size", [128, 256, 512]
+#             )
+#             model_kwargs["num_blocks"] = trial.suggest_int(
+#                 "num_blocks", 4, 16, step=4
+#             )
+
+#         elif model_type == ModelType.BLOCK_RNN:
+#             model_kwargs["hidden_dim"] = trial.suggest_categorical(
+#                 "hidden_dim", [32, 64, 128, 256]
+#             )
+#             model_kwargs["n_rnn_layers"] = trial.suggest_int(
+#                 "n_rnn_layers", 1, 4
+#             )
+#             model_kwargs["model"] = trial.suggest_categorical(
+#                 "rnn_type", ["GRU", "LSTM"]
+#             )
+
+#         elif model_type == ModelType.TCN:
+#             model_kwargs["kernel_size"] = trial.suggest_int(
+#                 "kernel_size", 2, 4
+#             )
+#             model_kwargs["num_filters"] = trial.suggest_categorical(
+#                 "num_filters", [16, 32, 64, 128]
+#             )
+#             model_kwargs["dilation_base"] = trial.suggest_categorical(
+#                 "dilation_base", [2, 4, 7]
+#             )
+
+#         elif model_type == ModelType.TIDE:
+#             model_kwargs["hidden_size"] = trial.suggest_categorical(
+#                 "hidden_size", [32, 64, 128, 256]
+#             )
+
+#         # --------------------------------------------------------------
+#         # 3) Create the model using your factory
+#         # --------------------------------------------------------------
+#         model_cfg = {"model_kwargs": model_kwargs}
+#         model: ForecastingModel = create_model(
+#             model_type=model_type,
+#             batch_size=batch_size,
+#             torch_kwargs=torch_kwargs,
+#             model_cfg=model_cfg,
+#             n_epochs=n_epochs,
+#             dropout=dropout,
+#             xl_design=xl_design,
+#             past_covs=use_past,
+#             future_covs=use_future,
+#         )
+
+#         # --------------------------------------------------------------
+#         # 4) Evaluate via the global covariate-aware pipeline
+#         # --------------------------------------------------------------
+#         score = evaluate_model_with_covariates_optuna(
+#             model_type=model_type,
+#             model=model,
+#             series_meta=series_meta,
+#             past_covs=use_past,
+#             future_covs=use_future,
+#         )
+
+#         return float(score)
+
+#     return objective
 
 
 def generate_torch_kwargs(
