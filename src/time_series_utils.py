@@ -689,7 +689,16 @@ def make_optuna_objective_global(
         dropout = trial.suggest_float("dropout", 0.0, 0.3)
 
         lr = trial.suggest_float("lr", 5e-4, 3e-3, log=True)
-        weight_decay = trial.suggest_float("weight_decay", 0.0, 1e-3, log=True)
+
+        use_weight_decay = trial.suggest_categorical(
+            "use_weight_decay", [False, True]
+        )
+        if use_weight_decay:
+            weight_decay = trial.suggest_float(
+                "weight_decay", 1e-6, 1e-3, log=True
+            )
+        else:
+            weight_decay = 0.0
 
         torch_kwargs: Dict[str, Any] = {
             "input_chunk_length": input_chunk_length,

@@ -115,7 +115,9 @@ def search(
                 xl_design=xl_design,
             )
 
-            study = optuna.create_study(direction="minimize")
+            study = optuna.create_study(
+                direction="minimize", study_name=mtype.value
+            )
             study.optimize(
                 objective,
                 n_trials=n_trials,
