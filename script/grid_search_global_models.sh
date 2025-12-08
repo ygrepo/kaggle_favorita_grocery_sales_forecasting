@@ -8,12 +8,13 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-# Configuration
-DATA_FN="${PROJECT_ROOT}/data/favorita_processed.parquet"
-STORE_MEDIANS_FN="${PROJECT_ROOT}/data/store_medians.parquet"
-ITEM_MEDIANS_FN="${PROJECT_ROOT}/data/item_medians.parquet"
-STORE_ASSIGN_FN="${PROJECT_ROOT}/data/store_cluster_assignment.parquet"
-ITEM_ASSIGN_FN="${PROJECT_ROOT}/data/item_cluster_assignment.parquet"
+# Default configuration
+DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parquet"
+STORE_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
+STORE_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_store_assignments.csv"
+ITEM_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
+ITEM_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_item_assignments.csv"
+
 
 MODEL_DIR="${PROJECT_ROOT}/models"
 RESULTS_DIR="${PROJECT_ROOT}/output/grid_search"
