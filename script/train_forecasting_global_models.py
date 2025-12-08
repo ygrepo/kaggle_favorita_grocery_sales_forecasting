@@ -142,6 +142,7 @@ def train(
                 past_covs=past_covs,
                 future_covs=future_covs,
             )
+            logger.info(f"Created model: {model}")
 
             try:
                 metrics_df = eval_global_model_with_covariates(
