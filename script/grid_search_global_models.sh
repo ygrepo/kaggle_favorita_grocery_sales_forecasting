@@ -17,13 +17,13 @@ RESULTS_DIR="${PROJECT_ROOT}/output/grid_search"
 mkdir -p "$RESULTS_DIR"
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-RESULTS_FN="${RESULTS_DIR}/${TIMESTAMP}_grid_search_results.csv"
 LOG_DIR="${PROJECT_ROOT}/output/logs"
 mkdir -p "$LOG_DIR"
 LOG_FN="${LOG_DIR}/${TIMESTAMP}_grid_search.log"
 
 # Grid search parameters
 MODELS="NBEATS"  # Change to TCN, TFT, etc. for other models
+RESULTS_FN="${RESULTS_DIR}/${TIMESTAMP}_${MODELS}_grid_search_results.csv"
 N=5  # Number of (store, item) pairs to process
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
