@@ -941,8 +941,6 @@ def build_global_train_val_lists(
     item_medians_fn: Path | None = None,
     store_assign_fn: Path | None = None,
     item_assign_fn: Path | None = None,
-    # past_covs: bool = False,
-    # future_covs: bool = False,
 ) -> Tuple[
     List[TimeSeries],
     List[Dict[str, Any]],
@@ -950,17 +948,10 @@ def build_global_train_val_lists(
     """
     Build lists of train/val target series and covariates for a GLOBAL model.
     Returns:
-        train_targets, val_targets,
-        train_pasts, val_pasts,
-        train_futures, val_futures,
+        train_targets,
         meta_list (each meta has store, item, and data_dict)
     """
     train_targets: List[TimeSeries] = []
-    # val_targets: List[TimeSeries] = []
-    # train_pasts: List[TimeSeries] = []
-    # val_pasts: List[TimeSeries] = []
-    # train_futures: List[TimeSeries] = []
-    # val_futures: List[TimeSeries] = []
     meta_list: List[Dict[str, Any]] = []
 
     # Loop over all (store, item) combos
@@ -991,25 +982,7 @@ def build_global_train_val_lists(
             continue
 
         train_target = data_dict["train_target"]
-        # val_target = data_dict["val_target"]
-
         train_targets.append(train_target)
-        # val_targets.append(val_target)
-
-        # Past covariates
-        # if past_covs and data_dict.get("train_past") is not None:
-        #     train_pasts.append(data_dict["train_past"])
-        #     val_pasts.append(data_dict["val_past"])
-        # else:
-        #     # keep shapes aligned (use None later)
-        #     pass
-
-        # # Future covariates
-        # if future_covs and data_dict.get("train_future") is not None:
-        #     train_futures.append(data_dict["train_future"])
-        #     val_futures.append(data_dict["val_future"])
-        # else:
-        #     pass
 
         meta_list.append(
             {
