@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from enum import Enum
-from typing import Optional, Dict, Any, List, Tuple, Sequence
+from typing import Optional, Dict, Any, List, Tuple, Sequence, Callable
 import pandas as pd
 import numpy as np
 from darts import TimeSeries
@@ -16,6 +16,8 @@ import traceback
 from darts.utils.callbacks import TFMProgressBar
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
+import optuna
+
 
 # Classical models
 from darts.models import (
@@ -241,6 +243,7 @@ def create_model(
     model_type: ModelType,
     batch_size: int = 32,
     torch_kwargs: Optional[Dict[str, Any]] = None,
+    model_kwargs: Optional[Dict[str, Any]] = None,
     n_epochs: int = 100,
     dropout: float = 0.1,
     xl_design: bool = False,
@@ -253,138 +256,112 @@ def create_model(
     Args:
         model_type: ModelType enum value.
         batch_size: Batch size for deep learning models.
-        torch_kwargs: PyTorch/Lightning kwargs for deep learning models.
+        torch_kwargs: PyTorch/Lightning kwargs for deep learning models
+                      (e.g. optimizer_kwargs, pl_trainer_kwargs, input_chunk_length).
+        model_kwargs: Model-specific hyperparameters (architectural or
+                      estimator-level, e.g. num_stacks for NBEATS, n_estimators
+                      for RandomForest, etc.). Values here override the defaults.
         n_epochs: Number of epochs for deep learning models.
         dropout: Dropout rate for deep learning models.
         xl_design: If True, use larger 'XL' deep learning architectures.
                    If False, use the medium-sized architectures.
+        past_covs: Whether model will use past covariates.
+        future_covs: Whether model will use future covariates.
 
     Returns:
         ForecastingModel instance.
     """
     if torch_kwargs is None:
         torch_kwargs = {}
+    if model_kwargs is None:
+        model_kwargs = {}
+
+    logger.info(
+        f"Creating model: {model_type.value}, "
+        f"past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}"
+    )
 
     # =====================================================================
     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
     # =====================================================================
 
-    logger.info(
-        f"Creating model: {model_type.value}, past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}"
-    )
     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
-        return ExponentialSmoothing()
+        return ExponentialSmoothing(**model_kwargs)
 
     if model_type == ModelType.AUTO_ARIMA:
-        return AutoARIMA()
+        return AutoARIMA(**model_kwargs)
 
     if model_type == ModelType.THETA:
-        return Theta(season_mode=SeasonalityMode.ADDITIVE)
+        return Theta(season_mode=SeasonalityMode.ADDITIVE, **model_kwargs)
 
     if model_type == ModelType.KALMAN:
-        return KalmanForecaster(dim_x=1, random_state=42)
+        return KalmanForecaster(
+            dim_x=model_kwargs.get("dim_x", 1),
+            random_state=model_kwargs.get("random_state", 42),
+            **{
+                k: v
+                for k, v in model_kwargs.items()
+                if k not in {"dim_x", "random_state"}
+            },
+        )
+
+    # =====================================================================
+    # Regression / Tree-based models (lags + covariate lags)
+    # =====================================================================
 
     lags, lags_past, lags_future = _lags_for_regression(
         xl_design, past_covs, future_covs
     )
 
     if model_type == ModelType.LINEAR_REGRESSION:
-        if xl_design:
-            # XL: using longer history and more covariate lags
-            return LinearRegressionModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                output_chunk_length=1,
-                use_static_covariates=True,
-                # Linear regression does not have hyperparameters besides fit_intercept, etc.
-            )
-        else:
-            # Medium
-            return LinearRegressionModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                output_chunk_length=1,
-                use_static_covariates=True,
-            )
-    # ---------------------------------------------------------------------
-    # Tree-based Regression Models (LightGBM, RandomForestModel)
-    # Use lags + covariate lags so they can exploit past & future covariates
-    # and static covariates embedded in the target series.
-    # ---------------------------------------------------------------------
+        base = dict(
+            lags=lags,
+            lags_past_covariates=lags_past,
+            lags_future_covariates=lags_future,
+            output_chunk_length=1,
+            use_static_covariates=True,
+        )
+        base.update(model_kwargs)
+        return LinearRegressionModel(**base)
 
     if model_type == ModelType.LIGHTGBM:
-        if xl_design:
-            # XL: more history + more covariate lags
-            return LightGBMModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                output_chunk_length=1,
-                use_static_covariates=True,
-                random_state=42,
-            )
-        else:
-            # Medium config
-            return LightGBMModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                output_chunk_length=1,
-                use_static_covariates=True,
-                random_state=42,
-            )
+        base = dict(
+            lags=lags,
+            lags_past_covariates=lags_past,
+            lags_future_covariates=lags_future,
+            output_chunk_length=1,
+            use_static_covariates=True,
+            random_state=42,
+        )
+        # allow overriding (e.g. n_estimators) via model_kwargs
+        base.update(model_kwargs)
+        return LightGBMModel(**base)
 
     if model_type == ModelType.RANDOM_FOREST:
-        if xl_design:
-            # XL: more history + larger forest
-            return RandomForestModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                n_estimators=500,
-                max_depth=None,
-                n_jobs=-1,
-                use_static_covariates=True,
-                random_state=42,
-            )
-        else:
-            # Medium config
-            return RandomForestModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                n_estimators=200,
-                max_depth=None,
-                n_jobs=-1,
-                use_static_covariates=True,
-                random_state=42,
-            )
+        base = dict(
+            lags=lags,
+            lags_past_covariates=lags_past,
+            lags_future_covariates=lags_future,
+            n_estimators=500 if xl_design else 200,
+            max_depth=None,
+            n_jobs=-1,
+            use_static_covariates=True,
+            random_state=42,
+        )
+        base.update(model_kwargs)
+        return RandomForestModel(**base)
 
     if model_type == ModelType.XGBOOST:
-        if xl_design:
-            # XL: more history + slightly larger booster
-            return XGBModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                output_chunk_length=1,
-                use_static_covariates=True,
-                random_state=42,
-                # objective="reg:squarederror", max_depth=8, n_estimators=500, learning_rate=0.05
-            )
-        else:
-            # Medium config
-            return XGBModel(
-                lags=lags,
-                lags_past_covariates=lags_past,
-                lags_future_covariates=lags_future,
-                output_chunk_length=1,
-                use_static_covariates=True,
-                random_state=42,
-                # objective="reg:squarederror", max_depth=6, n_estimators=300, learning_rate=0.1
-            )
+        base = dict(
+            lags=lags,
+            lags_past_covariates=lags_past,
+            lags_future_covariates=lags_future,
+            output_chunk_length=1,
+            use_static_covariates=True,
+            random_state=42,
+        )
+        base.update(model_kwargs)
+        return XGBModel(**base)
 
     # =====================================================================
     # Deep Learning Models
@@ -392,7 +369,6 @@ def create_model(
 
     # Base configuration shared by all deep learning models
     if xl_design:
-        # Slightly longer history + optional optimizer tuning for XL nets
         base_kwargs = dict(
             input_chunk_length=60,
             output_chunk_length=1,
@@ -402,10 +378,8 @@ def create_model(
             save_checkpoints=False,
             force_reset=True,
             optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
-            **torch_kwargs,
         )
     else:
-        # Medium Config
         base_kwargs = dict(
             input_chunk_length=60,
             output_chunk_length=1,
@@ -414,32 +388,33 @@ def create_model(
             random_state=42,
             save_checkpoints=False,
             force_reset=True,
-            **torch_kwargs,
         )
+
+    # torch_kwargs can override defaults in base_kwargs
+    base_kwargs.update(torch_kwargs)
 
     # -------------------------
     # N-BEATS
     # -------------------------
     if model_type == ModelType.NBEATS:
         if xl_design:
-            # XL: larger and deeper than Medium
             return NBEATSModel(
                 generic_architecture=True,
-                num_stacks=16,
-                num_blocks=2,
-                num_layers=6,
-                layer_widths=1024,
+                num_stacks=model_kwargs.get("num_stacks", 16),
+                num_blocks=model_kwargs.get("num_blocks", 2),
+                num_layers=model_kwargs.get("num_layers", 6),
+                layer_widths=model_kwargs.get("layer_widths", 1024),
                 dropout=dropout,
                 **base_kwargs,
             )
         else:
-            # Medium design
             return NBEATSModel(
                 generic_architecture=True,
-                num_stacks=10,
-                num_blocks=1,
-                num_layers=4,
-                layer_widths=512,
+                num_stacks=model_kwargs.get("num_stacks", 10),
+                num_blocks=model_kwargs.get("num_blocks", 1),
+                num_layers=model_kwargs.get("num_layers", 4),
+                layer_widths=model_kwargs.get("layer_widths", 512),
+                dropout=dropout,
                 **base_kwargs,
             )
 
@@ -448,23 +423,29 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TFT:
         if xl_design:
-            # XL: larger and deeper than Medium
             return TFTModel(
-                hidden_size=128,
-                lstm_layers=4,
+                hidden_size=model_kwargs.get("hidden_size", 128),
+                lstm_layers=model_kwargs.get("lstm_layers", 4),
                 dropout=dropout,
-                num_attention_heads=12,
-                add_relative_index=True,
+                num_attention_heads=model_kwargs.get(
+                    "num_attention_heads", 12
+                ),
+                add_relative_index=model_kwargs.get(
+                    "add_relative_index", True
+                ),
                 **base_kwargs,
             )
         else:
-            # Medium design
             return TFTModel(
-                hidden_size=64,
-                lstm_layers=2,
+                hidden_size=model_kwargs.get("hidden_size", 64),
+                lstm_layers=model_kwargs.get("lstm_layers", 2),
                 dropout=dropout,
-                num_attention_heads=10,
-                add_relative_index=True,
+                num_attention_heads=model_kwargs.get(
+                    "num_attention_heads", 10
+                ),
+                add_relative_index=model_kwargs.get(
+                    "add_relative_index", True
+                ),
                 **base_kwargs,
             )
 
@@ -473,45 +454,41 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TSMIXER:
         if xl_design:
-            # XL: larger and deeper than Medium
             return TSMixerModel(
-                hidden_size=128,
-                ff_size=256,
-                activation="LeakyReLU",
-                num_blocks=16,
+                hidden_size=model_kwargs.get("hidden_size", 128),
+                ff_size=model_kwargs.get("ff_size", 256),
+                activation=model_kwargs.get("activation", "LeakyReLU"),
+                num_blocks=model_kwargs.get("num_blocks", 16),
                 dropout=dropout,
                 **base_kwargs,
             )
         else:
-            # Medium design
             return TSMixerModel(
-                hidden_size=64,
-                ff_size=128,
-                activation="LeakyReLU",
-                num_blocks=8,
+                hidden_size=model_kwargs.get("hidden_size", 64),
+                ff_size=model_kwargs.get("ff_size", 128),
+                activation=model_kwargs.get("activation", "LeakyReLU"),
+                num_blocks=model_kwargs.get("num_blocks", 8),
                 dropout=dropout,
                 **base_kwargs,
             )
 
     # -------------------------
-    # BlockRNN (LSTM)
+    # BlockRNN (LSTM/GRU)
     # -------------------------
     if model_type == ModelType.BLOCK_RNN:
         if xl_design:
-            # XL: larger and deeper than Medium
             return BlockRNNModel(
-                model="GRU",
-                hidden_dim=128,
-                n_rnn_layers=3,
+                model=model_kwargs.get("model", "GRU"),
+                hidden_dim=model_kwargs.get("hidden_dim", 128),
+                n_rnn_layers=model_kwargs.get("n_rnn_layers", 3),
                 dropout=dropout,
                 **base_kwargs,
             )
         else:
-            # Medium design
             return BlockRNNModel(
-                model="GRU",
-                hidden_dim=64,
-                n_rnn_layers=2,
+                model=model_kwargs.get("model", "GRU"),
+                hidden_dim=model_kwargs.get("hidden_dim", 64),
+                n_rnn_layers=model_kwargs.get("n_rnn_layers", 2),
                 dropout=dropout,
                 **base_kwargs,
             )
@@ -521,23 +498,22 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TCN:
         if xl_design:
-            # XL: larger and deeper than Medium
             return TCNModel(
-                kernel_size=2,  # used to be 3
-                num_filters=128,
-                dilation_base=7,  # used to be 2
-                weight_norm=True,
+                kernel_size=model_kwargs.get("kernel_size", 2),
+                num_filters=model_kwargs.get("num_filters", 128),
+                dilation_base=model_kwargs.get("dilation_base", 7),
+                num_layers=model_kwargs.get("num_layers", None),
+                weight_norm=model_kwargs.get("weight_norm", True),
                 dropout=dropout,
                 **base_kwargs,
             )
         else:
-            # Medium design
             return TCNModel(
-                kernel_size=2,  # used to be 3
-                num_filters=16,
-                dilation_base=2,  # used to be 2
-                num_layers=2,
-                weight_norm=True,
+                kernel_size=model_kwargs.get("kernel_size", 2),
+                num_filters=model_kwargs.get("num_filters", 16),
+                dilation_base=model_kwargs.get("dilation_base", 2),
+                num_layers=model_kwargs.get("num_layers", 2),
+                weight_norm=model_kwargs.get("weight_norm", True),
                 dropout=dropout,
                 **base_kwargs,
             )
@@ -547,23 +523,269 @@ def create_model(
     # -------------------------
     if model_type == ModelType.TIDE:
         if xl_design:
-            # XL: larger and deeper than Medium
             return TiDEModel(
-                hidden_size=128,
+                hidden_size=model_kwargs.get("hidden_size", 128),
                 dropout=dropout,
-                use_layer_norm=True,
+                use_layer_norm=model_kwargs.get("use_layer_norm", True),
                 **base_kwargs,
             )
         else:
-            # Medium design
             return TiDEModel(
-                hidden_size=64,
+                hidden_size=model_kwargs.get("hidden_size", 64),
                 dropout=dropout,
-                use_layer_norm=True,
+                use_layer_norm=model_kwargs.get("use_layer_norm", True),
                 **base_kwargs,
             )
 
     raise ValueError(f"Unsupported model type: {model_type}")
+
+
+def evaluate_model_with_covariates_optuna(
+    model_type: ModelType,
+    model: ForecastingModel,
+    series_meta: List[Dict[str, Any]],
+    past_covs: bool,
+    future_covs: bool,
+) -> float:
+    """
+    Wrapper around `eval_global_model_with_covariates` for Optuna.
+
+    - Creates a fresh metrics_df for this trial.
+    - Runs the full global pipeline (fit + per-series evaluation).
+    - Returns the mean RMSSE across all valid (store,item) rows.
+
+    Parameters
+    ----------
+    model_type : ModelType
+        Enum indicating the model type (e.g., NBEATS, TSMIXER).
+    model : ForecastingModel
+        Unfitted Darts model instance for this trial.
+    series_meta : List[Dict[str, Any]]
+        List of metadata dicts for each (store,item), as expected by
+        `eval_global_model_with_covariates`. Each dict must have keys:
+        "store", "item", "data_dict".
+    past_covs : bool
+        Whether to use past covariates (if supported by the model type).
+    future_covs : bool
+        Whether to use future covariates (if supported by the model type).
+
+    Returns
+    -------
+    float
+        Mean RMSSE over all valid runs. If no valid runs, returns +inf.
+    """
+
+    # Fresh metrics_df for this trial, same schema as main pipeline
+    metrics_cols = [
+        "Model",
+        "Store",
+        "Item",
+        "RMSSE",
+        "MASE",
+        "SMAPE",
+        "MARRE",
+        "RMSE",
+        "MAE",
+        "OPE",
+    ]
+    metrics_df = pd.DataFrame(columns=metrics_cols)
+
+    metrics_df = eval_global_model_with_covariates(
+        model_type=model_type,
+        model=model,
+        series_meta=series_meta,
+        metrics_df=metrics_df,
+        past_covs=past_covs,
+        future_covs=future_covs,
+    )
+
+    if metrics_df.empty or "RMSSE" not in metrics_df.columns:
+        logger.warning(
+            f"[Optuna] No metrics or RMSSE column for {model_type.value}; "
+            "returning +inf."
+        )
+        return float("inf")
+
+    clean = metrics_df.dropna(subset=["RMSSE"])
+    if clean.empty:
+        logger.warning(
+            f"[Optuna] All RMSSE values are NaN for {model_type.value}; "
+            "returning +inf."
+        )
+        return float("inf")
+
+    rmsse_mean = float(clean["RMSSE"].mean())
+    logger.info(
+        f"[Optuna] {model_type.value} trial completed. "
+        f"Mean RMSSE = {rmsse_mean:.4f} over {len(clean)} series."
+    )
+    return rmsse_mean
+
+
+def make_optuna_objective_global(
+    model_type: ModelType,
+    series_meta: List[Dict[str, Any]],
+    past_covs: bool = True,
+    future_covs: bool = True,
+    xl_design: bool = False,
+) -> Callable[[optuna.Trial], float]:
+    """
+    Build an Optuna objective for a *global* DL model using the existing
+    covariate-aware pipeline (`eval_global_model_with_covariates`).
+
+    Parameters
+    ----------
+    model_type : ModelType
+        Must be a deep-learning model (in DL_MODELS).
+    series_meta : List[Dict[str, Any]]
+        List of series metadata dicts as required by
+        `eval_global_model_with_covariates`. Each dict must contain:
+          - "store": int
+          - "item": int
+          - "data_dict": dict with train/val targets + covariates
+    past_covs : bool
+        Whether to use past covariates (if supported by the model type).
+    future_covs : bool
+        Whether to use future covariates (if supported by the model type).
+    xl_design : bool
+        Whether to use XL design in `create_model`.
+
+    Returns
+    -------
+    objective : Callable[[optuna.Trial], float]
+        Optuna objective function returning mean RMSSE (to minimize).
+    """
+
+    if model_type not in DL_MODELS:
+        raise ValueError(
+            f"make_optuna_objective_global currently supports only DL models; "
+            f"got {model_type.value}"
+        )
+
+    if past_covs and not model_type.supports_past:
+        raise ValueError(
+            f"{model_type.value} does not support past covariates."
+        )
+    if future_covs and not model_type.supports_future:
+        raise ValueError(
+            f"{model_type.value} does not support future covariates."
+        )
+
+    def objective(trial: optuna.Trial) -> float:
+        # --------------------------------------------------------------
+        # 1) Training-level hyperparameters (torch_kwargs)
+        # --------------------------------------------------------------
+        input_chunk_length = trial.suggest_int(
+            "input_chunk_length", 30, 120, step=15
+        )
+        n_epochs = trial.suggest_int("n_epochs", 50, 150, step=25)
+        batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+        dropout = trial.suggest_float("dropout", 0.0, 0.3)
+
+        lr = trial.suggest_float("lr", 5e-4, 3e-3, log=True)
+        weight_decay = trial.suggest_float("weight_decay", 0.0, 1e-3, log=True)
+
+        torch_kwargs: Dict[str, Any] = {
+            "input_chunk_length": input_chunk_length,
+            "optimizer_kwargs": {
+                "lr": lr,
+                "weight_decay": weight_decay,
+            },
+        }
+
+        # --------------------------------------------------------------
+        # 2) Model-specific architecture hyperparameters (model_kwargs)
+        # --------------------------------------------------------------
+        model_kwargs: Dict[str, Any] = {}
+
+        if model_type == ModelType.NBEATS:
+            model_kwargs["num_stacks"] = trial.suggest_int("num_stacks", 8, 16)
+            model_kwargs["num_blocks"] = trial.suggest_int("num_blocks", 1, 3)
+            model_kwargs["num_layers"] = trial.suggest_int("num_layers", 3, 6)
+            model_kwargs["layer_widths"] = trial.suggest_categorical(
+                "layer_widths", [256, 512, 1024]
+            )
+
+        elif model_type == ModelType.TFT:
+            model_kwargs["hidden_size"] = trial.suggest_categorical(
+                "hidden_size", [32, 64, 128]
+            )
+            model_kwargs["lstm_layers"] = trial.suggest_int(
+                "lstm_layers", 1, 4
+            )
+            model_kwargs["num_attention_heads"] = trial.suggest_int(
+                "num_attention_heads", 4, 12
+            )
+
+        elif model_type == ModelType.TSMIXER:
+            model_kwargs["hidden_size"] = trial.suggest_categorical(
+                "hidden_size", [64, 128, 256]
+            )
+            model_kwargs["ff_size"] = trial.suggest_categorical(
+                "ff_size", [128, 256, 512]
+            )
+            model_kwargs["num_blocks"] = trial.suggest_int(
+                "num_blocks", 4, 16, step=4
+            )
+
+        elif model_type == ModelType.BLOCK_RNN:
+            model_kwargs["hidden_dim"] = trial.suggest_categorical(
+                "hidden_dim", [32, 64, 128, 256]
+            )
+            model_kwargs["n_rnn_layers"] = trial.suggest_int(
+                "n_rnn_layers", 1, 4
+            )
+            model_kwargs["model"] = trial.suggest_categorical(
+                "rnn_type", ["GRU", "LSTM"]
+            )
+
+        elif model_type == ModelType.TCN:
+            model_kwargs["kernel_size"] = trial.suggest_int(
+                "kernel_size", 2, 4
+            )
+            model_kwargs["num_filters"] = trial.suggest_categorical(
+                "num_filters", [16, 32, 64, 128]
+            )
+            model_kwargs["dilation_base"] = trial.suggest_categorical(
+                "dilation_base", [2, 4, 7]
+            )
+            # optional: tune num_layers as well
+            # model_kwargs["num_layers"] = trial.suggest_int("num_layers", 2, 6)
+
+        elif model_type == ModelType.TIDE:
+            model_kwargs["hidden_size"] = trial.suggest_categorical(
+                "hidden_size", [32, 64, 128, 256]
+            )
+
+        # --------------------------------------------------------------
+        # 3) Create the model using your factory
+        # --------------------------------------------------------------
+        model: ForecastingModel = create_model(
+            model_type=model_type,
+            batch_size=batch_size,
+            torch_kwargs=torch_kwargs,
+            model_kwargs=model_kwargs,
+            n_epochs=n_epochs,
+            dropout=dropout,
+            xl_design=xl_design,
+            past_covs=past_covs,
+            future_covs=future_covs,
+        )
+
+        # --------------------------------------------------------------
+        # 4) Evaluate via the global covariate-aware pipeline
+        # --------------------------------------------------------------
+        score = evaluate_model_with_covariates_optuna(
+            model_type=model_type,
+            model=model,
+            series_meta=series_meta,
+            past_covs=past_covs,
+            future_covs=future_covs,
+        )
+
+        return float(score)
+
+    return objective
 
 
 def generate_torch_kwargs(
@@ -715,15 +937,10 @@ def build_global_train_val_lists(
     item_medians_fn: Path | None = None,
     store_assign_fn: Path | None = None,
     item_assign_fn: Path | None = None,
-    past_covs: bool = False,
-    future_covs: bool = False,
+    # past_covs: bool = False,
+    # future_covs: bool = False,
 ) -> Tuple[
     List[TimeSeries],
-    List[TimeSeries],
-    List[TimeSeries] | None,
-    List[TimeSeries] | None,
-    List[TimeSeries] | None,
-    List[TimeSeries] | None,
     List[Dict[str, Any]],
 ]:
     """
@@ -735,11 +952,11 @@ def build_global_train_val_lists(
         meta_list (each meta has store, item, and data_dict)
     """
     train_targets: List[TimeSeries] = []
-    val_targets: List[TimeSeries] = []
-    train_pasts: List[TimeSeries] = []
-    val_pasts: List[TimeSeries] = []
-    train_futures: List[TimeSeries] = []
-    val_futures: List[TimeSeries] = []
+    # val_targets: List[TimeSeries] = []
+    # train_pasts: List[TimeSeries] = []
+    # val_pasts: List[TimeSeries] = []
+    # train_futures: List[TimeSeries] = []
+    # val_futures: List[TimeSeries] = []
     meta_list: List[Dict[str, Any]] = []
 
     # Loop over all (store, item) combos
@@ -770,25 +987,25 @@ def build_global_train_val_lists(
             continue
 
         train_target = data_dict["train_target"]
-        val_target = data_dict["val_target"]
+        # val_target = data_dict["val_target"]
 
         train_targets.append(train_target)
-        val_targets.append(val_target)
+        # val_targets.append(val_target)
 
         # Past covariates
-        if past_covs and data_dict.get("train_past") is not None:
-            train_pasts.append(data_dict["train_past"])
-            val_pasts.append(data_dict["val_past"])
-        else:
-            # keep shapes aligned (use None later)
-            pass
+        # if past_covs and data_dict.get("train_past") is not None:
+        #     train_pasts.append(data_dict["train_past"])
+        #     val_pasts.append(data_dict["val_past"])
+        # else:
+        #     # keep shapes aligned (use None later)
+        #     pass
 
-        # Future covariates
-        if future_covs and data_dict.get("train_future") is not None:
-            train_futures.append(data_dict["train_future"])
-            val_futures.append(data_dict["val_future"])
-        else:
-            pass
+        # # Future covariates
+        # if future_covs and data_dict.get("train_future") is not None:
+        #     train_futures.append(data_dict["train_future"])
+        #     val_futures.append(data_dict["val_future"])
+        # else:
+        #     pass
 
         meta_list.append(
             {
@@ -802,23 +1019,24 @@ def build_global_train_val_lists(
     if len(train_targets) == 0:
         raise ValueError("No valid (store, item) series for global model.")
 
-    # Normalize covariate lists: if none used, set to None
-    if not past_covs or len(train_pasts) == 0:
-        train_pasts = None
-        val_pasts = None
-    if not future_covs or len(train_futures) == 0:
-        train_futures = None
-        val_futures = None
+    return train_targets, meta_list
+    # # Normalize covariate lists: if none used, set to None
+    # if not past_covs or len(train_pasts) == 0:
+    #     train_pasts = None
+    #     val_pasts = None
+    # if not future_covs or len(train_futures) == 0:
+    #     train_futures = None
+    #     val_futures = None
 
-    return (
-        train_targets,
-        val_targets,
-        train_pasts,
-        val_pasts,
-        train_futures,
-        val_futures,
-        meta_list,
-    )
+    # return (
+    #     train_targets,
+    #     val_targets,
+    #     train_pasts,
+    #     val_pasts,
+    #     train_futures,
+    #     val_futures,
+    #     meta_list,
+    # )
 
 
 def prepare_store_item_series(

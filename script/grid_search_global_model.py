@@ -1,37 +1,26 @@
 #!/usr/bin/env python3
 """
-Unified training script for Favorita / Growth Rate Forecasting.
+Unified Optuna HPO script for Favorita / Growth Rate Forecasting.
 
-Supports:
-- Classical local models (ExponentialSmoothing, AutoARIMA, Theta, KalmanForecaster)
-- Tree-based models (LightGBM, RandomForest, LinearRegressionModel)
-- Deep learning models (NBEATS, TFT, TSMIXER, BLOCK_RNN, TCN, TIDE)
-
-All models share the same covariate-aware pipeline:
-- prepare_store_item_series()
-- get_train_val_data_with_covariates()
-- eval_model_with_covariates()
+Reuses the global covariate-aware pipeline:
+- build_global_train_val_lists()
+- make_optuna_objective_global()
+- eval_global_model_with_covariates()
 """
 
 import sys
 import argparse
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import List
 
 import traceback
 
-from darts import TimeSeries
 import pandas as pd
-
 
 # Optional DL / GPU imports (used only for deep-learning models)
 import torch
-from darts.utils.callbacks import TFMProgressBar
-from torchmetrics import MetricCollection
-from pytorch_lightning.callbacks import EarlyStopping
-from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning import seed_everything
-
+import optuna  # NEW
 
 # Add project root to path to allow importing from src
 project_root = Path(__file__).parent.parent
@@ -47,50 +36,49 @@ from src.data_utils import load_raw_data
 from src.time_series_utils import (
     ModelType,
     parse_models_arg,
-    create_model,
-    generate_torch_kwargs_global,
+    make_optuna_objective_global,
     build_global_train_val_lists,
-    eval_global_model_with_covariates,
-    compute_rmsse_scale_from_train,
-    RMSSEMetric,
     FUTURE_COV_COLS,
     PAST_COV_COLS,
     STATIC_COV_COLS,
-    DL_MODELS,
 )
 from src.model_utils import get_first_free_gpu
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------
-# Per-(store, item) processing
-# ---------------------------------------------------------------------
 
-
-def train(
+def search(
     df: pd.DataFrame,
     model_types: List[ModelType],
     split_point: float,
     min_train_data_points: int,
-    model_dir: Path,
-    patience: int,
-    batch_size: int,
-    n_epochs: int,
-    dropout: float,
     past_covs: bool,
     future_covs: bool,
     xl_design: bool,
-    metrics_df: pd.DataFrame,
-    gpu_id: Optional[int],
     store_medians_fn: Path | None,
     item_medians_fn: Path | None,
     store_assign_fn: Path | None,
     item_assign_fn: Path | None,
-):
+    n_trials: int,
+    timeout: int | None,
+) -> pd.DataFrame:
+    """
+    Run Optuna search for each global-capable model type.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per model_type with columns:
+        - Model
+        - BestObjective
+        - param_<name> for each tuned hyperparameter
+    """
+    results_rows: list[dict] = []
+
     try:
-        logger.info("Processing all (store, item) combinations")
+        logger.info("Processing all (store, item) combinations for HPO")
         (
-            train_targets,
+            _,
             meta_list,
         ) = build_global_train_val_lists(
             df,
@@ -109,63 +97,74 @@ def train(
         if local_only_model_types:
             logger.warning(
                 "The following models are local-only in Darts and will be "
-                "skipped in the GLOBAL pipeline: "
+                "skipped in the GLOBAL HPO pipeline: "
                 f"{[m.value for m in local_only_model_types]}"
             )
 
-        # Train each model requested
+        # Run Optuna for each model requested
         for mtype in global_model_types:
-            logger.info(f"=== Starting model {mtype.value} ===")
-            # For DL models, we set up a model_dir and torch_kwargs
-            if mtype in DL_MODELS:
-                model_dir_for_model = model_dir.resolve() / mtype.value
-                model_dir_for_model.mkdir(parents=True, exist_ok=True)
-                torch_kwargs = generate_torch_kwargs_global(
-                    gpu_id=gpu_id,
-                    working_dir=model_dir_for_model,
-                    train_series=train_targets,
-                    patience=patience,
-                )
-                batch_size_for_model = batch_size
-                n_epochs_for_model = n_epochs
-                dropout_for_model = dropout
-            else:
-                # Classical / tree-based models do not need PL trainer
-                torch_kwargs = None
-                batch_size_for_model = batch_size
-                n_epochs_for_model = n_epochs
-                dropout_for_model = dropout
-
-            model = create_model(
-                model_type=mtype,
-                batch_size=batch_size_for_model,
-                torch_kwargs=torch_kwargs,
-                n_epochs=n_epochs_for_model,
-                dropout=dropout_for_model,
-                xl_design=xl_design,
-                past_covs=past_covs,
-                future_covs=future_covs,
+            logger.info(
+                f"=== Starting Optuna search for model {mtype.value} ==="
             )
 
-            try:
-                metrics_df = eval_global_model_with_covariates(
-                    mtype,
-                    model,
-                    meta_list,
-                    metrics_df,
-                    past_covs=past_covs,
-                    future_covs=future_covs,
-                )
-            except Exception as e:
-                logger.error(f"Error fitting global {mtype.value}: {e}")
-                logger.error(traceback.format_exc())
+            objective = make_optuna_objective_global(
+                model_type=mtype,
+                series_meta=meta_list,
+                past_covs=past_covs,
+                future_covs=future_covs,
+                xl_design=xl_design,
+            )
 
-        return metrics_df
+            study = optuna.create_study(direction="minimize")
+            study.optimize(
+                objective,
+                n_trials=n_trials,
+                timeout=timeout if timeout and timeout > 0 else None,
+            )
+
+            # Study statistics (mirroring the example slide)
+            pruned_trials = [
+                t
+                for t in study.trials
+                if t.state == optuna.trial.TrialState.PRUNED
+            ]
+            complete_trials = [
+                t
+                for t in study.trials
+                if t.state == optuna.trial.TrialState.COMPLETE
+            ]
+
+            logger.info("Study statistics for %s:", mtype.value)
+            logger.info("  Number of finished trials: %d", len(study.trials))
+            logger.info("  Number of pruned trials:   %d", len(pruned_trials))
+            logger.info(
+                "  Number of complete trials: %d", len(complete_trials)
+            )
+
+            best_trial = study.best_trial
+            logger.info("Best trial for %s:", mtype.value)
+            logger.info("  Value:  %.6f", best_trial.value)
+            logger.info("  Params:")
+            for key, value in best_trial.params.items():
+                logger.info("    %s: %s", key, value)
+
+            # Collect results into a row
+            row: dict = {
+                "Model": mtype.value,
+                "BestObjective": float(best_trial.value),
+            }
+            for key, value in best_trial.params.items():
+                row[f"param_{key}"] = value
+            results_rows.append(row)
 
     except Exception as e:
-        logger.error(f"ERROR: {e}")
+        logger.error(f"ERROR during Optuna search: {e}")
         logger.error(traceback.format_exc())
-        return metrics_df
+
+    if results_rows:
+        return pd.DataFrame(results_rows)
+    else:
+        return pd.DataFrame(columns=["Model", "BestObjective"])
 
 
 # ---------------------------------------------------------------------
@@ -176,8 +175,8 @@ def train(
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Unified Favorita / Growth Rate forecasting benchmark "
-            "with classical, tree-based, and deep-learning models."
+            "Optuna HPO for Favorita / Growth Rate forecasting "
+            "using the unified global covariate-aware pipeline."
         )
     )
 
@@ -207,11 +206,10 @@ def parse_args():
     parser.add_argument(
         "--models",
         type=str,
-        default="EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN",
+        default="NBEATS,TSMIXER,TFT,TCN,BLOCK_RNN,TIDE",
         help=(
             "Comma-separated model list, e.g. "
-            "'EXPONENTIAL_SMOOTHING,AUTO_ARIMA,THETA,KALMAN,"
-            "LIGHTGBM,RANDOM_FOREST,LINEAR_REGRESSION,NBEATS,TFT,TSMIXER,TCN,BLOCK_RNN,TIDE'"
+            "'NBEATS,TFT,TSMIXER,TCN,BLOCK_RNN,TIDE'"
         ),
     )
 
@@ -222,21 +220,24 @@ def parse_args():
         "--N", type=int, default=0, help="Limit to first N (store,item) pairs"
     )
 
-    # DL hyperparameters (ignored for classical / tree models)
+    # DL hyperparameters (they are tuned by Optuna, so these are only defaults)
     parser.add_argument(
-        "--batch_size", type=int, default=800, help="DL batch size"
+        "--batch_size", type=int, default=800, help="DL batch size (baseline)"
     )
     parser.add_argument(
-        "--n_epochs", type=int, default=15, help="DL number of epochs"
+        "--n_epochs",
+        type=int,
+        default=15,
+        help="DL number of epochs (baseline)",
     )
     parser.add_argument(
-        "--dropout", type=float, default=0.1, help="DL dropout rate"
+        "--dropout", type=float, default=0.1, help="DL dropout rate (baseline)"
     )
     parser.add_argument(
         "--patience",
         type=int,
         default=8,
-        help="DL early-stopping patience (epochs)",
+        help="DL early-stopping patience (baseline)",
     )
     parser.add_argument(
         "--xl_design",
@@ -267,6 +268,20 @@ def parse_args():
         help="Specific GPU id to use; if -1, round-robin over all GPUs",
     )
 
+    # HPO config
+    parser.add_argument(
+        "--n_trials",
+        type=int,
+        default=50,
+        help="Number of Optuna trials per model",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="Timeout in seconds for Optuna per model (0 means no timeout)",
+    )
+
     # Reproducibility
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
@@ -282,7 +297,7 @@ def main():
 
     # Setup logging
     logger = setup_logging(args.log_fn, args.log_level)
-    logger.info(f"Training models: {[m.value for m in model_types]}")
+    logger.info(f"Running Optuna for models: {[m.value for m in model_types]}")
     logger.info(f"Data fn: {args.data_fn}")
     logger.info(f"Metrics fn: {args.metrics_fn}")
     logger.info(f"Model dir: {args.model_dir}")
@@ -293,10 +308,12 @@ def main():
     logger.info(f"XL design: {args.xl_design}")
     logger.info(f"Past covs: {args.past_covs}")
     logger.info(f"Future covs: {args.future_covs}")
-    logger.info(f"Batch size (DL): {args.batch_size}")
-    logger.info(f"n_epochs (DL): {args.n_epochs}")
-    logger.info(f"Dropout (DL): {args.dropout}")
-    logger.info(f"Patience (DL): {args.patience}")
+    logger.info(f"Batch size (baseline DL): {args.batch_size}")
+    logger.info(f"n_epochs (baseline DL): {args.n_epochs}")
+    logger.info(f"Dropout (baseline DL): {args.dropout}")
+    logger.info(f"Patience (baseline DL): {args.patience}")
+    logger.info(f"Optuna n_trials: {args.n_trials}")
+    logger.info(f"Optuna timeout: {args.timeout}")
 
     # Assign GPU
     gpu_id = get_first_free_gpu()
@@ -339,7 +356,7 @@ def main():
     logger.info(f"Available future covariate columns: {available_future_covs}")
     available_static_covs = [c for c in STATIC_COV_COLS if c in df.columns]
     logger.info(f"Available static covariate columns: {available_static_covs}")
-    # df.query("store == 49 and item == 828630", inplace=True)
+
     # Unique (store, item) pairs
     unique_combinations = df[["store", "item"]].drop_duplicates()
     if args.N > 0:
@@ -361,78 +378,36 @@ def main():
     )
     logger.info(f"Filtered data shape: {df.shape}")
 
-    # Metrics dataframe
-    metrics_cols = [
-        "Model",
-        "Store",
-        "Item",
-        "RMSSE",
-        "MASE",
-        "SMAPE",
-        "MARRE",
-        "RMSE",
-        "MAE",
-        "OPE",
-    ]
-    metrics_df = pd.DataFrame(columns=metrics_cols)
-    metrics_df = train(
+    metrics_df = search(
         df=df,
         model_types=model_types,
         split_point=args.split_point,
         min_train_data_points=args.min_train_data_points,
-        model_dir=args.model_dir,
-        patience=args.patience,
-        batch_size=args.batch_size,
-        n_epochs=args.n_epochs,
-        dropout=args.dropout,
         past_covs=args.past_covs,
         future_covs=args.future_covs,
         xl_design=args.xl_design,
-        metrics_df=metrics_df,
-        gpu_id=gpu_id,
         store_medians_fn=args.store_medians_fn,
         item_medians_fn=args.item_medians_fn,
         store_assign_fn=args.store_assign_fn,
         item_assign_fn=args.item_assign_fn,
+        n_trials=args.n_trials,
+        timeout=args.timeout,
     )
 
-    # Final save
+    # Final save of HPO results
     metrics_fn = Path(args.metrics_fn).resolve()
     save_csv_or_parquet(metrics_df, metrics_fn)
-    logger.info("Benchmark complete.")
+    logger.info("Optuna HPO complete.")
 
-    # Summary
-    if not metrics_df.empty:
-        logger.info("Summary of results:")
-        for model_name in metrics_df["Model"].unique():
-            model_metrics = metrics_df[metrics_df["Model"] == model_name]
-            successful_runs = model_metrics.dropna(
-                subset=[
-                    "SMAPE",
-                    "RMSSE",
-                    "MARRE",
-                ]
-            ).shape[0]
-            total_runs = len(model_metrics)
-            logger.info(
-                f"  {model_name}: {successful_runs}/{total_runs} successful runs"
-            )
-
-            if successful_runs > 0:
-                clean = model_metrics.dropna(
-                    subset=["SMAPE", "RMSSE", "MARRE"]
-                )
-                if len(clean) > 0:
-                    smape_mean = clean["SMAPE"].mean()
-                    rmsse_mean = clean["RMSSE"].mean()
-                    marre_mean = clean["MARRE"].mean()
-                    logger.info(
-                        f"    Mean SMAPE: {smape_mean:.4f}, "
-                        f"Mean RMSSE: {rmsse_mean:.4f}, "
-                        f"Mean MARRE: {marre_mean:.4f}"
-                    )
+    # Summary of best objective values
+    if metrics_df is not None and not metrics_df.empty:
+        logger.info("Summary of best objectives per model:")
+        for _, row in metrics_df.iterrows():
+            model_name = row["Model"]
+            best_obj = row["BestObjective"]
+            logger.info("  %s: BestObjective = %.4f", model_name, best_obj)
     else:
-        logger.warning("No successful model runs completed!")
+        logger.warning("No successful Optuna runs completed!")
 
 
 if __name__ == "__main__":
