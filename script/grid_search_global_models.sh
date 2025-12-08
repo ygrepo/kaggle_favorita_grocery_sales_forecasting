@@ -24,18 +24,15 @@ LOG_FN="${LOG_DIR}/${TIMESTAMP}_grid_search.log"
 # Grid search parameters
 MODELS="NBEATS"  # Change to TCN, TFT, etc. for other models
 RESULTS_FN="${RESULTS_DIR}/${TIMESTAMP}_${MODELS}_grid_search_results.csv"
-N=5  # Number of (store, item) pairs to process
+N=10  # Number of (store, item) pairs to process
 SPLIT_POINT=0.8
 MIN_TRAIN_DATA_POINTS=15
-BATCH_SIZE=64
-N_EPOCHS=500
-DROPOUT=0.2
 PAST_COVS="True"
 FUTURE_COVS="True"
 XL_DESIGN="False"
 LOG_LEVEL="INFO"
-N_TRIALS=10
-TIMEOUT=0
+N_TRIALS=30
+TIMEOUT=3600
 SEED=42
 
 echo "Starting grid search for model: $MODELS"
@@ -52,9 +49,6 @@ python3 script/grid_search_global_model.py \
     --N "$N" \
     --split_point "$SPLIT_POINT" \
     --min_train_data_points "$MIN_TRAIN_DATA_POINTS" \
-    --batch_size "$BATCH_SIZE" \
-    --n_epochs "$N_EPOCHS" \
-    --dropout "$DROPOUT" \
     --past_covs "$PAST_COVS" \
     --future_covs "$FUTURE_COVS" \
     --xl_design "$XL_DESIGN" \

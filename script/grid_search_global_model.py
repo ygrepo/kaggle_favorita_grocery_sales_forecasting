@@ -227,18 +227,6 @@ def parse_args():
 
     # DL hyperparameters (they are tuned by Optuna, so these are only defaults)
     parser.add_argument(
-        "--batch_size", type=int, default=800, help="DL batch size (baseline)"
-    )
-    parser.add_argument(
-        "--n_epochs",
-        type=int,
-        default=15,
-        help="DL number of epochs (baseline)",
-    )
-    parser.add_argument(
-        "--dropout", type=float, default=0.1, help="DL dropout rate (baseline)"
-    )
-    parser.add_argument(
         "--patience",
         type=int,
         default=8,
@@ -320,9 +308,6 @@ def main():
     logger.info(f"XL design: {args.xl_design}")
     logger.info(f"Past covs: {args.past_covs}")
     logger.info(f"Future covs: {args.future_covs}")
-    logger.info(f"Batch size (baseline DL): {args.batch_size}")
-    logger.info(f"n_epochs (baseline DL): {args.n_epochs}")
-    logger.info(f"Dropout (baseline DL): {args.dropout}")
     logger.info(f"Patience (baseline DL): {args.patience}")
     logger.info(f"Optuna n_trials: {args.n_trials}")
     logger.info(f"Optuna timeout: {args.timeout}")
