@@ -388,6 +388,7 @@ def main():
         past_covs=args.past_covs,
         future_covs=args.future_covs,
         patience=args.patience,
+        seed=args.seed,
         xl_design=args.xl_design,
         store_medians_fn=args.store_medians_fn,
         item_medians_fn=args.item_medians_fn,
