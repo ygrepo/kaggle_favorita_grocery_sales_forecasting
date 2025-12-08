@@ -104,8 +104,6 @@ TARGET_COL = "growth_rate"
 # Unified ModelType Enum and Factory
 # =====================================================================
 
-from enum import Enum
-
 
 class ModelType(str, Enum):
     """Unified enum for all supported time series models."""
@@ -644,9 +642,9 @@ def make_optuna_objective_global(
           - "item": int
           - "data_dict": dict with train/val targets + covariates
     past_covs : bool
-        Whether to use past covariates (if supported by the model type).
+        Whether to try to use past covariates.
     future_covs : bool
-        Whether to use future covariates (if supported by the model type).
+        Whether to try to use future covariates.
     xl_design : bool
         Whether to use XL design in `create_model`.
 
@@ -662,13 +660,21 @@ def make_optuna_objective_global(
             f"got {model_type.value}"
         )
 
+    use_past = past_covs and model_type.supports_past
+    use_future = future_covs and model_type.supports_future
+
     if past_covs and not model_type.supports_past:
-        raise ValueError(
-            f"{model_type.value} does not support past covariates."
+        logger.warning(
+            "Model %s does not support past covariates; "
+            "disabling past_covs for HPO.",
+            model_type.value,
         )
+
     if future_covs and not model_type.supports_future:
-        raise ValueError(
-            f"{model_type.value} does not support future covariates."
+        logger.warning(
+            "Model %s does not support future covariates; "
+            "disabling future_covs for HPO.",
+            model_type.value,
         )
 
     def objective(trial: optuna.Trial) -> float:
@@ -749,8 +755,6 @@ def make_optuna_objective_global(
             model_kwargs["dilation_base"] = trial.suggest_categorical(
                 "dilation_base", [2, 4, 7]
             )
-            # optional: tune num_layers as well
-            # model_kwargs["num_layers"] = trial.suggest_int("num_layers", 2, 6)
 
         elif model_type == ModelType.TIDE:
             model_kwargs["hidden_size"] = trial.suggest_categorical(
@@ -768,8 +772,8 @@ def make_optuna_objective_global(
             n_epochs=n_epochs,
             dropout=dropout,
             xl_design=xl_design,
-            past_covs=past_covs,
-            future_covs=future_covs,
+            past_covs=use_past,
+            future_covs=use_future,
         )
 
         # --------------------------------------------------------------
@@ -779,8 +783,8 @@ def make_optuna_objective_global(
             model_type=model_type,
             model=model,
             series_meta=series_meta,
-            past_covs=past_covs,
-            future_covs=future_covs,
+            past_covs=use_past,
+            future_covs=use_future,
         )
 
         return float(score)
@@ -1020,23 +1024,6 @@ def build_global_train_val_lists(
         raise ValueError("No valid (store, item) series for global model.")
 
     return train_targets, meta_list
-    # # Normalize covariate lists: if none used, set to None
-    # if not past_covs or len(train_pasts) == 0:
-    #     train_pasts = None
-    #     val_pasts = None
-    # if not future_covs or len(train_futures) == 0:
-    #     train_futures = None
-    #     val_futures = None
-
-    # return (
-    #     train_targets,
-    #     val_targets,
-    #     train_pasts,
-    #     val_pasts,
-    #     train_futures,
-    #     val_futures,
-    #     meta_list,
-    # )
 
 
 def prepare_store_item_series(
