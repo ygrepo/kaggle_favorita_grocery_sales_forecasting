@@ -10,10 +10,6 @@ cd "$PROJECT_ROOT"
 
 # Default configuration
 DATA_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features.parquet"
-STORE_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_store_medians.parquet"
-STORE_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_store_assignments.csv"
-ITEM_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
-ITEM_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_item_assignments.csv"
 
 
 MODEL_DIR="${PROJECT_ROOT}/models"
@@ -48,10 +44,6 @@ echo "Log file: $LOG_FN"
 
 python3 script/grid_search_global_model.py \
     --data_fn "$DATA_FN" \
-    --store_medians_fn "$STORE_MEDIANS_FN" \
-    --item_medians_fn "$ITEM_MEDIANS_FN" \
-    --store_assign_fn "$STORE_ASSIGN_FN" \
-    --item_assign_fn "$ITEM_ASSIGN_FN" \
     --model_dir "$MODEL_DIR" \
     --results_fn "$RESULTS_FN" \
     --log_fn "$LOG_FN" \
