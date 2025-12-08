@@ -684,9 +684,9 @@ def make_optuna_objective_global(
         # 1) Training-level hyperparameters (torch_kwargs)
         # --------------------------------------------------------------
         input_chunk_length = trial.suggest_int(
-            "input_chunk_length", 30, 120, step=15
+            "input_chunk_length", 30, 60, step=10
         )
-        n_epochs = trial.suggest_int("n_epochs", 50, 150, step=25)
+        n_epochs = trial.suggest_int("n_epochs", 50, 300, step=25)
         batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
         dropout = trial.suggest_float("dropout", 0.0, 0.3)
 
@@ -2001,6 +2001,17 @@ def eval_global_model_with_covariates(
             if len(train_target) < min_required_length:
                 reason = (
                     f"training series too short (len={len(train_target)}) "
+                    f"< required={min_required_length}"
+                )
+                _append_nan_row(store, item, reason)
+                continue
+
+            if (
+                model_type.supports_val
+                and len(val_target) < min_required_length
+            ):
+                reason = (
+                    f"validation series too short (len={len(val_target)}) "
                     f"< required={min_required_length}"
                 )
                 _append_nan_row(store, item, reason)
