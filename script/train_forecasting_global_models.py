@@ -51,8 +51,7 @@ from src.time_series_utils import (
     generate_torch_kwargs_global,
     build_global_train_val_lists,
     eval_global_model_with_covariates,
-    compute_rmsse_scale_from_train,
-    RMSSEMetric,
+    load_model_config,
     FUTURE_COV_COLS,
     PAST_COV_COLS,
     STATIC_COV_COLS,
@@ -76,6 +75,7 @@ def train(
     patience: int,
     batch_size: int,
     n_epochs: int,
+    lr: float,
     dropout: float,
     past_covs: bool,
     future_covs: bool,
@@ -86,6 +86,7 @@ def train(
     item_medians_fn: Path | None,
     store_assign_fn: Path | None,
     item_assign_fn: Path | None,
+    model_config: Dict[ModelType, Dict[str, Any]],
 ):
     try:
         logger.info("Processing all (store, item) combinations")
@@ -126,22 +127,20 @@ def train(
                     train_series=train_targets,
                     patience=patience,
                 )
-                batch_size_for_model = batch_size
-                n_epochs_for_model = n_epochs
-                dropout_for_model = dropout
+
             else:
                 # Classical / tree-based models do not need PL trainer
                 torch_kwargs = None
-                batch_size_for_model = batch_size
-                n_epochs_for_model = n_epochs
-                dropout_for_model = dropout
+            cfg = (model_config or {}).get(mtype, {})  # model_config: Dict[ModelType, Dict[str, Any]]
 
             model = create_model(
                 model_type=mtype,
-                batch_size=batch_size_for_model,
+                batch_size=batch_size,
+                n_epochs=n_epochs,
+                lr=lr,
+                dropout=dropout,
+                model_cfg=cfg,
                 torch_kwargs=torch_kwargs,
-                n_epochs=n_epochs_for_model,
-                dropout=dropout_for_model,
                 xl_design=xl_design,
                 past_covs=past_covs,
                 future_covs=future_covs,
@@ -230,6 +229,9 @@ def parse_args():
         "--n_epochs", type=int, default=15, help="DL number of epochs"
     )
     parser.add_argument(
+        "--lr", type=float, default=3e-4, help="DL learning rate"
+    )
+    parser.add_argument(
         "--dropout", type=float, default=0.1, help="DL dropout rate"
     )
     parser.add_argument(
@@ -258,7 +260,15 @@ def parse_args():
         default=True,
         help="Use future covariates when supported",
     )
-
+    parser.add_argument(
+        "--model_config_fn",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSON/YAML file with per-model hyperparameters; "
+            "keys must match ModelType values (e.g. 'NBEATS', 'TFT')."
+        ),
+    )
     # GPU
     parser.add_argument(
         "--gpu",
@@ -295,8 +305,17 @@ def main():
     logger.info(f"Future covs: {args.future_covs}")
     logger.info(f"Batch size (DL): {args.batch_size}")
     logger.info(f"n_epochs (DL): {args.n_epochs}")
+    logger.info(f"lr (DL): {args.lr}")
     logger.info(f"Dropout (DL): {args.dropout}")
     logger.info(f"Patience (DL): {args.patience}")
+    logger.info(f"Model config fn: {args.model_config_fn}")
+    # Load per-model hyperparameters (if provided)
+    model_config = load_model_config(args.model_config_fn)
+    if model_config:
+        logger.info(
+            "Loaded per-model hyperparameters for: %s",
+            [m.value for m in model_config.keys()],
+        )
 
     # Assign GPU
     gpu_id = get_first_free_gpu()
@@ -384,6 +403,7 @@ def main():
         patience=args.patience,
         batch_size=args.batch_size,
         n_epochs=args.n_epochs,
+        lr=args.lr,
         dropout=args.dropout,
         past_covs=args.past_covs,
         future_covs=args.future_covs,
@@ -394,6 +414,7 @@ def main():
         item_medians_fn=args.item_medians_fn,
         store_assign_fn=args.store_assign_fn,
         item_assign_fn=args.item_assign_fn,
+        model_config=model_config,
     )
 
     # Final save

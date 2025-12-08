@@ -1,0 +1,23 @@
+{
+  "NBEATS": {
+    "input_chunk_length": 40,
+    "n_epochs": 100,
+    "batch_size": 64,
+    "lr": 0.0005550444229669196,
+    "dropout": 0.08296991321075416,
+    "use_weight_decay": true,
+    "weight_decay": 0.00075161126047098,
+    "model_kwargs": {
+      "num_stacks": 11,
+      "num_blocks": 2,
+      "num_layers": 4,
+      "layer_widths": 256
+    }
+  },
+  "TFT": {
+    "batch_size": 256,
+    "n_epochs": 30,
+    "lr": 0.0005,
+    "dropout": 0.1
+  }
+}

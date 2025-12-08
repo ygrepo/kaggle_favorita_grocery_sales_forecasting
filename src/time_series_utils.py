@@ -1,3 +1,5 @@
+import json
+import yaml
 import sys
 from pathlib import Path
 from enum import Enum
@@ -221,6 +223,84 @@ def parse_models_arg(models_string: str) -> List[ModelType]:
         ) from e
 
 
+def load_model_config(
+    config_path: Optional[Path],
+) -> Dict[ModelType, Dict[str, Any]]:
+    """
+    Load per-model hyperparameters from a JSON or YAML file.
+
+    Expected format (keys are model type names, matching ModelType values):
+
+    JSON:
+    {
+      "NBEATS": {
+        "batch_size": 512,
+        "n_epochs": 30,
+        "lr": 0.001,
+        "dropout": 0.2,
+        "patience": 10,
+        "model_kwargs": {
+          "num_stacks": 16,
+          "num_blocks": 2,
+          "num_layers": 6,
+          "layer_widths": 1024
+        }
+      },
+      "TFT": {
+        "batch_size": 256,
+        "n_epochs": 40,
+        "lr": 0.0005,
+        "dropout": 0.1
+      }
+    }
+
+    YAML equivalent is also supported if PyYAML is installed.
+    """
+    if config_path is None:
+        return {}
+
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Model config file not found: {config_path}")
+
+    suffix = config_path.suffix.lower()
+    if suffix == ".json":
+        with config_path.open("r") as f:
+            raw = json.load(f)
+    elif suffix in (".yml", ".yaml"):
+        if yaml is None:
+            raise ImportError(
+                "PyYAML is not installed but a YAML config file was provided. "
+                "Install with `pip install pyyaml` or use JSON instead."
+            )
+        with config_path.open("r") as f:
+            raw = yaml.safe_load(f)
+    else:
+        raise ValueError(
+            f"Unsupported config file extension '{suffix}'. "
+            "Use .json, .yaml or .yml."
+        )
+
+    model_config: Dict[ModelType, Dict[str, Any]] = {}
+    for key, val in raw.items():
+        if not isinstance(val, dict):
+            logger.warning(
+                "Skipping config for key '%s' because value is not a dict.",
+                key,
+            )
+            continue
+        try:
+            mtype = ModelType(key.upper())
+        except ValueError:
+            logger.warning(
+                "Unknown model type '%s' in config file; skipping.", key
+            )
+            continue
+        model_config[mtype] = val
+
+    return model_config
+
+
 # Helper: choose lags depending on xl_design and covariate flags
 def _lags_for_regression(
     xl_design: bool, past_covs: bool, future_covs: bool
@@ -240,10 +320,11 @@ def _lags_for_regression(
 def create_model(
     model_type: ModelType,
     batch_size: int = 32,
-    torch_kwargs: Optional[Dict[str, Any]] = None,
-    model_kwargs: Optional[Dict[str, Any]] = None,
     n_epochs: int = 100,
+    lr: float = 3e-4,
     dropout: float = 0.1,
+    model_cfg: Optional[Dict[str, Any]] = None,
+    torch_kwargs: Optional[Dict[str, Any]] = None,
     xl_design: bool = False,
     past_covs: bool = False,
     future_covs: bool = False,
@@ -253,31 +334,31 @@ def create_model(
 
     Args:
         model_type: ModelType enum value.
-        batch_size: Batch size for deep learning models.
-        torch_kwargs: PyTorch/Lightning kwargs for deep learning models
+        model_cfg: Per-model hyperparameters for THIS model_type, e.g.:
+
+            {
+              "lr": 0.001,
+              "batch_size": 512,
+              "n_epochs": 40,
+              "dropout": 0.2,
+              "input_chunk_length": 90,
+              "model_kwargs": { ... }   # model-specific kwargs
+            }
+
+        batch_size, n_epochs, lr, dropout: global defaults used if not
+            overridden in model_cfg.
+        torch_kwargs: PyTorch/Lightning kwargs for DL models
                       (e.g. optimizer_kwargs, pl_trainer_kwargs, input_chunk_length).
-        model_kwargs: Model-specific hyperparameters (architectural or
-                      estimator-level, e.g. num_stacks for NBEATS, n_estimators
-                      for RandomForest, etc.). Values here override the defaults.
-        n_epochs: Number of epochs for deep learning models.
-        dropout: Dropout rate for deep learning models.
-        xl_design: If True, use larger 'XL' deep learning architectures.
-                   If False, use the medium-sized architectures.
-        past_covs: Whether model will use past covariates.
-        future_covs: Whether model will use future covariates.
+        xl_design, past_covs, future_covs: architecture / covariate flags.
 
     Returns:
         ForecastingModel instance.
     """
     if torch_kwargs is None:
         torch_kwargs = {}
-    if model_kwargs is None:
-        model_kwargs = {}
 
-    logger.info(
-        f"Creating model: {model_type.value}, "
-        f"past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}"
-    )
+    cfg = model_cfg or {}
+    model_kwargs = cfg.get("model_kwargs", {})  # free-form kwargs per model
 
     # =====================================================================
     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
@@ -290,9 +371,11 @@ def create_model(
         return AutoARIMA(**model_kwargs)
 
     if model_type == ModelType.THETA:
+        # allow overriding season_mode in model_kwargs
         return Theta(season_mode=SeasonalityMode.ADDITIVE, **model_kwargs)
 
     if model_type == ModelType.KALMAN:
+        # keep special handling for dim_x, random_state, but allow overrides
         return KalmanForecaster(
             dim_x=model_kwargs.get("dim_x", 1),
             random_state=model_kwargs.get("random_state", 42),
@@ -331,7 +414,6 @@ def create_model(
             use_static_covariates=True,
             random_state=42,
         )
-        # allow overriding (e.g. n_estimators) via model_kwargs
         base.update(model_kwargs)
         return LightGBMModel(**base)
 
@@ -365,28 +447,34 @@ def create_model(
     # Deep Learning Models
     # =====================================================================
 
-    # Base configuration shared by all deep learning models
-    if xl_design:
-        base_kwargs = dict(
-            input_chunk_length=60,
-            output_chunk_length=1,
-            n_epochs=n_epochs,
-            batch_size=batch_size,
-            random_state=42,
-            save_checkpoints=False,
-            force_reset=True,
-            optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
-        )
-    else:
-        base_kwargs = dict(
-            input_chunk_length=60,
-            output_chunk_length=1,
-            n_epochs=n_epochs,
-            batch_size=batch_size,
-            random_state=42,
-            save_checkpoints=False,
-            force_reset=True,
-        )
+    # Global-level overrides from cfg
+    batch_size_eff = int(cfg.get("batch_size", batch_size))
+    n_epochs_eff = int(cfg.get("n_epochs", n_epochs))
+    lr_eff = float(cfg.get("lr", lr))
+    dropout_eff = float(cfg.get("dropout", dropout))
+    input_chunk_length_eff = int(cfg.get("input_chunk_length", 60))
+
+    logger.info(
+        f"Creating model: {model_type.value}, "
+        f"past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}, "
+        f"batch_size={batch_size_eff}, n_epochs={n_epochs_eff}, lr={lr_eff}, "
+        f"dropout={dropout_eff}, input_chunk_length={input_chunk_length_eff}"
+    )
+
+    base_kwargs = dict(
+        input_chunk_length=input_chunk_length_eff,
+        output_chunk_length=1,
+        n_epochs=n_epochs_eff,
+        batch_size=batch_size_eff,
+        random_state=42,
+        save_checkpoints=False,
+        force_reset=True,
+        optimizer_kwargs={
+            "lr": lr_eff,
+            # allow passing extra optimizer kwargs in cfg
+            **cfg.get("optimizer_kwargs", {}),
+        },
+    )
 
     # torch_kwargs can override defaults in base_kwargs
     base_kwargs.update(torch_kwargs)
@@ -402,7 +490,7 @@ def create_model(
                 num_blocks=model_kwargs.get("num_blocks", 2),
                 num_layers=model_kwargs.get("num_layers", 6),
                 layer_widths=model_kwargs.get("layer_widths", 1024),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
         else:
@@ -412,7 +500,7 @@ def create_model(
                 num_blocks=model_kwargs.get("num_blocks", 1),
                 num_layers=model_kwargs.get("num_layers", 4),
                 layer_widths=model_kwargs.get("layer_widths", 512),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
 
@@ -424,7 +512,7 @@ def create_model(
             return TFTModel(
                 hidden_size=model_kwargs.get("hidden_size", 128),
                 lstm_layers=model_kwargs.get("lstm_layers", 4),
-                dropout=dropout,
+                dropout=dropout_eff,
                 num_attention_heads=model_kwargs.get(
                     "num_attention_heads", 12
                 ),
@@ -437,7 +525,7 @@ def create_model(
             return TFTModel(
                 hidden_size=model_kwargs.get("hidden_size", 64),
                 lstm_layers=model_kwargs.get("lstm_layers", 2),
-                dropout=dropout,
+                dropout=dropout_eff,
                 num_attention_heads=model_kwargs.get(
                     "num_attention_heads", 10
                 ),
@@ -457,7 +545,7 @@ def create_model(
                 ff_size=model_kwargs.get("ff_size", 256),
                 activation=model_kwargs.get("activation", "LeakyReLU"),
                 num_blocks=model_kwargs.get("num_blocks", 16),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
         else:
@@ -466,7 +554,7 @@ def create_model(
                 ff_size=model_kwargs.get("ff_size", 128),
                 activation=model_kwargs.get("activation", "LeakyReLU"),
                 num_blocks=model_kwargs.get("num_blocks", 8),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
 
@@ -479,7 +567,7 @@ def create_model(
                 model=model_kwargs.get("model", "GRU"),
                 hidden_dim=model_kwargs.get("hidden_dim", 128),
                 n_rnn_layers=model_kwargs.get("n_rnn_layers", 3),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
         else:
@@ -487,7 +575,7 @@ def create_model(
                 model=model_kwargs.get("model", "GRU"),
                 hidden_dim=model_kwargs.get("hidden_dim", 64),
                 n_rnn_layers=model_kwargs.get("n_rnn_layers", 2),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
 
@@ -502,7 +590,7 @@ def create_model(
                 dilation_base=model_kwargs.get("dilation_base", 7),
                 num_layers=model_kwargs.get("num_layers", None),
                 weight_norm=model_kwargs.get("weight_norm", True),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
         else:
@@ -512,7 +600,7 @@ def create_model(
                 dilation_base=model_kwargs.get("dilation_base", 2),
                 num_layers=model_kwargs.get("num_layers", 2),
                 weight_norm=model_kwargs.get("weight_norm", True),
-                dropout=dropout,
+                dropout=dropout_eff,
                 **base_kwargs,
             )
 
@@ -523,19 +611,316 @@ def create_model(
         if xl_design:
             return TiDEModel(
                 hidden_size=model_kwargs.get("hidden_size", 128),
-                dropout=dropout,
+                dropout=dropout_eff,
                 use_layer_norm=model_kwargs.get("use_layer_norm", True),
                 **base_kwargs,
             )
         else:
             return TiDEModel(
                 hidden_size=model_kwargs.get("hidden_size", 64),
-                dropout=dropout,
+                dropout=dropout_eff,
                 use_layer_norm=model_kwargs.get("use_layer_norm", True),
                 **base_kwargs,
             )
 
     raise ValueError(f"Unsupported model type: {model_type}")
+
+
+# def create_model(
+#     model_type: ModelType,
+#     batch_size: int = 32,
+#     n_epochs: int = 100,
+#     lr: float = 3e-4,
+#     dropout: float = 0.1,
+#     model_config: Dict[ModelType, Dict[str, Any] | None],
+#     torch_kwargs: Optional[Dict[str, Any]] = None,
+#     xl_design: bool = False,
+#     past_covs: bool = False,
+#     future_covs: bool = False,
+# ) -> ForecastingModel:
+#     """
+#     Factory to create a Darts model instance (classical or deep learning).
+
+#     Args:
+#         model_type: ModelType enum value.
+#         model_config: Per-model hyperparameters (keys must match ModelType).
+#         batch_size: Batch size for deep learning models.
+#         torch_kwargs: PyTorch/Lightning kwargs for deep learning models
+#                       (e.g. optimizer_kwargs, pl_trainer_kwargs, input_chunk_length).
+#         n_epochs: Number of epochs for deep learning models.
+#         lr: Learning rate for deep learning models.
+#         dropout: Dropout rate for deep learning models.
+#         xl_design: If True, use larger 'XL' deep learning architectures.
+#                    If False, use the medium-sized architectures.
+#         past_covs: Whether model will use past covariates.
+#         future_covs: Whether model will use future covariates.
+
+#     Returns:
+#         ForecastingModel instance.
+#     """
+#     if torch_kwargs is None:
+#         torch_kwargs = {}
+
+#     if model_config is None:
+#         model_kwargs = {}
+#     else:
+#         model_kwargs = model_config.get("model_kwargs", {})  # passed to create_model
+
+#     logger.info(
+#         f"Creating model: {model_type.value}, "
+#         f"past_covs={past_covs}, future_covs={future_covs}, xl_design={xl_design}"
+#     )
+
+#     # =====================================================================
+#     # Classical Models (no batch_size, epochs, or torch_kwargs needed)
+#     # =====================================================================
+
+#     if model_type == ModelType.EXPONENTIAL_SMOOTHING:
+#         return ExponentialSmoothing(**model_kwargs)
+
+#     if model_type == ModelType.AUTO_ARIMA:
+#         return AutoARIMA(**model_kwargs)
+
+#     if model_type == ModelType.THETA:
+#         return Theta(season_mode=SeasonalityMode.ADDITIVE, **model_kwargs)
+
+#     if model_type == ModelType.KALMAN:
+#         return KalmanForecaster(
+#             dim_x=model_kwargs.get("dim_x", 1),
+#             random_state=model_kwargs.get("random_state", 42),
+#             **{
+#                 k: v
+#                 for k, v in model_kwargs.items()
+#                 if k not in {"dim_x", "random_state"}
+#             },
+#         )
+
+#     # =====================================================================
+#     # Regression / Tree-based models (lags + covariate lags)
+#     # =====================================================================
+
+#     lags, lags_past, lags_future = _lags_for_regression(
+#         xl_design, past_covs, future_covs
+#     )
+
+#     if model_type == ModelType.LINEAR_REGRESSION:
+#         base = dict(
+#             lags=lags,
+#             lags_past_covariates=lags_past,
+#             lags_future_covariates=lags_future,
+#             output_chunk_length=1,
+#             use_static_covariates=True,
+#         )
+#         base.update(model_kwargs)
+#         return LinearRegressionModel(**base)
+
+#     if model_type == ModelType.LIGHTGBM:
+#         base = dict(
+#             lags=lags,
+#             lags_past_covariates=lags_past,
+#             lags_future_covariates=lags_future,
+#             output_chunk_length=1,
+#             use_static_covariates=True,
+#             random_state=42,
+#         )
+#         # allow overriding (e.g. n_estimators) via model_kwargs
+#         base.update(model_kwargs)
+#         return LightGBMModel(**base)
+
+#     if model_type == ModelType.RANDOM_FOREST:
+#         base = dict(
+#             lags=lags,
+#             lags_past_covariates=lags_past,
+#             lags_future_covariates=lags_future,
+#             n_estimators=500 if xl_design else 200,
+#             max_depth=None,
+#             n_jobs=-1,
+#             use_static_covariates=True,
+#             random_state=42,
+#         )
+#         base.update(model_kwargs)
+#         return RandomForestModel(**base)
+
+#     if model_type == ModelType.XGBOOST:
+#         base = dict(
+#             lags=lags,
+#             lags_past_covariates=lags_past,
+#             lags_future_covariates=lags_future,
+#             output_chunk_length=1,
+#             use_static_covariates=True,
+#             random_state=42,
+#         )
+#         base.update(model_kwargs)
+#         return XGBModel(**base)
+
+#     # =====================================================================
+#     # Deep Learning Models
+#     # =====================================================================
+
+#     # Base configuration shared by all deep learning models
+
+#     # Per-model overrides from config file (if provided)
+#     cfg = (model_config or {}).get(model_type.value, {})
+#     base_kwargs = dict(
+#         input_chunk_length= int(cfg.get("input_chunk_length", 60)),
+#         output_chunk_length=1,
+#         n_epochs=int(cfg.get("n_epochs", n_epochs)),
+#         batch_size=int(cfg.get("batch_size", batch_size)),
+#         dropout=float(cfg.get("dropout", dropout)),
+#         random_state=42,
+#         save_checkpoints=False,
+#         force_reset=True,
+#         optimizer_kwargs={"lr": float(cfg.get("lr", lr))},
+#     )
+
+#     # torch_kwargs can override defaults in base_kwargs
+#     base_kwargs.update(torch_kwargs)
+
+#     # -------------------------
+#     # N-BEATS
+#     # -------------------------
+#     if model_type == ModelType.NBEATS:
+#         if xl_design:
+#             return NBEATSModel(
+#                 generic_architecture=True,
+#                 num_stacks=model_kwargs.get("num_stacks", 16),
+#                 num_blocks=model_kwargs.get("num_blocks", 2),
+#                 num_layers=model_kwargs.get("num_layers", 6),
+#                 layer_widths=model_kwargs.get("layer_widths", 1024),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+#         else:
+#             return NBEATSModel(
+#                 generic_architecture=True,
+#                 num_stacks=model_kwargs.get("num_stacks", 10),
+#                 num_blocks=model_kwargs.get("num_blocks", 1),
+#                 num_layers=model_kwargs.get("num_layers", 4),
+#                 layer_widths=model_kwargs.get("layer_widths", 512),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+
+#     # -------------------------
+#     # TFT
+#     # -------------------------
+#     if model_type == ModelType.TFT:
+#         if xl_design:
+#             return TFTModel(
+#                 hidden_size=model_kwargs.get("hidden_size", 128),
+#                 lstm_layers=model_kwargs.get("lstm_layers", 4),
+#                 dropout=dropout,
+#                 num_attention_heads=model_kwargs.get(
+#                     "num_attention_heads", 12
+#                 ),
+#                 add_relative_index=model_kwargs.get(
+#                     "add_relative_index", True
+#                 ),
+#                 **base_kwargs,
+#             )
+#         else:
+#             return TFTModel(
+#                 hidden_size=model_kwargs.get("hidden_size", 64),
+#                 lstm_layers=model_kwargs.get("lstm_layers", 2),
+#                 dropout=dropout,
+#                 num_attention_heads=model_kwargs.get(
+#                     "num_attention_heads", 10
+#                 ),
+#                 add_relative_index=model_kwargs.get(
+#                     "add_relative_index", True
+#                 ),
+#                 **base_kwargs,
+#             )
+
+#     # -------------------------
+#     # TSMIXER
+#     # -------------------------
+#     if model_type == ModelType.TSMIXER:
+#         if xl_design:
+#             return TSMixerModel(
+#                 hidden_size=model_kwargs.get("hidden_size", 128),
+#                 ff_size=model_kwargs.get("ff_size", 256),
+#                 activation=model_kwargs.get("activation", "LeakyReLU"),
+#                 num_blocks=model_kwargs.get("num_blocks", 16),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+#         else:
+#             return TSMixerModel(
+#                 hidden_size=model_kwargs.get("hidden_size", 64),
+#                 ff_size=model_kwargs.get("ff_size", 128),
+#                 activation=model_kwargs.get("activation", "LeakyReLU"),
+#                 num_blocks=model_kwargs.get("num_blocks", 8),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+
+#     # -------------------------
+#     # BlockRNN (LSTM/GRU)
+#     # -------------------------
+#     if model_type == ModelType.BLOCK_RNN:
+#         if xl_design:
+#             return BlockRNNModel(
+#                 model=model_kwargs.get("model", "GRU"),
+#                 hidden_dim=model_kwargs.get("hidden_dim", 128),
+#                 n_rnn_layers=model_kwargs.get("n_rnn_layers", 3),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+#         else:
+#             return BlockRNNModel(
+#                 model=model_kwargs.get("model", "GRU"),
+#                 hidden_dim=model_kwargs.get("hidden_dim", 64),
+#                 n_rnn_layers=model_kwargs.get("n_rnn_layers", 2),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+
+#     # -------------------------
+#     # TCN
+#     # -------------------------
+#     if model_type == ModelType.TCN:
+#         if xl_design:
+#             return TCNModel(
+#                 kernel_size=model_kwargs.get("kernel_size", 2),
+#                 num_filters=model_kwargs.get("num_filters", 128),
+#                 dilation_base=model_kwargs.get("dilation_base", 7),
+#                 num_layers=model_kwargs.get("num_layers", None),
+#                 weight_norm=model_kwargs.get("weight_norm", True),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+#         else:
+#             return TCNModel(
+#                 kernel_size=model_kwargs.get("kernel_size", 2),
+#                 num_filters=model_kwargs.get("num_filters", 16),
+#                 dilation_base=model_kwargs.get("dilation_base", 2),
+#                 num_layers=model_kwargs.get("num_layers", 2),
+#                 weight_norm=model_kwargs.get("weight_norm", True),
+#                 dropout=dropout,
+#                 **base_kwargs,
+#             )
+
+#     # -------------------------
+#     # TiDE
+#     # -------------------------
+#     if model_type == ModelType.TIDE:
+#         if xl_design:
+#             return TiDEModel(
+#                 hidden_size=model_kwargs.get("hidden_size", 128),
+#                 dropout=dropout,
+#                 use_layer_norm=model_kwargs.get("use_layer_norm", True),
+#                 **base_kwargs,
+#             )
+#         else:
+#             return TiDEModel(
+#                 hidden_size=model_kwargs.get("hidden_size", 64),
+#                 dropout=dropout,
+#                 use_layer_norm=model_kwargs.get("use_layer_norm", True),
+#                 **base_kwargs,
+#             )
+
+#     raise ValueError(f"Unsupported model type: {model_type}")
 
 
 def evaluate_model_with_covariates_optuna(
