@@ -305,6 +305,8 @@ def main():
     logger.info(f"Running Optuna for models: {[m.value for m in model_types]}")
     logger.info(f"Data fn: {args.data_fn}")
     logger.info(f"Results fn: {args.results_fn}")
+    logger.info(f"Store medians fn: {args.store_medians_fn}")
+    logger.info(f"Item medians fn: {args.item_medians_fn}")
     logger.info(f"Model dir: {args.model_dir}")
     logger.info(f"Log fn: {args.log_fn}")
     logger.info(f"Split point: {args.split_point}")
