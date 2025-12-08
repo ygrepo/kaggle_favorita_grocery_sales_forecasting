@@ -20,6 +20,7 @@ STORE_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_featu
 STORE_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_store_assignments.csv"
 ITEM_MEDIAN_FN="${PROJECT_ROOT}/output/data/2013_2014_store_2000_item_cyc_features_with_item_medians.parquet"
 ITEM_ASSIGN_FN="${PROJECT_ROOT}/output/data/20251124_item_assignments.csv"
+MODEL_CONFIG_FN="${PROJECT_ROOT}/config/model.json"
 
 DATE=$(date +"%Y%m%d")
 
@@ -78,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --past_covs) PAST_COVS="$2"; shift 2 ;;
     --future_covs) FUTURE_COVS="$2"; shift 2 ;;
     --xl_design) XL_DESIGN="$2"; shift 2 ;;
+    --model_config_fn) MODEL_CONFIG_FN="$2"; shift 2 ;;
     --log_dir) LOG_DIR="$2"; shift 2 ;;
     --log_level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
@@ -144,6 +146,7 @@ echo "Patience: $PATIENCE" | tee -a "$LOG_FILE"
 echo "XL design: $XL_DESIGN" | tee -a "$LOG_FILE"
 echo "Past covs: $PAST_COVS" | tee -a "$LOG_FILE"
 echo "Future covs: $FUTURE_COVS" | tee -a "$LOG_FILE"
+echo "Model config fn: $MODEL_CONFIG_FN" | tee -a "$LOG_FILE"
 echo "Metrics dir: $METRICS_DIR" | tee -a "$LOG_FILE"
 echo "Metrics fn: $METRICS_FN" | tee -a "$LOG_FILE"
 
@@ -161,7 +164,7 @@ export CUDA_VISIBLE_DEVICES=0,1
 
 set +e  # allow error handling below
 
-python "${SCRIPT_DIR}/train_forecasting_models.py" \
+python "${SCRIPT_DIR}/train_forecasting_global_models.py" \
   --data_fn "$DATA_FN" \
   --store_medians_fn "$STORE_MEDIAN_FN" \
   --store_assign_fn "$STORE_ASSIGN_FN" \
@@ -182,7 +185,8 @@ python "${SCRIPT_DIR}/train_forecasting_models.py" \
   --patience "$PATIENCE" \
   --past_covs "$PAST_COVS" \
   --future_covs "$FUTURE_COVS" \
-  --xl_design "$XL_DESIGN"
+  --xl_design "$XL_DESIGN" \
+  --model_config_fn "$MODEL_CONFIG_FN"
 
 EXIT_CODE=${PIPESTATUS[0]}
 
