@@ -16,20 +16,15 @@ All models share the same covariate-aware pipeline:
 import sys
 import argparse
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 
 import traceback
 
-from darts import TimeSeries
 import pandas as pd
 
 
 # Optional DL / GPU imports (used only for deep-learning models)
 import torch
-from darts.utils.callbacks import TFMProgressBar
-from torchmetrics import MetricCollection
-from pytorch_lightning.callbacks import EarlyStopping
-from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning import seed_everything
 
 
@@ -131,7 +126,9 @@ def train(
             else:
                 # Classical / tree-based models do not need PL trainer
                 torch_kwargs = None
-            cfg = (model_config or {}).get(mtype, {})  # model_config: Dict[ModelType, Dict[str, Any]]
+            cfg = (model_config or {}).get(
+                mtype, {}
+            )  # model_config: Dict[ModelType, Dict[str, Any]]
 
             model = create_model(
                 model_type=mtype,
