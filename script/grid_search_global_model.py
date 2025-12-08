@@ -259,7 +259,12 @@ def parse_args():
         default=True,
         help="Use future covariates when supported",
     )
-
+    parser.add_argument(
+        "--results_fn",
+        type=Path,
+        default=False,
+        help="Path to save results (relative to project root)",
+    )
     # GPU
     parser.add_argument(
         "--gpu",
@@ -299,7 +304,7 @@ def main():
     logger = setup_logging(args.log_fn, args.log_level)
     logger.info(f"Running Optuna for models: {[m.value for m in model_types]}")
     logger.info(f"Data fn: {args.data_fn}")
-    logger.info(f"Metrics fn: {args.metrics_fn}")
+    logger.info(f"Results fn: {args.results_fn}")
     logger.info(f"Model dir: {args.model_dir}")
     logger.info(f"Log fn: {args.log_fn}")
     logger.info(f"Split point: {args.split_point}")
@@ -395,8 +400,8 @@ def main():
     )
 
     # Final save of HPO results
-    metrics_fn = Path(args.metrics_fn).resolve()
-    save_csv_or_parquet(metrics_df, metrics_fn)
+    results_fn = Path(args.results_fn).resolve()
+    save_csv_or_parquet(metrics_df, results_fn)
     logger.info("Optuna HPO complete.")
 
     # Summary of best objective values
