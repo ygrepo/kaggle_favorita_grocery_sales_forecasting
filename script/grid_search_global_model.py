@@ -129,7 +129,7 @@ def search(
                 objective,
                 n_trials=n_trials,
                 timeout=timeout if timeout and timeout > 0 else None,
-                n_jobs=1,  # Use all CPU cores
+                n_jobs=4,  
             )
 
             # Study statistics (mirroring the example slide)
