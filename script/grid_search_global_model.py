@@ -56,6 +56,7 @@ def search(
     future_covs: bool,
     xl_design: bool,
     patience: int,
+    seed: int,
     store_medians_fn: Path | None,
     item_medians_fn: Path | None,
     store_assign_fn: Path | None,
@@ -119,12 +120,16 @@ def search(
             )
 
             study = optuna.create_study(
-                direction="minimize", study_name=mtype.value
+                direction="minimize",
+                study_name=mtype.value,
+                sampler=optuna.samplers.TPESampler(seed=seed),
+                pruner=optuna.pruners.SuccessiveHalvingPruner(),
             )
             study.optimize(
                 objective,
                 n_trials=n_trials,
                 timeout=timeout if timeout and timeout > 0 else None,
+                n_jobs=-1,  # Use all CPU cores
             )
 
             # Study statistics (mirroring the example slide)
