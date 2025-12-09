@@ -122,8 +122,8 @@ def search(
             study = optuna.create_study(
                 direction="minimize",
                 study_name=mtype.value,
-                sampler=optuna.samplers.TPESampler(seed=seed),
-                pruner=optuna.pruners.SuccessiveHalvingPruner(),
+                # sampler=optuna.samplers.TPESampler(seed=seed),
+                # pruner=optuna.pruners.SuccessiveHalvingPruner(),
             )
             study.optimize(
                 objective,
