@@ -27,5 +27,20 @@
       "lstm_layers": 1,
       "num_attention_heads": 10
     }
+  },
+  "TCN": {
+    "input_chunk_length": 50,
+    "n_epochs": 300,
+    "batch_size": 128,
+    "lr": 0.0013604454864525554,
+    "dropout": 0.2056093031701928,
+    "use_weight_decay": true,
+    "weight_decay": 1.3845596772780392e-06,
+    "model_kwargs": {
+      "kernel_size": 3,
+      "num_filters": 64,
+      "dilation_base": 2,
+      "num_layers": 2
+    }
   }
 }

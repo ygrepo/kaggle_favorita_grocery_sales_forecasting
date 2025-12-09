@@ -841,6 +841,7 @@ def make_optuna_objective_global(
             model_kwargs["dilation_base"] = trial.suggest_categorical(
                 "dilation_base", [2, 4, 7]
             )
+            model_kwargs["num_layers"] = trial.suggest_int("num_layers", 1, 4)
 
         elif model_type == ModelType.TIDE:
             model_kwargs["hidden_size"] = trial.suggest_categorical(
