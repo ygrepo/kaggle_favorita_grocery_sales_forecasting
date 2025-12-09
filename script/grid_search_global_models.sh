@@ -22,7 +22,7 @@ mkdir -p "$LOG_DIR"
 LOG_FN="${LOG_DIR}/${TIMESTAMP}_grid_search.log"
 
 # Grid search parameters
-MODELS="BLOCK_RNN"  # Change to TCN, TFT, etc. for other models
+MODELS="TIDE"  # Change to TCN, TFT, etc. for other models
 RESULTS_FN="${RESULTS_DIR}/${TIMESTAMP}_${MODELS}_grid_search_results.csv"
 N=10  # Number of (store, item) pairs to process
 SPLIT_POINT=0.8

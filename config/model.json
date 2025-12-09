@@ -56,5 +56,18 @@
       "activation": "ELU",
       "num_blocks": 4
     }
+  },
+  "BLOCK_RNN": {
+    "input_chunk_length": 30,
+    "n_epochs": 300,
+    "batch_size": 64,
+    "lr":  0.001590870508924918,
+    "dropout": 0.19799018554895137,
+    "use_weight_decay": false,
+    "model_kwargs": {
+      "hidden_dim": 128,
+      "n_rnn_layers": 2,
+      "model": "GRU"
+    }
   }
 }
