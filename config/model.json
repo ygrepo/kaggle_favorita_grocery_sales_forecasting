@@ -13,5 +13,19 @@
       "num_layers": 5,
       "layer_widths": 1024
     }
+  },
+  "TFT": {
+    "input_chunk_length": 40,
+    "n_epochs": 400,
+    "batch_size": 32,
+    "lr": 0.001394208628520852,
+    "dropout": 0.006587597364350106,
+    "use_weight_decay": false,
+    "weight_decay": 0.00075161126047098,
+    "model_kwargs": {
+      "hidden_size": 128,
+      "lstm_layers": 1,
+      "num_attention_heads": 10
+    }
   }
 }
