@@ -41,5 +41,20 @@
       "dilation_base": 7,
       "num_layers": 3
     }
+  },
+  "TSMIXER": {
+    "input_chunk_length": 30,
+    "n_epochs": 300,
+    "batch_size": 32,
+    "lr":  0.0012990220526499167,
+    "dropout": 0.21875710017152653,
+    "use_weight_decay": true,
+    "weight_decay": 0.00033407633590295014,
+    "model_kwargs": {
+      "hidden_size": 128,
+      "ff_size": 256,
+      "activation": "ELU",
+      "num_blocks": 4
+    }
   }
 }
