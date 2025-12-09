@@ -850,6 +850,24 @@ def make_optuna_objective_global(
             model_kwargs["hidden_size"] = trial.suggest_categorical(
                 "hidden_size", [32, 64, 128, 256]
             )
+            model_kwargs["num_encoder_layers"] = trial.suggest_int(
+                "num_encoder_layers", 1, 4
+            )
+            model_kwargs["num_decoder_layers"] = trial.suggest_int(
+                "num_decoder_layers", 1, 4
+            )
+            model_kwargs["decoder_output_dim"] = trial.suggest_int(
+                "decoder_output_dim", 16, 128, step=16
+            )
+            model_kwargs["temporal_width_past"] = trial.suggest_int(
+                "temporal_width_past", 4, 10, step=2
+            )
+            model_kwargs["temporal_width_future"] = trial.suggest_int(
+                "temporal_width_past", 4, 10, step=2
+            )
+            model_kwargs["temporal_decoder_hidden"] = trial.suggest_int(
+                "temporal_decoder_hidden", 16, 128, step=16
+            )
 
         # --------------------------------------------------------------
         # 4) Pack everything into model_cfg
