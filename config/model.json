@@ -30,17 +30,16 @@
   },
   "TCN": {
     "input_chunk_length": 50,
-    "n_epochs": 300,
+    "n_epochs": 200,
     "batch_size": 128,
-    "lr": 0.0013604454864525554,
-    "dropout": 0.2056093031701928,
-    "use_weight_decay": true,
-    "weight_decay": 1.3845596772780392e-06,
+    "lr": 0.0006133418932361599,
+    "dropout": 0.19799018554895137,
+    "use_weight_decay": false,
     "model_kwargs": {
-      "kernel_size": 3,
-      "num_filters": 64,
-      "dilation_base": 2,
-      "num_layers": 2
+      "kernel_size": 4,
+      "num_filters": 16,
+      "dilation_base": 7,
+      "num_layers": 3
     }
   }
 }
