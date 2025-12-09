@@ -1,17 +1,17 @@
 {
   "NBEATS": {
-    "input_chunk_length": 40,
-    "n_epochs": 100,
-    "batch_size": 64,
-    "lr": 0.0005550444229669196,
-    "dropout": 0.08296991321075416,
-    "use_weight_decay": true,
+    "input_chunk_length": 30,
+    "n_epochs": 200,
+    "batch_size": 128,
+    "lr": 0.0006378914480933063,
+    "dropout": 0.21019293238939163,
+    "use_weight_decay": false,
     "weight_decay": 0.00075161126047098,
     "model_kwargs": {
       "num_stacks": 11,
-      "num_blocks": 2,
-      "num_layers": 4,
-      "layer_widths": 256
+      "num_blocks": 1,
+      "num_layers": 5,
+      "layer_widths": 1024
     }
   }
 }
