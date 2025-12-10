@@ -185,8 +185,7 @@ python "${SCRIPT_DIR}/train_forecasting_global_models.py" \
   --patience "$PATIENCE" \
   --past_covs "$PAST_COVS" \
   --future_covs "$FUTURE_COVS" \
-  --xl_design "$XL_DESIGN" \
-  --model_config_fn "$MODEL_CONFIG_FN"
+  --xl_design "$XL_DESIGN"
 
 EXIT_CODE=${PIPESTATUS[0]}
 
