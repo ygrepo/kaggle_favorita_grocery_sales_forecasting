@@ -469,6 +469,7 @@ def create_model(
         random_state=42,
         save_checkpoints=False,
         force_reset=True,
+        use_reversible_instance_norm=True,
         optimizer_kwargs={
             "lr": lr_eff,
             # allow passing extra optimizer kwargs in cfg
