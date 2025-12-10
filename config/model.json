@@ -69,5 +69,22 @@
       "n_rnn_layers": 2,
       "model": "GRU"
     }
+  },
+  "TIDE": {
+    "input_chunk_length": 60,
+    "n_epochs": 250,
+    "batch_size": 64,
+    "lr":  0.0006127353497232037,
+    "dropout": 0.17728129004470394,
+    "use_weight_decay": true,
+    "weight_decay": 4.430098610565218e-05,
+    "model_kwargs": {
+      "hidden_size": 128,
+      "num_encoder_layers": 3,
+      "num_decoder_layers": 2,
+      "decoder_output_dim": 128,
+      "temporal_width_past": 8,
+      "temporal_decoder_hidden": 48
+    }
   }
 }
