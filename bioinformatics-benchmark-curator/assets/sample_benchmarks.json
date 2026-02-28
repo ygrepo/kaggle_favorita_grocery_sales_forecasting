@@ -1,0 +1,28 @@
+{
+  "title": "Awesome Bioinformatics Benchmarks",
+  "description": "Curated benchmark resources for bioinformatics and computational biology.",
+  "items": [
+    {
+      "name": "Genome Understanding Evaluation (GUE)",
+      "task_category": "genomics",
+      "summary": "Benchmark suite for genomic sequence understanding tasks.",
+      "paper_url": "https://arxiv.org/abs/2206.11200",
+      "code_url": "https://github.com/ZhiGroup/GUE",
+      "modality": "sequence",
+      "license": "MIT",
+      "year": 2022,
+      "tags": ["foundation-models", "sequence"]
+    },
+    {
+      "name": "OpenBioMed-Bench",
+      "task_category": "multimodal-biology",
+      "summary": "Evaluate multimodal biomedical representation learning across tasks.",
+      "paper_url": "https://arxiv.org/abs/2405.00001",
+      "code_url": "https://github.com/PharMolix/OpenBioMed",
+      "modality": "multimodal",
+      "license": "Apache-2.0",
+      "year": 2024,
+      "metrics": ["accuracy", "F1"]
+    }
+  ]
+}
